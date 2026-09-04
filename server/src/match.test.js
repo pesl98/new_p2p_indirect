@@ -147,3 +147,42 @@ describe('3-way match engine', () => {
     assert.equal(result.matchOutcome.overallMatchStatus, 'total_variance');
   });
 });
+
+describe('invoice number uniqueness', () => {
+  test('rejects a duplicate invoice number for the same supplier', () => {
+    const db = createTestDb();
+    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
+    createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-DUP-1' }));
+
+    assert.throws(
+      () => createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-DUP-1' })),
+      (err) => err.statusCode === 400 && /already exists for this supplier/i.test(err.message)
+    );
+  });
+
+  test('allows the same invoice number from a different supplier', () => {
+    const db = createTestDb();
+    db.exec(`INSERT INTO suppliers (id, name, code) VALUES (2, 'Other Vendor', 'SUP-2')`);
+    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
+    db.prepare(`
+      INSERT INTO purchase_orders (id, po_number, supplier_id, created_by, status, total_amount, issue_date)
+      VALUES (2, 'PO-TEST-002', 2, 1, 'issued', 129500, '2026-09-01')
+    `).run();
+    db.prepare(`
+      INSERT INTO po_items (id, po_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_invoiced)
+      VALUES (2, 2, 'Other Item', 'IT Hardware', 1, 129500, 129500, 1, 0)
+    `).run();
+
+    createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-SHARED' }));
+    const second = createVendorInvoice(db, {
+      invoice_number: 'INV-SHARED',
+      po_id: 2,
+      supplier_id: 2,
+      invoice_date: '2026-09-04',
+      due_date: '2026-10-04',
+      tax_amount: 0,
+      items: [{ po_item_id: 2, description: 'Other Item', quantity_invoiced: 1, unit_price: 129500 }]
+    });
+    assert.ok(second.invoiceId);
+  });
+});

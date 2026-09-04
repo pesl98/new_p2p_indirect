@@ -174,7 +174,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           <div 
             style={{ width: `${(kpi.totalCommitted / (kpi.totalBudget || 1)) * 100}%` }}
             className="bg-amber-400 h-full" 
-            title={`Committed (POs & Approved PRs): $${formatMoney(kpi.totalCommitted)}`}
+            title={`Committed at final PR approval: $${formatMoney(kpi.totalCommitted)}`}
           />
         </div>
 
@@ -193,7 +193,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-              <span>Committed POs</span>
+              <span>Committed (approved PRs)</span>
             </div>
             <div className="text-lg font-bold text-amber-700 mt-0.5">${formatMoney(kpi.totalCommitted)}</div>
           </div>

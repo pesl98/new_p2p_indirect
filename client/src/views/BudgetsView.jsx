@@ -29,7 +29,7 @@ export default function BudgetsView() {
       <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">Department Budgets & Cost Centers</h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Real-time tracking of indirect spend: Allocated Budgets, Committed (Open Purchase Orders), and Actual Invoiced Spend.
+          Real-time tracking of indirect spend: Allocated Budgets, Committed (final PR approval), and Actual Invoiced Spend.
         </p>
       </div>
 
@@ -95,7 +95,7 @@ export default function BudgetsView() {
                     <div className="font-semibold text-slate-800">${formatMoney(b.actual_spent)}</div>
                   </div>
                   <div>
-                    <span className="text-[11px] text-slate-400">Committed POs:</span>
+                    <span className="text-[11px] text-slate-400">Committed (PR approve):</span>
                     <div className="font-semibold text-amber-700">${formatMoney(b.committed_amount)}</div>
                   </div>
                 </div>

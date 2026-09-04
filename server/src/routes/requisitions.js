@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { insertApprovalChain } from '../approvalPolicy.js';
 import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
+import { nextDocumentNumber } from '../docNumbers.js';
 
 const router = express.Router();
 
@@ -128,10 +129,8 @@ router.post('/', (req, res) => {
     );
 
     const createTransaction = db.transaction(() => {
-      // Generate sequence PR number
       const currentYear = new Date().getFullYear();
-      const countResult = db.prepare(`SELECT COUNT(*) as cnt FROM purchase_requisitions`).get();
-      const prNumber = `PR-${currentYear}-${String(countResult.cnt + 1).padStart(3, '0')}`;
+      const prNumber = nextDocumentNumber(db, 'pr', currentYear);
 
       const status = submitImmediately ? 'pending_approval' : 'draft';
 

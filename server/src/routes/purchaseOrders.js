@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { nextDocumentNumber } from '../docNumbers.js';
 
 const router = express.Router();
 
@@ -132,10 +133,8 @@ router.post('/from-requisition', (req, res) => {
     const supplier = db.prepare(`SELECT * FROM suppliers WHERE id = ?`).get(targetSupplierId);
 
     const convertTransaction = db.transaction(() => {
-      // Sequence number
       const currentYear = new Date().getFullYear();
-      const countResult = db.prepare(`SELECT COUNT(*) as cnt FROM purchase_orders`).get();
-      const poNumber = `PO-${currentYear}-${String(countResult.cnt + 1).padStart(3, '0')}`;
+      const poNumber = nextDocumentNumber(db, 'po', currentYear);
       const issueDate = new Date().toISOString().split('T')[0];
       const deliveryDate = pr.needed_by_date || new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0];
 

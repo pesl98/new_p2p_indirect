@@ -83,7 +83,8 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Approvals Inbox</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Review purchasing requisitions pending authorization. Verify business justification and budget availability.
+            Review purchasing requisitions pending authorization. Verify business justification and remaining budget.
+            Budget is committed only on the <strong>final</strong> approval step.
           </p>
         </div>
 
@@ -153,7 +154,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                       {hasExceededBudget && (
                         <span className="text-rose-600 font-semibold flex items-center">
                           <AlertTriangle className="w-3.5 h-3.5 mr-1" />
-                          Exceeds available budget!
+                          Exceeds remaining budget — final approval will be blocked
                         </span>
                       )}
                     </div>

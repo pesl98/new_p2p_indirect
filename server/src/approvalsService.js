@@ -8,12 +8,26 @@ export class ApprovalDecisionError extends Error {
   }
 }
 
+const FISCAL_YEAR = 2026;
+
+function isExplicitTrue(value) {
+  return value === true || value === 1 || value === 'true' || value === '1';
+}
+
+/** Remaining = total_budget - committed_amount - actual_spent (integer cents). */
+export function remainingBudgetCents(budget) {
+  if (!budget) return 0;
+  return (budget.total_budget || 0) - (budget.committed_amount || 0) - (budget.actual_spent || 0);
+}
+
 /**
  * Apply an approve/reject decision to one approval row.
  * Sequential: only `pending` steps may be decided; on approve the next `waiting`
  * step is promoted; budget commits only when the final step is approved.
+ * Final approve fails closed if remaining department budget is insufficient
+ * unless `override_budget` is true.
  */
-export function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name }) {
+export function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name, override_budget }) {
   if (!['approved', 'rejected'].includes(decision)) {
     throw new ApprovalDecisionError('Decision must be approved or rejected');
   }
@@ -85,6 +99,25 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
       return { outcome: 'step_approved', budgetCommitted: false, nextApprovalId: nextWaiting.id };
     }
 
+    const budget = db.prepare(
+      `SELECT * FROM budgets WHERE department_id = ? AND fiscal_year = ?`
+    ).get(pr.department_id, FISCAL_YEAR);
+    if (!budget) {
+      throw new ApprovalDecisionError(
+        `No department budget found for fiscal year ${FISCAL_YEAR}`
+      );
+    }
+
+    const remaining = remainingBudgetCents(budget);
+    const allowBudgetOverride = isExplicitTrue(override_budget);
+    if (remaining < pr.total_amount && !allowBudgetOverride) {
+      throw new ApprovalDecisionError(
+        `Insufficient remaining budget to commit this requisition. ` +
+        `PR total $${formatCents(pr.total_amount)} exceeds remaining $${formatCents(remaining)} ` +
+        `(total $${formatCents(budget.total_budget)} − committed $${formatCents(budget.committed_amount)} − actual $${formatCents(budget.actual_spent)}).`
+      );
+    }
+
     db.prepare(
       `UPDATE purchase_requisitions SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
     ).run(pr.id);
@@ -92,13 +125,24 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
     db.prepare(`
       UPDATE budgets
       SET committed_amount = committed_amount + ?
-      WHERE department_id = ? AND fiscal_year = 2026
-    `).run(pr.total_amount, pr.department_id);
+      WHERE department_id = ? AND fiscal_year = ?
+    `).run(pr.total_amount, pr.department_id, FISCAL_YEAR);
 
     db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('requisition', ?, 'APPROVED', ?, ?)
     `).run(pr.id, actor, `Fully approved for $${formatCents(pr.total_amount)}. Committed budget allocated.`);
+
+    if (remaining < pr.total_amount && allowBudgetOverride) {
+      db.prepare(`
+        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+        VALUES ('requisition', ?, 'BUDGET_OVERRIDE', ?, ?)
+      `).run(
+        pr.id,
+        actor,
+        `Final approval overrode insufficient remaining budget ($${formatCents(remaining)}) to commit $${formatCents(pr.total_amount)}.`
+      );
+    }
 
     return { outcome: 'approved', budgetCommitted: true };
   });

@@ -29,6 +29,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
   const [deliveryNote, setDeliveryNote] = useState('');
   const [receivingNotes, setReceivingNotes] = useState('');
   const [receivingItems, setReceivingItems] = useState([]);
+  const [allowOverReceipt, setAllowOverReceipt] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -115,6 +116,15 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
       return;
     }
 
+    const hasOverReceipt = receivingItems.some(
+      (item) => Number(item.quantity_received) > 0
+        && Number(item.received_already) + Number(item.quantity_received) > Number(item.ordered_qty)
+    );
+    if (hasOverReceipt && !allowOverReceipt) {
+      alert('Received quantity exceeds ordered quantity. Check "Allow over-receipt" to record this as an audited exception.');
+      return;
+    }
+
     try {
       await api.createGoodsReceipt({
         po_id: Number(selectedPOId),
@@ -123,7 +133,8 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
         carrier_tracking: carrierTracking,
         delivery_note_number: deliveryNote,
         notes: receivingNotes,
-        items: itemsToSubmit
+        items: itemsToSubmit,
+        allow_over_receipt: hasOverReceipt ? allowOverReceipt : false
       });
 
       setShowReceiveModal(false);
@@ -133,6 +144,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
       setCarrierTracking('');
       setDeliveryNote('');
       setReceivingNotes('');
+      setAllowOverReceipt(false);
       await loadData();
       if (onDataChanged) onDataChanged();
     } catch (err) {
@@ -321,8 +333,10 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {receivingItems.map((item, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50">
+                          {receivingItems.map((item, idx) => {
+                            const wouldOver = Number(item.received_already) + Number(item.quantity_received) > Number(item.ordered_qty);
+                            return (
+                            <tr key={idx} className={wouldOver ? 'bg-amber-50 hover:bg-amber-50' : 'hover:bg-slate-50'}>
                               <td className="py-2.5 px-3 font-medium text-slate-900">{item.description}</td>
                               <td className="py-2.5 px-3 text-center">{item.ordered_qty}</td>
                               <td className="py-2.5 px-3 text-center text-slate-500">{item.received_already}</td>
@@ -330,10 +344,11 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                                 <input
                                   type="number"
                                   min="0"
-                                  max={item.remaining_qty}
                                   value={item.quantity_received}
                                   onChange={(e) => handleUpdateItemQty(idx, e.target.value)}
-                                  className="w-20 text-center p-1.5 border border-slate-300 rounded font-bold text-emerald-700"
+                                  className={`w-20 text-center p-1.5 border rounded font-bold ${
+                                    wouldOver ? 'border-amber-400 text-amber-800' : 'border-slate-300 text-emerald-700'
+                                  }`}
                                 />
                               </td>
                               <td className="py-2.5 px-3">
@@ -349,7 +364,8 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                                 </select>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -365,6 +381,23 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                     />
                   </div>
+
+                  {receivingItems.some(
+                    (item) => Number(item.received_already) + Number(item.quantity_received) > Number(item.ordered_qty)
+                  ) && (
+                    <label className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={allowOverReceipt}
+                        onChange={(e) => setAllowOverReceipt(e.target.checked)}
+                      />
+                      <span>
+                        <strong>Allow over-receipt (exception).</strong> Cumulative received exceeds ordered quantity.
+                        This is audited and should only be used for a deliberate overage.
+                      </span>
+                    </label>
+                  )}
                 </>
               )}
             </div>

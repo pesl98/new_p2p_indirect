@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   payment_reference TEXT,
   notes TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(supplier_id, invoice_number),
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
 );
