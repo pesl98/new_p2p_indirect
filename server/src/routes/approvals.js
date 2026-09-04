@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { formatCents } from '../money.js';
+import { decideApprovalStep } from '../approvalsService.js';
 
 const router = express.Router();
 
@@ -24,6 +24,7 @@ router.get('/', (req, res) => {
         pr.needed_by_date,
         u.name as requester_name,
         u.email as requester_email,
+        approver.name as assigned_approver_name,
         d.name as department_name,
         d.code as department_code,
         b.total_budget,
@@ -34,6 +35,7 @@ router.get('/', (req, res) => {
       FROM approval_requests ar
       JOIN purchase_requisitions pr ON ar.requisition_id = pr.id
       JOIN users u ON pr.requester_id = u.id
+      JOIN users approver ON ar.approver_id = approver.id
       JOIN departments d ON pr.department_id = d.id
       LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
       WHERE 1=1
@@ -63,78 +65,20 @@ router.get('/', (req, res) => {
 router.post('/:id/decide', (req, res) => {
   try {
     const { id } = req.params;
-    const { decision, comments, approver_name } = req.body; // decision: 'approved' | 'rejected'
+    const { decision, comments, approver_name, approver_id } = req.body; // decision: 'approved' | 'rejected'
 
-    if (!['approved', 'rejected'].includes(decision)) {
-      return res.status(400).json({ error: 'Decision must be approved or rejected' });
-    }
-
-    const approval = db.prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(id);
-    if (!approval) {
-      return res.status(404).json({ error: 'Approval request not found' });
-    }
-
-    const pr = db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(approval.requisition_id);
-    if (!pr) {
-      return res.status(404).json({ error: 'Associated requisition not found' });
-    }
-
-    const processDecision = db.transaction(() => {
-      // 1. Update this approval record
-      db.prepare(`
-        UPDATE approval_requests
-        SET status = ?, comments = ?, decided_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(decision, comments || null, id);
-
-      const actor = approver_name || 'Approver';
-
-      if (decision === 'rejected') {
-        // Mark PR as rejected
-        db.prepare(`UPDATE purchase_requisitions SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(pr.id);
-        // Cancel other pending approvals for this PR
-        db.prepare(`UPDATE approval_requests SET status = 'skipped' WHERE requisition_id = ? AND status = 'pending'`).run(pr.id);
-
-        db.prepare(`
-          INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-          VALUES ('requisition', ?, 'REJECTED', ?, ?)
-        `).run(pr.id, actor, `Rejected by ${actor}. Reason: ${comments || 'No reason specified'}`);
-      } else {
-        // Check if there are still other pending approvals for this PR
-        const remaining = db.prepare(`
-          SELECT COUNT(*) as count FROM approval_requests
-          WHERE requisition_id = ? AND status = 'pending'
-        `).get(pr.id);
-
-        if (remaining.count === 0) {
-          // All steps completed! PR is fully approved
-          db.prepare(`UPDATE purchase_requisitions SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(pr.id);
-
-          // Update committed budget for department
-          db.prepare(`
-            UPDATE budgets
-            SET committed_amount = committed_amount + ?
-            WHERE department_id = ? AND fiscal_year = 2026
-          `).run(pr.total_amount, pr.department_id);
-
-          db.prepare(`
-            INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-            VALUES ('requisition', ?, 'APPROVED', ?, ?)
-          `).run(pr.id, actor, `Fully approved for $${formatCents(pr.total_amount)}. Committed budget allocated.`);
-        } else {
-          db.prepare(`
-            INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-            VALUES ('requisition', ?, 'STEP_APPROVED', ?, ?)
-          `).run(pr.id, actor, `Step approved by ${actor}. Forwarded to next approver tier.`);
-        }
-      }
+    const result = decideApprovalStep(db, {
+      approvalId: id,
+      decision,
+      comments,
+      approver_id,
+      approver_name
     });
 
-    processDecision();
-    res.json({ message: `Requisition ${decision} successfully` });
+    res.json({ message: `Requisition ${decision} successfully`, ...result });
   } catch (error) {
     console.error('Error deciding approval:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 

@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS approval_requests (
   requisition_id INTEGER NOT NULL,
   approver_id INTEGER NOT NULL,
   step_order INTEGER DEFAULT 1,
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'skipped')),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'waiting', 'approved', 'rejected', 'skipped')),
   comments TEXT,
   decided_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

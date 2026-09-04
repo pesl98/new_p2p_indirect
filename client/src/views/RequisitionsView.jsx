@@ -667,6 +667,16 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                               Rejected
                             </span>
                           )}
+                          {app.status === 'waiting' && (
+                            <span className="bg-slate-100 text-slate-600 text-[11px] font-bold px-2.5 py-1 rounded-full">
+                              Waiting (prior step)
+                            </span>
+                          )}
+                          {app.status === 'skipped' && (
+                            <span className="bg-slate-100 text-slate-500 text-[11px] font-bold px-2.5 py-1 rounded-full">
+                              Skipped
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}

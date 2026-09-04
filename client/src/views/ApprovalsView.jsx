@@ -58,6 +58,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       await api.decideApproval(activeDecisionModal.approval_id, {
         decision: decisionType,
         comments: decisionComments,
+        approver_id: currentUser?.id,
         approver_name: currentUser?.name || 'Authorized Approver'
       });
       setActiveDecisionModal(null);
@@ -109,6 +110,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
         ) : (
           approvals.map((item) => {
             const hasExceededBudget = item.available_budget !== null && item.total_amount > item.available_budget;
+            const canAct = currentUser?.id === item.approver_id;
             return (
               <div 
                 key={item.approval_id} 
@@ -154,21 +156,30 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                   </div>
 
                   {/* Right Column: Decision Buttons */}
-                  <div className="flex items-center space-x-3 self-end lg:self-center">
-                    <button
-                      onClick={() => handleOpenDecision(item, 'rejected')}
-                      className="px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-                    <button
-                      onClick={() => handleOpenDecision(item, 'approved')}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition-colors"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Approve PR</span>
-                    </button>
+                  <div className="flex flex-col items-end space-y-2 self-end lg:self-center">
+                    {!canAct && (
+                      <span className="text-[11px] text-slate-500">
+                        Assigned to {item.assigned_approver_name || 'another approver'}
+                      </span>
+                    )}
+                    <div className="flex items-center space-x-3">
+                      <button
+                        onClick={() => handleOpenDecision(item, 'rejected')}
+                        disabled={!canAct}
+                        className="px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>Reject</span>
+                      </button>
+                      <button
+                        onClick={() => handleOpenDecision(item, 'approved')}
+                        disabled={!canAct}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-600"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Approve PR</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
