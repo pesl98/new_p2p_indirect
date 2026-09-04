@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
-import { APPROVAL_TIER2_CENTS, APPROVAL_TIER3_CENTS, asCents, formatCents, lineTotalCents, toQty } from '../money.js';
+import { insertApprovalChain } from '../approvalPolicy.js';
+import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 
 const router = express.Router();
 
@@ -108,29 +109,8 @@ router.get('/:id', (req, res) => {
   }
 });
 
-// Helper to determine approval chain based on total amount
-function createApprovalChain(prId, totalAmount, departmentId) {
-  // Step 1: Department Head / Manager (Bob Martinez, id=2)
-  db.prepare(`
-    INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
-    VALUES (?, 2, 1, 'pending')
-  `).run(prId);
-
-  // Step 2: Strategic Sourcing/Procurement if > $1,000 (Carol Zhang, id=3)
-  if (totalAmount > APPROVAL_TIER2_CENTS) {
-    db.prepare(`
-      INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
-      VALUES (?, 3, 2, 'pending')
-    `).run(prId);
-  }
-
-  // Step 3: Finance Controller / CFO if > $10,000 (David Miller, id=4 or Elena, id=5)
-  if (totalAmount > APPROVAL_TIER3_CENTS) {
-    db.prepare(`
-      INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
-      VALUES (?, 4, 3, 'pending')
-    `).run(prId);
-  }
+function httpErrorStatus(error) {
+  return error.statusCode || 500;
 }
 
 // Create new purchase requisition
@@ -200,7 +180,7 @@ router.post('/', (req, res) => {
       `).run(prId, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
 
       if (submitImmediately) {
-        createApprovalChain(prId, calculatedTotal, department_id || 1);
+        insertApprovalChain(db, prId, calculatedTotal, department_id || 1);
         db.prepare(`
           INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
           VALUES ('requisition', ?, 'SUBMITTED', 'System', 'Submitted for multi-tier approval routing')
@@ -214,7 +194,7 @@ router.post('/', (req, res) => {
     res.status(201).json({ id: newPrId, message: 'Requisition created successfully' });
   } catch (error) {
     console.error('Error creating requisition:', error);
-    res.status(500).json({ error: error.message });
+    res.status(httpErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -228,7 +208,7 @@ router.post('/:id/submit', (req, res) => {
 
     db.transaction(() => {
       db.prepare(`UPDATE purchase_requisitions SET status = 'pending_approval', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
-      createApprovalChain(id, pr.total_amount, pr.department_id);
+      insertApprovalChain(db, id, pr.total_amount, pr.department_id);
       db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'SUBMITTED', 'Requester', 'Submitted for approval routing')
@@ -237,7 +217,7 @@ router.post('/:id/submit', (req, res) => {
 
     res.json({ message: 'Requisition submitted for approval' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(httpErrorStatus(error)).json({ error: error.message });
   }
 });
 

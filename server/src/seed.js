@@ -137,9 +137,12 @@ db.transaction(() => {
     VALUES (?, ?, ?, ?, ?, ?)
   `);
   insertApproval.run(1, 2, 1, 'approved', 'Approved. Within Q3 ergonomics allocated budget.', '2026-08-28 14:20:00');
+  insertApproval.run(1, 3, 2, 'approved', 'Sourcing confirmed Aeron chairs on standard contract.', '2026-08-28 16:05:00');
   insertApproval.run(2, 2, 1, 'approved', 'Approved hardware upgrade for brand lead.', '2026-09-01 10:15:00');
   insertApproval.run(2, 3, 2, 'approved', 'Procurement verified against vendor standard contract discount.', '2026-09-01 16:40:00');
+  // PR-2026-003 is $8,500 — dept head + procurement; sequential: Bob pending, Carol waiting.
   insertApproval.run(3, 2, 1, 'pending', null, null);
+  insertApproval.run(3, 3, 2, 'waiting', null, null);
 
   // 8. Purchase Orders
   const insertPO = db.prepare(`

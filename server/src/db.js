@@ -25,6 +25,36 @@ if (dbPath !== ':memory:') {
 export function applySchema(database = db) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   database.exec(schema);
+  migrateApprovalRequestsWaitingStatus(database);
+}
+
+/** Existing DBs created before sequential routing need CHECK to allow `waiting`. */
+function migrateApprovalRequestsWaitingStatus(database) {
+  const row = database.prepare(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approval_requests'`
+  ).get();
+  if (!row?.sql || row.sql.includes("'waiting'")) return;
+
+  database.exec(`
+    CREATE TABLE approval_requests_migrated (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requisition_id INTEGER NOT NULL,
+      approver_id INTEGER NOT NULL,
+      step_order INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'waiting', 'approved', 'rejected', 'skipped')),
+      comments TEXT,
+      decided_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id) ON DELETE CASCADE,
+      FOREIGN KEY (approver_id) REFERENCES users(id)
+    );
+    INSERT INTO approval_requests_migrated
+      (id, requisition_id, approver_id, step_order, status, comments, decided_at, created_at)
+      SELECT id, requisition_id, approver_id, step_order, status, comments, decided_at, created_at
+      FROM approval_requests;
+    DROP TABLE approval_requests;
+    ALTER TABLE approval_requests_migrated RENAME TO approval_requests;
+  `);
 }
 
 applySchema(db);

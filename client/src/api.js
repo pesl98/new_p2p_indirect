@@ -56,11 +56,16 @@ export const api = {
     if (approver_id) params.append('approver_id', approver_id);
     return fetch(`${API_BASE}/approvals?${params.toString()}`).then(r => r.json());
   },
-  decideApproval: (id, decisionData) => fetch(`${API_BASE}/approvals/${id}/decide`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(decisionData)
-  }).then(r => r.json()),
+  decideApproval: async (id, decisionData) => {
+    const r = await fetch(`${API_BASE}/approvals/${id}/decide`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(decisionData)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to record approval decision');
+    return data;
+  },
 
   // Purchase Orders
   getPurchaseOrders: (status = '') => {

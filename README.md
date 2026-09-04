@@ -12,11 +12,13 @@ A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application bui
    - Cost center assignment, delivery requirements, and business justifications.
 
 2. **Multi-Tier Approval Routing**
-   - Configurable policy engine with authorization thresholds:
-     - **< \$1,000**: Direct Department Head / Approver
-     - **\$1,000 – \$10,000**: Department Head + Strategic Sourcing / Procurement Officer
-     - **> \$10,000**: Department Head + Procurement + Executive / CFO
-   - 1-Click approval/rejection modal with audit trail and department budget checks.
+   - Role-based policy (`server/src/approvalPolicy.js`) resolves approvers by role and department — not hardcoded user IDs. Thresholds are integer cents (`APPROVAL_TIER2_CENTS` = \$1,000 / `APPROVAL_TIER3_CENTS` = \$10,000):
+     - **≤ \$1,000**: Department Head (`role=approver` in the requisition’s department)
+     - **> \$1,000 and ≤ \$10,000**: Department Head, then Strategic Sourcing (`role=procurement`)
+     - **> \$10,000**: Department Head, then Procurement, then Finance Controller (`role=finance`) or CFO (`role=admin`) if no finance user exists
+   - Steps are **sequential**, not parallel: only the current step is `pending`; later steps stay `waiting` until the previous step is approved. Waiting steps do not appear in the approver inbox. Rejecting a step skips remaining `waiting`/`pending` rows.
+   - The decide API requires `approver_id` matching the current pending step (persona switcher is client-only; no JWT).
+   - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved.
 
 3. **Purchase Orders (PO) Management**
    - Convert approved requisitions into official binding Purchase Orders with sequential numbering (`PO-YYYY-XXX`).
