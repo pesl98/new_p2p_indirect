@@ -15,6 +15,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { api } from '../api';
+import { formatMoney, fromCents, toCents } from '../money';
 
 export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
   const [invoices, setInvoices] = useState([]);
@@ -84,7 +85,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
         po_unit_price: item.unit_price,
         po_quantity_received: item.quantity_received,
         quantity_invoiced: item.quantity, // default to ordered
-        unit_price: item.unit_price // default to PO unit price
+        unit_price: fromCents(item.unit_price) // billed price input is dollars
       }));
       setInvoiceLines(lines);
     } catch (err) {
@@ -98,8 +99,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
     setInvoiceLines(updated);
   };
 
-  const calculateSubtotal = () => {
-    return invoiceLines.reduce((sum, item) => sum + (Number(item.quantity_invoiced) * Number(item.unit_price)), 0);
+  const calculateSubtotalCents = () => {
+    return invoiceLines.reduce(
+      (sum, item) => sum + Math.trunc(Number(item.quantity_invoiced) || 0) * toCents(item.unit_price),
+      0
+    );
   };
 
   const handleSubmitInvoice = async () => {
@@ -115,9 +119,14 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
         supplier_id: targetPOData.supplier_id,
         invoice_date: invoiceDate,
         due_date: dueDate,
-        tax_amount: Number(taxAmount) || 0,
+        tax_amount: toCents(taxAmount),
         notes: invoiceNotes,
-        items: invoiceLines
+        items: invoiceLines.map((line) => ({
+          po_item_id: line.po_item_id,
+          description: line.description,
+          quantity_invoiced: Math.trunc(Number(line.quantity_invoiced) || 0),
+          unit_price: toCents(line.unit_price)
+        }))
       });
 
       setShowCreateModal(false);
@@ -275,7 +284,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                       {inv.po_number}
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                      ${inv.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${formatMoney(inv.total_amount)}
                     </td>
                     <td className="py-3 px-4">
                       {getMatchBadge(inv.match_status)}
@@ -328,7 +337,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                   <option value="">-- Choose Purchase Order --</option>
                   {activePOs.map(po => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} (${po.total_amount.toLocaleString()}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} (${formatMoney(po.total_amount)}) [{po.status}]
                     </option>
                   ))}
                 </select>
@@ -373,7 +382,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                         Invoice Line Items (Billed Values)
                       </span>
                       <span className="text-emerald-700 font-bold">
-                        Calculated Subtotal: ${calculateSubtotal().toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        Calculated Subtotal: ${formatMoney(calculateSubtotalCents())}
                       </span>
                     </div>
 
@@ -393,7 +402,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                           {invoiceLines.map((line, idx) => (
                             <tr key={idx} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3 font-medium text-slate-900">{line.description}</td>
-                              <td className="py-2.5 px-3 text-center text-slate-500">${line.po_unit_price}</td>
+                              <td className="py-2.5 px-3 text-center text-slate-500">${formatMoney(line.po_unit_price)}</td>
                               <td className="py-2.5 px-3 text-center font-semibold text-slate-800">{line.po_quantity_received}</td>
                               <td className="py-2.5 px-3 text-center">
                                 <input
@@ -414,7 +423,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                                 />
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                                ${(line.quantity_invoiced * line.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                ${formatMoney(Math.trunc(Number(line.quantity_invoiced) || 0) * toCents(line.unit_price))}
                               </td>
                             </tr>
                           ))}
@@ -500,10 +509,10 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                               {res.item_description}
                             </td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 font-semibold">{res.ordered_qty}</td>
-                            <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">${res.po_unit_price?.toFixed(2)}</td>
+                            <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">${formatMoney(res.po_unit_price)}</td>
                             <td className="py-2.5 px-3 text-center bg-amber-50/30 font-bold text-amber-900">{res.received_qty}</td>
                             <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">{res.invoiced_qty}</td>
-                            <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">${res.invoice_unit_price?.toFixed(2)}</td>
+                            <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">${formatMoney(res.invoice_unit_price)}</td>
                             <td className="py-2.5 px-3 text-center">
                               {isFail ? (
                                 <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center">
@@ -550,13 +559,13 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                 <div>
                   <span className="text-slate-500 text-[11px]">Authorized PO Value:</span>
                   <div className="font-bold text-slate-900 text-sm">
-                    ${selectedInvoice.po_total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ${formatMoney(selectedInvoice.po_total_amount)}
                   </div>
                 </div>
                 <div>
                   <span className="text-slate-500 text-[11px]">Billed Total (With Tax):</span>
                   <div className="font-bold text-slate-900 text-sm">
-                    ${selectedInvoice.total_amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ${formatMoney(selectedInvoice.total_amount)}
                   </div>
                 </div>
                 <div>

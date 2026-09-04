@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Store, BookOpen, Plus, Search, Filter, Star, Phone, Mail, MapPin, X } from 'lucide-react';
 import { api } from '../api';
+import { formatMoney, toCents } from '../money';
 
 export default function VendorsCatalogView() {
   const [subTab, setSubTab] = useState('catalog'); // 'catalog' | 'suppliers'
@@ -65,7 +66,7 @@ export default function VendorsCatalogView() {
         description: newDesc,
         category: newCategory,
         unit: newUnit,
-        unit_price: Number(newPrice),
+        unit_price: toCents(newPrice),
         preferred_supplier_id: Number(newSupplierId),
         lead_time_days: Number(newLeadDays)
       });
@@ -212,7 +213,7 @@ export default function VendorsCatalogView() {
                   <div>
                     <span className="text-[10px] text-slate-400 block">Negotiated Price</span>
                     <div className="text-base font-extrabold text-emerald-700">
-                      ${item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${formatMoney(item.unit_price)}
                       <span className="text-[10px] text-slate-400 font-normal"> / {item.unit}</span>
                     </div>
                   </div>

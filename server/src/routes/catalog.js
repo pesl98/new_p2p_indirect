@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { asCents } from '../money.js';
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ router.post('/', (req, res) => {
       INSERT INTO catalog_items (sku, name, description, category, unit, unit_price, preferred_supplier_id, lead_time_days, image_url)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(sku, name, description, category, unit || 'each', unit_price, preferred_supplier_id, lead_time_days || 3, image_url || '📦');
+    const result = stmt.run(sku, name, description, category, unit || 'each', asCents(unit_price), preferred_supplier_id, lead_time_days || 3, image_url || '📦');
     const created = db.prepare(`SELECT * FROM catalog_items WHERE id = ?`).get(result.lastInsertRowid);
     res.status(201).json(created);
   } catch (error) {

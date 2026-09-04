@@ -19,7 +19,7 @@ router.get('/', (req, res) => {
     const spendByCategory = db.prepare(`
       SELECT 
         category,
-        ROUND(SUM(total_price), 2) as total_spend,
+        SUM(total_price) as total_spend,
         COUNT(*) as item_count
       FROM po_items
       GROUP BY category
@@ -31,7 +31,7 @@ router.get('/', (req, res) => {
       SELECT 
         s.id,
         s.name as supplier_name,
-        ROUND(SUM(po.total_amount), 2) as total_spend,
+        SUM(po.total_amount) as total_spend,
         COUNT(po.id) as po_count
       FROM suppliers s
       JOIN purchase_orders po ON s.id = po.supplier_id
@@ -50,7 +50,7 @@ router.get('/', (req, res) => {
         b.committed_amount,
         b.actual_spent,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
-        ROUND(((b.committed_amount + b.actual_spent) / b.total_budget) * 100, 1) as utilization_pct
+        ROUND(((b.committed_amount + b.actual_spent) * 100.0) / NULLIF(b.total_budget, 0), 1) as utilization_pct
       FROM departments d
       LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
       ORDER BY utilization_pct DESC

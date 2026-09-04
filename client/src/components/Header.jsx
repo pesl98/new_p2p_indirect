@@ -1,5 +1,6 @@
 import React from 'react';
 import { ShieldCheck, UserCheck, RefreshCw, Building2, Wallet } from 'lucide-react';
+import { formatMoney } from '../money';
 
 export default function Header({ users, currentUser, onSelectUser, onRefreshData }) {
   const getRoleBadge = (role) => {
@@ -64,7 +65,7 @@ export default function Header({ users, currentUser, onSelectUser, onRefreshData
                     <>
                       <span className="text-slate-300">•</span>
                       <span className="text-emerald-700 font-medium">
-                        Limit: ${currentUser.approval_limit.toLocaleString()}
+                        Limit: ${formatMoney(currentUser.approval_limit)}
                       </span>
                     </>
                   )}

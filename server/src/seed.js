@@ -1,9 +1,8 @@
-import db from './db.js';
+import db, { applySchema } from './db.js';
 
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
-// Clear existing tables in reverse dependency order
-const clearTables = [
+const allTables = [
   'match_results',
   'invoice_items',
   'invoices',
@@ -22,12 +21,19 @@ const clearTables = [
   'audit_logs'
 ];
 
-db.transaction(() => {
-  for (const table of clearTables) {
-    db.prepare(`DELETE FROM ${table}`).run();
-    db.prepare(`DELETE FROM sqlite_sequence WHERE name = ?`).run(table);
-  }
+db.pragma('foreign_keys = OFF');
+for (const table of allTables) {
+  db.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+db.pragma('foreign_keys = ON');
+try {
+  db.exec(`DELETE FROM sqlite_sequence`);
+} catch {
+  // sqlite_sequence is absent until AUTOINCREMENT tables exist
+}
+applySchema();
 
+db.transaction(() => {
   // 1. Departments
   const insertDept = db.prepare(`INSERT INTO departments (id, code, name) VALUES (?, ?, ?)`);
   insertDept.run(1, 'MKT', 'Marketing & Brand');
@@ -36,27 +42,27 @@ db.transaction(() => {
   insertDept.run(4, 'HRP', 'Human Resources & Talent');
   insertDept.run(5, 'ADM', 'Finance & Administration');
 
-  // 2. Users
+  // 2. Users (approval_limit in integer cents)
   const insertUser = db.prepare(`
     INSERT INTO users (id, name, email, role, department_id, title, approval_limit, avatar)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   insertUser.run(1, 'Alice Chen', 'alice.chen@company.com', 'requester', 1, 'Brand Marketing Specialist', 0, 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&h=120&fit=crop&crop=faces');
-  insertUser.run(2, 'Bob Martinez', 'bob.martinez@company.com', 'approver', 1, 'VP of Marketing', 10000, 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&h=120&fit=crop&crop=faces');
-  insertUser.run(3, 'Carol Zhang', 'carol.zhang@company.com', 'procurement', 3, 'Head of Strategic Sourcing', 50000, 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=120&h=120&fit=crop&crop=faces');
-  insertUser.run(4, 'David Miller', 'david.miller@company.com', 'finance', 5, 'Accounts Payable & Financial Controller', 150000, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=faces');
-  insertUser.run(5, 'Elena Rostova', 'elena.rostova@company.com', 'admin', 5, 'Chief Financial Officer (CFO)', 500000, 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=120&h=120&fit=crop&crop=faces');
+  insertUser.run(2, 'Bob Martinez', 'bob.martinez@company.com', 'approver', 1, 'VP of Marketing', 1000000, 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&h=120&fit=crop&crop=faces');
+  insertUser.run(3, 'Carol Zhang', 'carol.zhang@company.com', 'procurement', 3, 'Head of Strategic Sourcing', 5000000, 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=120&h=120&fit=crop&crop=faces');
+  insertUser.run(4, 'David Miller', 'david.miller@company.com', 'finance', 5, 'Accounts Payable & Financial Controller', 15000000, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=faces');
+  insertUser.run(5, 'Elena Rostova', 'elena.rostova@company.com', 'admin', 5, 'Chief Financial Officer (CFO)', 50000000, 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=120&h=120&fit=crop&crop=faces');
 
-  // 3. Budgets (Fiscal Year 2026)
+  // 3. Budgets (Fiscal Year 2026) — amounts in cents
   const insertBudget = db.prepare(`
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
     VALUES (?, ?, ?, ?, ?)
   `);
-  insertBudget.run(1, 2026, 150000, 15480, 24350); // MKT
-  insertBudget.run(2, 2026, 320000, 48200, 89100); // ITE
-  insertBudget.run(3, 2026, 95000, 12300, 18450);  // FAC
-  insertBudget.run(4, 2026, 60000, 4500, 11200);   // HRP
-  insertBudget.run(5, 2026, 50000, 3200, 8900);    // ADM
+  insertBudget.run(1, 2026, 15000000, 1548000, 2435000); // MKT $150,000 / $15,480 / $24,350
+  insertBudget.run(2, 2026, 32000000, 4820000, 8910000); // ITE
+  insertBudget.run(3, 2026, 9500000, 1230000, 1845000);  // FAC
+  insertBudget.run(4, 2026, 6000000, 450000, 1120000);   // HRP
+  insertBudget.run(5, 2026, 5000000, 320000, 890000);    // ADM
 
   // 4. Suppliers
   const insertSupplier = db.prepare(`
@@ -70,40 +76,35 @@ db.transaction(() => {
   insertSupplier.run(5, 'Apex Advisory & Digital', 'SUP-AAD', 'Dr. Liam Sterling', 'engagements@apexadvisory.com', '+1 (555) 432-1098', '350 Park Avenue, New York, NY', 'Net 60', 5.0, 'active');
   insertSupplier.run(6, 'FastTrack Express Freight', 'SUP-FEF', 'Tim O’Brian', 'dispatch@fasttracklogistics.com', '+1 (555) 678-9012', '12 Airport Loop, Dallas, TX', 'Net 15', 4.5, 'active');
 
-  // 5. Non-Production Catalog Items
+  // 5. Non-Production Catalog Items — unit_price in cents
   const insertCatalog = db.prepare(`
     INSERT INTO catalog_items (sku, name, description, category, unit, unit_price, preferred_supplier_id, lead_time_days, image_url)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  
-  // IT Hardware
-  insertCatalog.run('SKU-HW-001', 'Apple MacBook Pro 16" (M3 Max / 36GB / 1TB)', 'High-performance engineering & design workstation laptop', 'IT Hardware', 'each', 3499.00, 1, 3, '💻');
-  insertCatalog.run('SKU-HW-002', 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'Color-accurate IPS Black monitor with integrated hub', 'IT Hardware', 'each', 749.00, 1, 2, '🖥️');
-  insertCatalog.run('SKU-HW-003', 'Logitech MX Master 3S Wireless Mouse', 'Ergonomic performance mouse with quiet clicks and 8K DPI', 'IT Hardware', 'each', 99.00, 1, 1, '🖱️');
-  insertCatalog.run('SKU-HW-004', 'CalDigit TS4 Thunderbolt 4 Docking Station', '18-port expansion dock with 98W host charging', 'IT Hardware', 'each', 399.00, 1, 2, '🔌');
-  
-  // Software & Cloud
-  insertCatalog.run('SKU-SW-001', 'Figma Organization Annual User License', 'Collaborative interface design & prototyping enterprise seat', 'Software & Cloud', 'license/yr', 540.00, 2, 1, '🎨');
-  insertCatalog.run('SKU-SW-002', 'Slack Enterprise Grid Annual Subscription', 'Internal team communications and enterprise automation', 'Software & Cloud', 'user/yr', 180.00, 2, 1, '💬');
-  insertCatalog.run('SKU-SW-003', 'GitHub Enterprise Cloud Seat', 'Source code hosting, CI/CD Actions, and enterprise security', 'Software & Cloud', 'seat/yr', 252.00, 2, 1, '🐙');
-  insertCatalog.run('SKU-SW-004', '1Password Business Password Manager', 'Secure password vaulting for company employees', 'Software & Cloud', 'user/yr', 96.00, 2, 1, '🔐');
 
-  // Office Supplies & Ergonomics
-  insertCatalog.run('SKU-OFF-001', 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Fully adjustable mesh task chair with PostureFit SL', 'Office Supplies', 'each', 1295.00, 3, 7, '🪑');
-  insertCatalog.run('SKU-OFF-002', 'Jarvis Dual-Motor Electric Standing Desk (60"x30")', 'Solid bamboo height-adjustable workstation with memory handset', 'Office Supplies', 'each', 699.00, 3, 5, '🪵');
-  insertCatalog.run('SKU-OFF-003', 'Mobile Magnetic Porcelain Whiteboard (72" x 48")', 'Double-sided rolling presentation board with locking casters', 'Office Supplies', 'each', 349.00, 3, 4, '📋');
-  insertCatalog.run('SKU-OFF-004', 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 'Acid-free premium 20lb white copy paper for daily printing', 'Office Supplies', 'case', 58.00, 3, 2, '📄');
-  insertCatalog.run('SKU-OFF-005', 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 'Locally roasted whole bean coffee for office kitchen', 'Office Supplies', 'bag', 72.00, 3, 2, '☕');
+  insertCatalog.run('SKU-HW-001', 'Apple MacBook Pro 16" (M3 Max / 36GB / 1TB)', 'High-performance engineering & design workstation laptop', 'IT Hardware', 'each', 349900, 1, 3, '💻');
+  insertCatalog.run('SKU-HW-002', 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'Color-accurate IPS Black monitor with integrated hub', 'IT Hardware', 'each', 74900, 1, 2, '🖥️');
+  insertCatalog.run('SKU-HW-003', 'Logitech MX Master 3S Wireless Mouse', 'Ergonomic performance mouse with quiet clicks and 8K DPI', 'IT Hardware', 'each', 9900, 1, 1, '🖱️');
+  insertCatalog.run('SKU-HW-004', 'CalDigit TS4 Thunderbolt 4 Docking Station', '18-port expansion dock with 98W host charging', 'IT Hardware', 'each', 39900, 1, 2, '🔌');
 
-  // Facilities & MRO
-  insertCatalog.run('SKU-FAC-001', 'Blueair Pro XL Commercial HEPA Air Purifier', 'Commercial grade air filtration for meeting rooms and open spaces', 'Facilities & MRO', 'each', 890.00, 4, 3, '💨');
-  insertCatalog.run('SKU-FAC-002', 'OSHA 4-Shelf Industrial First Aid Station', 'Compliant wall-mounted emergency medical care unit', 'Facilities & MRO', 'kit', 210.00, 4, 2, '🩹');
-  insertCatalog.run('SKU-FAC-003', 'Commercial Touchless Sanitizer & Dispenser Stand', 'Floor-standing automatic sensor sanitizer station', 'Facilities & MRO', 'set', 145.00, 4, 2, '🧴');
+  insertCatalog.run('SKU-SW-001', 'Figma Organization Annual User License', 'Collaborative interface design & prototyping enterprise seat', 'Software & Cloud', 'license/yr', 54000, 2, 1, '🎨');
+  insertCatalog.run('SKU-SW-002', 'Slack Enterprise Grid Annual Subscription', 'Internal team communications and enterprise automation', 'Software & Cloud', 'user/yr', 18000, 2, 1, '💬');
+  insertCatalog.run('SKU-SW-003', 'GitHub Enterprise Cloud Seat', 'Source code hosting, CI/CD Actions, and enterprise security', 'Software & Cloud', 'seat/yr', 25200, 2, 1, '🐙');
+  insertCatalog.run('SKU-SW-004', '1Password Business Password Manager', 'Secure password vaulting for company employees', 'Software & Cloud', 'user/yr', 9600, 2, 1, '🔐');
 
-  // Consulting & Professional Services
-  insertCatalog.run('SKU-SRV-001', 'Enterprise UX Audit & Design System Sprint', 'Two-week dedicated product design sprint and component audit', 'Consulting & Professional Services', 'sprint', 8500.00, 5, 14, '📐');
-  insertCatalog.run('SKU-SRV-002', 'SOC 2 Type II Annual Security Penetration Test', 'Full external threat simulation, vulnerability assessment, and report', 'Consulting & Professional Services', 'engagement', 12500.00, 5, 21, '🛡️');
-  insertCatalog.run('SKU-SRV-003', 'Executive Team Coaching & Alignment Workshop', 'Two-day facilitator-led offsite strategy alignment workshop', 'Consulting & Professional Services', 'event', 6200.00, 5, 10, '👥');
+  insertCatalog.run('SKU-OFF-001', 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Fully adjustable mesh task chair with PostureFit SL', 'Office Supplies', 'each', 129500, 3, 7, '🪑');
+  insertCatalog.run('SKU-OFF-002', 'Jarvis Dual-Motor Electric Standing Desk (60"x30")', 'Solid bamboo height-adjustable workstation with memory handset', 'Office Supplies', 'each', 69900, 3, 5, '🪵');
+  insertCatalog.run('SKU-OFF-003', 'Mobile Magnetic Porcelain Whiteboard (72" x 48")', 'Double-sided rolling presentation board with locking casters', 'Office Supplies', 'each', 34900, 3, 4, '📋');
+  insertCatalog.run('SKU-OFF-004', 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 'Acid-free premium 20lb white copy paper for daily printing', 'Office Supplies', 'case', 5800, 3, 2, '📄');
+  insertCatalog.run('SKU-OFF-005', 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 'Locally roasted whole bean coffee for office kitchen', 'Office Supplies', 'bag', 7200, 3, 2, '☕');
+
+  insertCatalog.run('SKU-FAC-001', 'Blueair Pro XL Commercial HEPA Air Purifier', 'Commercial grade air filtration for meeting rooms and open spaces', 'Facilities & MRO', 'each', 89000, 4, 3, '💨');
+  insertCatalog.run('SKU-FAC-002', 'OSHA 4-Shelf Industrial First Aid Station', 'Compliant wall-mounted emergency medical care unit', 'Facilities & MRO', 'kit', 21000, 4, 2, '🩹');
+  insertCatalog.run('SKU-FAC-003', 'Commercial Touchless Sanitizer & Dispenser Stand', 'Floor-standing automatic sensor sanitizer station', 'Facilities & MRO', 'set', 14500, 4, 2, '🧴');
+
+  insertCatalog.run('SKU-SRV-001', 'Enterprise UX Audit & Design System Sprint', 'Two-week dedicated product design sprint and component audit', 'Consulting & Professional Services', 'sprint', 850000, 5, 14, '📐');
+  insertCatalog.run('SKU-SRV-002', 'SOC 2 Type II Annual Security Penetration Test', 'Full external threat simulation, vulnerability assessment, and report', 'Consulting & Professional Services', 'engagement', 1250000, 5, 21, '🛡️');
+  insertCatalog.run('SKU-SRV-003', 'Executive Team Coaching & Alignment Workshop', 'Two-day facilitator-led offsite strategy alignment workshop', 'Consulting & Professional Services', 'event', 620000, 5, 10, '👥');
 
   // 6. Purchase Requisitions & Items
   const insertPR = db.prepare(`
@@ -115,36 +116,29 @@ db.transaction(() => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // PR 1: Converted to PO (Herman Miller Chairs for Marketing team)
-  insertPR.run(1, 'PR-2026-001', 1, 1, 'converted_to_po', 2590.00, 'Ergonomic upgrades for new marketing content creators joining this quarter.', '2026-09-15', 'High', '-7 days');
-  insertPRItem.run(1, 9, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 2, 1295.00, 2590.00, 3);
+  insertPR.run(1, 'PR-2026-001', 1, 1, 'converted_to_po', 259000, 'Ergonomic upgrades for new marketing content creators joining this quarter.', '2026-09-15', 'High', '-7 days');
+  insertPRItem.run(1, 9, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 2, 129500, 259000, 3);
 
-  // PR 2: Approved, Ready for PO creation (Designer Laptops & Monitors)
-  insertPR.run(2, 'PR-2026-002', 1, 1, 'approved', 4248.00, 'Hardware refresh for senior brand designer preparing Q4 brand relaunch.', '2026-09-20', 'High', '-3 days');
-  insertPRItem.run(2, 1, 'Apple MacBook Pro 16" (M3 Max / 36GB / 1TB)', 'IT Hardware', 1, 3499.00, 3499.00, 1);
-  insertPRItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 1, 749.00, 749.00, 1);
+  insertPR.run(2, 'PR-2026-002', 1, 1, 'approved', 424800, 'Hardware refresh for senior brand designer preparing Q4 brand relaunch.', '2026-09-20', 'High', '-3 days');
+  insertPRItem.run(2, 1, 'Apple MacBook Pro 16" (M3 Max / 36GB / 1TB)', 'IT Hardware', 1, 349900, 349900, 1);
+  insertPRItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 1, 74900, 74900, 1);
 
-  // PR 3: Pending Approval (UX Audit Consulting Sprint - $8,500)
-  insertPR.run(3, 'PR-2026-003', 1, 1, 'pending_approval', 8500.00, 'External expert audit of our primary customer onboarding flow to lift conversion.', '2026-10-01', 'Medium', '-1 days');
-  insertPRItem.run(3, 16, 'Enterprise UX Audit & Design System Sprint', 'Consulting & Professional Services', 1, 8500.00, 8500.00, 5);
+  insertPR.run(3, 'PR-2026-003', 1, 1, 'pending_approval', 850000, 'External expert audit of our primary customer onboarding flow to lift conversion.', '2026-10-01', 'Medium', '-1 days');
+  insertPRItem.run(3, 16, 'Enterprise UX Audit & Design System Sprint', 'Consulting & Professional Services', 1, 850000, 850000, 5);
 
-  // PR 4: Draft (Office stationery & Coffee)
-  insertPR.run(4, 'PR-2026-004', 1, 1, 'draft', 476.00, 'Quarterly refill of print paper and kitchen espresso beans for Marketing wing.', '2026-09-25', 'Low', '0 days');
-  insertPRItem.run(4, 12, 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 'Office Supplies', 4, 58.00, 232.00, 3);
-  insertPRItem.run(4, 13, 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 'Office Supplies', 3, 72.00, 216.00, 3);
-  insertPRItem.run(4, 3, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 1, 99.00, 99.00, 1);
+  insertPR.run(4, 'PR-2026-004', 1, 1, 'draft', 54700, 'Quarterly refill of print paper and kitchen espresso beans for Marketing wing.', '2026-09-25', 'Low', '0 days');
+  insertPRItem.run(4, 12, 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 'Office Supplies', 4, 5800, 23200, 3);
+  insertPRItem.run(4, 13, 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 'Office Supplies', 3, 7200, 21600, 3);
+  insertPRItem.run(4, 3, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 1, 9900, 9900, 1);
 
   // 7. Approval Requests
   const insertApproval = db.prepare(`
     INSERT INTO approval_requests (requisition_id, approver_id, step_order, status, comments, decided_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
-  // PR 1: Approved by Bob
   insertApproval.run(1, 2, 1, 'approved', 'Approved. Within Q3 ergonomics allocated budget.', '2026-08-28 14:20:00');
-  // PR 2: Approved by Bob & Carol
   insertApproval.run(2, 2, 1, 'approved', 'Approved hardware upgrade for brand lead.', '2026-09-01 10:15:00');
   insertApproval.run(2, 3, 2, 'approved', 'Procurement verified against vendor standard contract discount.', '2026-09-01 16:40:00');
-  // PR 3: Pending with Bob Martinez (Marketing Director)
   insertApproval.run(3, 2, 1, 'pending', null, null);
 
   // 8. Purchase Orders
@@ -157,7 +151,6 @@ db.transaction(() => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // PO 1: Issued & Fully Received against PR 1 (Chairs)
   insertPO.run(
     1,
     'PO-2026-001',
@@ -165,16 +158,15 @@ db.transaction(() => {
     3,
     3,
     'received',
-    2590.00,
+    259000,
     '2026-08-29',
     '2026-09-05',
     'Net 45',
     'Acme Corp HQ - Bldg B, Receiving Bay 2, 450 Tech Blvd, Austin, TX 78701',
     'Standard ground delivery. Call 555-0199 upon arrival.'
   );
-  insertPOItem.run(1, 1, 1, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 2, 1295.00, 2590.00, 2, 2);
+  insertPOItem.run(1, 1, 1, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 2, 129500, 259000, 2, 2);
 
-  // PO 2: Partially Received (Monitors ordered directly by Procurement)
   insertPO.run(
     2,
     'PO-2026-002',
@@ -182,14 +174,15 @@ db.transaction(() => {
     1,
     3,
     'partially_received',
-    2996.00,
+    299600,
     '2026-08-30',
     '2026-09-10',
     'Net 30',
     'Acme Corp HQ - IT Dept Receiving, 450 Tech Blvd, Austin, TX 78701',
     'Rush order for new engineering cohort.'
   );
-  insertPOItem.run(2, 2, null, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 4, 749.00, 2996.00, 2, 0);
+  // Claimed invoiced qty recorded for audit even though match failed (4 billed vs 2 received).
+  insertPOItem.run(2, 2, null, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 4, 74900, 299600, 2, 4);
 
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
@@ -201,11 +194,9 @@ db.transaction(() => {
     VALUES (?, ?, ?, ?, ?)
   `);
 
-  // GRN 1: Full receipt for PO 1
   insertGRN.run(1, 'GRN-2026-001', 1, 3, '2026-09-02', 'FEDEX-992384110', 'DN-WED-8821', 'Arrived intact on pallet. Inspected and verified intact.');
   insertGRNItem.run(1, 1, 2, 'good', 'Both chairs unboxed and wheels checked.');
 
-  // GRN 2: Partial receipt for PO 2 (2 out of 4 monitors received)
   insertGRN.run(2, 'GRN-2026-002', 2, 3, '2026-09-03', 'UPS-1Z999999999', 'DN-TSG-4412', 'Partial delivery: 2 monitors delivered; 2 remain on backorder.');
   insertGRNItem.run(2, 2, 2, 'good', 'Boxes intact, serial numbers logged.');
 
@@ -223,7 +214,6 @@ db.transaction(() => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Invoice 1: Perfect 3-Way Match for PO 1 (Chairs)
   insertInvoice.run(
     1,
     'INV-WED-9042',
@@ -231,19 +221,18 @@ db.transaction(() => {
     3,
     '2026-09-02',
     '2026-10-17',
-    2590.00,
-    0.00,
-    2590.00,
+    259000,
+    0,
+    259000,
     'approved_for_payment',
     'perfect_match',
     'ACH-SCHEDULED-1017',
     'Perfect match against GRN-2026-001 and PO-2026-001.'
   );
-  insertInvoiceItem.run(1, 1, 'Herman Miller Aeron Ergonomic Chair (Size B)', 2, 1295.00, 2590.00);
-  insertMatch.run(1, 1, 1, 2, 2, 2, 1295.00, 1295.00, 0, 0, 'pass', 'Exact match on quantity (2) and price ($1,295.00).');
+  insertInvoiceItem.run(1, 1, 'Herman Miller Aeron Ergonomic Chair (Size B)', 2, 129500, 259000);
+  insertMatch.run(1, 1, 1, 2, 2, 2, 129500, 129500, 0, 0, 'pass', 'Exact match on quantity (2) and price ($1,295.00).');
 
-  // Invoice 2: Discrepancy / Variance Example for PO 2
-  // Supplier billed 4 monitors at $799 each ($50 higher than PO price $749), and 4 billed while only 2 physically received!
+  // Supplier billed 4 monitors at $799 (79900¢) vs PO $749 (74900¢); only 2 received → total_variance
   insertInvoice.run(
     2,
     'INV-TSG-11029',
@@ -251,16 +240,16 @@ db.transaction(() => {
     1,
     '2026-09-03',
     '2026-10-03',
-    3196.00,
-    0.00,
-    3196.00,
+    319600,
+    0,
+    319600,
     'variance_flagged',
-    'price_variance',
+    'total_variance',
     null,
     'Discrepancy detected: Invoiced unit price $799.00 exceeds PO price $749.00 by $50.00/unit. Also only 2 of 4 units have been received.'
   );
-  insertInvoiceItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 4, 799.00, 3196.00);
-  insertMatch.run(2, 2, 2, 4, 2, 4, 749.00, 799.00, 2, 50.00, 'fail', 'Quantity variance: Billed for 4, but only 2 received. Price variance: Billed at $799.00 vs PO $749.00 (+6.67%).');
+  insertInvoiceItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 4, 79900, 319600);
+  insertMatch.run(2, 2, 2, 4, 2, 4, 74900, 79900, 2, 5000, 'fail', 'Quantity variance: Cumulative invoiced 4 (prior 0 + this claim 4) exceeds 2 physically received on GRN. Price discrepancy: Billed at $799.00 vs authorized PO price $749.00 (+6.68%).');
 
   // 11. Audit Logs
   const insertAudit = db.prepare(`
@@ -278,4 +267,4 @@ db.transaction(() => {
 
 })();
 
-console.log('✅ Database seeded successfully with realistic P2P data!');
+console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');

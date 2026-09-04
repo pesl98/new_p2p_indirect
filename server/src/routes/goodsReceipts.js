@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { toQty } from '../money.js';
 
 const router = express.Router();
 
@@ -115,7 +116,7 @@ router.post('/', (req, res) => {
 
       let totalReceivedInThisGRN = 0;
       for (const item of items) {
-        const qty = Number(item.quantity_received) || 0;
+        const qty = toQty(item.quantity_received);
         if (qty > 0) {
           insertGRItem.run(grId, item.po_item_id, qty, item.condition || 'good', item.comments || null);
           updatePOItem.run(qty, item.po_item_id);
