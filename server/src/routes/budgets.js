@@ -17,7 +17,8 @@ router.get('/', (req, res) => {
         d.name as department_name,
         d.code as department_code,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
-        ROUND(((b.committed_amount + b.actual_spent) / b.total_budget) * 100, 1) as utilization_pct
+        -- Display % only: multiply before divide so SQLite integer cents do not truncate to 0.
+        ROUND(((b.committed_amount + b.actual_spent) * 100.0) / NULLIF(b.total_budget, 0), 1) as utilization_pct
       FROM budgets b
       JOIN departments d ON b.department_id = d.id
       WHERE b.fiscal_year = 2026

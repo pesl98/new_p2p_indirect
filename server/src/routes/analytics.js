@@ -50,7 +50,7 @@ router.get('/', (req, res) => {
         b.committed_amount,
         b.actual_spent,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
-        ROUND(((b.committed_amount + b.actual_spent) / b.total_budget) * 100, 1) as utilization_pct
+        ROUND(((b.committed_amount + b.actual_spent) * 100.0) / NULLIF(b.total_budget, 0), 1) as utilization_pct
       FROM departments d
       LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
       ORDER BY utilization_pct DESC
