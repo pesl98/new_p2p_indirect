@@ -235,6 +235,22 @@ db.transaction(() => {
   );
   insertPOItem.run(3, 3, 8, 'SOC 2 Type II Annual Security Penetration Test', 'Consulting & Professional Services', 1, 1250000, 1250000, 0, 1);
 
+  insertPO.run(
+    4,
+    'PO-2026-004',
+    null,
+    2,
+    3,
+    'issued',
+    108000,
+    '2026-09-02',
+    '2026-09-30',
+    'Net 30',
+    'Acme Corp HQ - Design Systems, 450 Tech Blvd, Austin, TX 78701',
+    'SaaS seats. Accept via Service Entry Sheet when licenses are provisioned.'
+  );
+  insertPOItem.run(4, 4, null, 'Figma Organization Annual User License', 'Software & Cloud', 2, 54000, 108000, 0, 0);
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
