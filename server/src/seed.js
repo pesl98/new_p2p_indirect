@@ -203,7 +203,7 @@ db.transaction(() => {
   insertGRN.run(2, 'GRN-2026-002', 2, 3, '2026-09-03', 'UPS-1Z999999999', 'DN-TSG-4412', 'Partial delivery: 2 monitors delivered; 2 remain on backorder.');
   insertGRNItem.run(2, 2, 2, 'good', 'Boxes intact, serial numbers logged.');
 
-  // 10. Invoices
+  // 10. Invoices — UNIQUE(supplier_id, invoice_number); seed numbers are distinct per vendor
   const insertInvoice = db.prepare(`
     INSERT INTO invoices (id, invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, payment_reference, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

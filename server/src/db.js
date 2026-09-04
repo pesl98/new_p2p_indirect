@@ -26,6 +26,7 @@ export function applySchema(database = db) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   database.exec(schema);
   migrateApprovalRequestsWaitingStatus(database);
+  migrateInvoiceNumberUniqueness(database);
 }
 
 /** Existing DBs created before sequential routing need CHECK to allow `waiting`. */
@@ -55,6 +56,26 @@ function migrateApprovalRequestsWaitingStatus(database) {
     DROP TABLE approval_requests;
     ALTER TABLE approval_requests_migrated RENAME TO approval_requests;
   `);
+}
+
+/** Existing DBs created before supplier+invoice uniqueness need a unique index. */
+function migrateInvoiceNumberUniqueness(database) {
+  const table = database.prepare(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'invoices'`
+  ).get();
+  if ((table?.sql || '').includes('UNIQUE(supplier_id, invoice_number)')) return;
+
+  const indexes = database.prepare(
+    `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'invoices'`
+  ).all();
+  const hasUnique = indexes.some((idx) =>
+    /supplier_id/i.test(idx.sql || '') && /invoice_number/i.test(idx.sql || '')
+  );
+  if (hasUnique) return;
+
+  database.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS invoices_supplier_invoice_number ON invoices(supplier_id, invoice_number)`
+  );
 }
 
 applySchema(db);

@@ -92,11 +92,16 @@ export const api = {
     return fetch(`${API_BASE}/goods-receipts?${params.toString()}`).then(r => r.json());
   },
   getGoodsReceiptDetail: (id) => fetch(`${API_BASE}/goods-receipts/${id}`).then(r => r.json()),
-  createGoodsReceipt: (receiptData) => fetch(`${API_BASE}/goods-receipts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(receiptData)
-  }).then(r => r.json()),
+  createGoodsReceipt: async (receiptData) => {
+    const r = await fetch(`${API_BASE}/goods-receipts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(receiptData)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to record goods receipt');
+    return data;
+  },
 
   // Invoices & 3-Way Match
   getInvoices: (status = '') => {
@@ -105,11 +110,16 @@ export const api = {
     return fetch(`${API_BASE}/invoices?${params.toString()}`).then(r => r.json());
   },
   getInvoiceDetail: (id) => fetch(`${API_BASE}/invoices/${id}`).then(r => r.json()),
-  createInvoice: (invoiceData) => fetch(`${API_BASE}/invoices`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(invoiceData)
-  }).then(r => r.json()),
+  createInvoice: async (invoiceData) => {
+    const r = await fetch(`${API_BASE}/invoices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(invoiceData)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to create invoice');
+    return data;
+  },
   approveInvoicePayment: (id, data) => fetch(`${API_BASE}/invoices/${id}/approve-payment`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

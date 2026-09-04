@@ -188,4 +188,92 @@ describe('sequential approval decisions', () => {
     const budget = db.prepare(`SELECT committed_amount FROM budgets WHERE department_id = 1`).get();
     assert.equal(budget.committed_amount, 1000 + amount);
   });
+
+  test('final approve fails closed when remaining budget is insufficient', () => {
+    const db = createTestDb();
+    db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
+    const prAmount = 50_001;
+    const prId = insertPr(db, prAmount);
+    insertApprovalChain(db, prId, prAmount, 1);
+    const [step1] = chainRows(db, prId);
+
+    assert.throws(
+      () => decideApprovalStep(db, {
+        approvalId: step1.id,
+        decision: 'approved',
+        approver_id: step1.approver_id,
+        approver_name: 'Bob Martinez'
+      }),
+      (err) => err instanceof ApprovalDecisionError
+        && err.statusCode === 400
+        && /Insufficient remaining budget/i.test(err.message)
+    );
+
+    const pr = db.prepare(`SELECT status FROM purchase_requisitions WHERE id = ?`).get(prId);
+    assert.equal(pr.status, 'pending_approval');
+    assert.equal(chainRows(db, prId)[0].status, 'pending');
+    const budget = db.prepare(`SELECT committed_amount FROM budgets WHERE department_id = 1`).get();
+    assert.equal(budget.committed_amount, 14950000);
+  });
+
+  test('final approve succeeds when remaining budget equals PR total', () => {
+    const db = createTestDb();
+    const amount = 50_000;
+    db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
+    const prId = insertPr(db, amount);
+    insertApprovalChain(db, prId, amount, 1);
+    const [step1] = chainRows(db, prId);
+
+    const result = decideApprovalStep(db, {
+      approvalId: step1.id,
+      decision: 'approved',
+      approver_id: step1.approver_id,
+      approver_name: 'Bob Martinez'
+    });
+    assert.equal(result.budgetCommitted, true);
+    const budget = db.prepare(`SELECT committed_amount FROM budgets WHERE department_id = 1`).get();
+    assert.equal(budget.committed_amount, 15000000);
+  });
+
+  test('intermediate step still approves when remaining budget is insufficient', () => {
+    const db = createTestDb();
+    db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
+    const amount = APPROVAL_TIER2_CENTS + 500;
+    const prId = insertPr(db, amount);
+    insertApprovalChain(db, prId, amount, 1);
+    const [step1] = chainRows(db, prId);
+
+    const result = decideApprovalStep(db, {
+      approvalId: step1.id,
+      decision: 'approved',
+      approver_id: step1.approver_id,
+      approver_name: 'Bob Martinez'
+    });
+    assert.equal(result.outcome, 'step_approved');
+    assert.equal(result.budgetCommitted, false);
+    const budget = db.prepare(`SELECT committed_amount FROM budgets WHERE department_id = 1`).get();
+    assert.equal(budget.committed_amount, 14950000);
+  });
+
+  test('override_budget allows final approve when remaining is insufficient', () => {
+    const db = createTestDb();
+    db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
+    const amount = 60_000;
+    const prId = insertPr(db, amount);
+    insertApprovalChain(db, prId, amount, 1);
+    const [step1] = chainRows(db, prId);
+
+    const result = decideApprovalStep(db, {
+      approvalId: step1.id,
+      decision: 'approved',
+      approver_id: step1.approver_id,
+      approver_name: 'Bob Martinez',
+      override_budget: true
+    });
+    assert.equal(result.budgetCommitted, true);
+    const log = db.prepare(`
+      SELECT action FROM audit_logs WHERE entity_type = 'requisition' AND entity_id = ? AND action = 'BUDGET_OVERRIDE'
+    `).get(prId);
+    assert.ok(log);
+  });
 });

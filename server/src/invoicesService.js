@@ -36,6 +36,14 @@ export function createVendorInvoice(db, payload) {
   const tax = asCents(tax_amount);
   const totalAmount = calculatedSubtotal + tax;
 
+  if (!invoice_number || String(invoice_number).trim() === '') {
+    const err = new Error('invoice_number is required.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const resolvedSupplierId = supplier_id || po.supplier_id;
+
   const invoiceTransaction = db.transaction(() => {
     const insertInvoice = db.prepare(`
       INSERT INTO invoices (invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, notes)
@@ -44,7 +52,7 @@ export function createVendorInvoice(db, payload) {
     const invResult = insertInvoice.run(
       invoice_number,
       po_id,
-      supplier_id || po.supplier_id,
+      resolvedSupplierId,
       invoice_date || new Date().toISOString().split('T')[0],
       due_date || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       calculatedSubtotal,
@@ -92,7 +100,24 @@ export function createVendorInvoice(db, payload) {
     return { invoiceId, matchOutcome };
   });
 
-  return invoiceTransaction();
+  try {
+    return invoiceTransaction();
+  } catch (error) {
+    if (isUniqueConstraint(error)) {
+      const err = new Error(
+        `Invoice number '${invoice_number}' already exists for this supplier.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+    throw error;
+  }
+}
+
+function isUniqueConstraint(error) {
+  return error?.code === 'SQLITE_CONSTRAINT_UNIQUE'
+    || (error?.code === 'SQLITE_CONSTRAINT' && /UNIQUE/i.test(error.message || ''))
+    || /UNIQUE constraint failed/i.test(error.message || '');
 }
 
 export function approveInvoicePayment(db, id, { approver_name, override_reason } = {}) {

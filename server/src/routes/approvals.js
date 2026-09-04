@@ -65,14 +65,15 @@ router.get('/', (req, res) => {
 router.post('/:id/decide', (req, res) => {
   try {
     const { id } = req.params;
-    const { decision, comments, approver_name, approver_id } = req.body; // decision: 'approved' | 'rejected'
+    const { decision, comments, approver_name, approver_id, override_budget } = req.body; // decision: 'approved' | 'rejected'
 
     const result = decideApprovalStep(db, {
       approvalId: id,
       decision,
       comments,
       approver_id,
-      approver_name
+      approver_name,
+      override_budget
     });
 
     res.json({ message: `Requisition ${decision} successfully`, ...result });
