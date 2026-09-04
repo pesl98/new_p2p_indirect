@@ -1,4 +1,5 @@
 import { asCents, formatCents, toQty } from './money.js';
+import { isServiceLine } from './lineType.js';
 
 /**
  * Price tolerance for 3-way match: 1% of the PO unit price in cents,
@@ -13,10 +14,14 @@ export function priceToleranceCents(poUnitPriceCents) {
 }
 
 /**
- * Run 3-way match (PO vs GRN vs this invoice) using integer cents and integer qty.
+ * Run invoice match using integer cents and integer qty.
+ *
+ * Goods lines: 3-way (PO vs GRN `quantity_received` vs invoice).
+ * Service lines: SES-backed 2-way (PO vs accepted SES `quantity_accepted` vs invoice).
+ * Physical GRN is not required for service lines.
  *
  * Quantity: fail if prior `po_items.quantity_invoiced` + this claim exceeds
- * `quantity_received` (physical GRN) or ordered qty. This function must be
+ * the line's receipt basis (GRN or SES) or ordered qty. This function must be
  * called BEFORE incrementing `quantity_invoiced` so prior cumulative is intact.
  *
  * `quantity_invoiced` is still persisted for the claimed amount after match
@@ -32,26 +37,28 @@ export function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     const poItem = db.prepare(`SELECT * FROM po_items WHERE id = ?`).get(item.po_item_id);
     if (!poItem) continue;
 
+    const serviceLine = isServiceLine(poItem);
     const claimedQty = toQty(item.quantity_invoiced);
     const invoicedPrice = asCents(item.unit_price);
     const poPrice = asCents(poItem.unit_price);
-    const poReceivedQty = toQty(poItem.quantity_received);
+    const receiptQty = serviceLine ? toQty(poItem.quantity_accepted) : toQty(poItem.quantity_received);
+    const receiptLabel = serviceLine ? 'accepted on SES' : 'physically received on GRN';
     const poOrderedQty = toQty(poItem.quantity);
     const priorInvoicedQty = toQty(poItem.quantity_invoiced);
     const cumulativeInvoicedQty = priorInvoicedQty + claimedQty;
 
     const priceDiff = invoicedPrice - poPrice;
     const absPriceDiff = Math.abs(priceDiff);
-    const qtyOverageVsReceived = Math.max(0, cumulativeInvoicedQty - poReceivedQty);
+    const qtyOverageVsReceived = Math.max(0, cumulativeInvoicedQty - receiptQty);
 
     let status = 'pass';
     const messages = [];
 
-    if (cumulativeInvoicedQty > poReceivedQty) {
+    if (cumulativeInvoicedQty > receiptQty) {
       status = 'fail';
       hasQuantityVariance = true;
       messages.push(
-        `Quantity variance: Cumulative invoiced ${cumulativeInvoicedQty} (prior ${priorInvoicedQty} + this claim ${claimedQty}) exceeds ${poReceivedQty} physically received on GRN.`
+        `Quantity variance: Cumulative invoiced ${cumulativeInvoicedQty} (prior ${priorInvoicedQty} + this claim ${claimedQty}) exceeds ${receiptQty} ${receiptLabel}.`
       );
     }
     if (cumulativeInvoicedQty > poOrderedQty) {
@@ -90,14 +97,16 @@ export function run3WayMatch(db, invoiceId, poId, invoiceItems) {
 
     if (messages.length === 0) {
       messages.push(
-        `Exact match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
+        serviceLine
+          ? `Exact SES-backed match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
+          : `Exact match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
       );
     }
 
     matchEntries.push({
       po_item_id: poItem.id,
       ordered_qty: poOrderedQty,
-      received_qty: poReceivedQty,
+      received_qty: receiptQty,
       invoiced_qty: claimedQty,
       po_unit_price: poPrice,
       invoice_unit_price: invoicedPrice,

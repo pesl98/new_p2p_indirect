@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { asCents } from '../money.js';
+import { normalizeLineType } from '../lineType.js';
 
 const router = express.Router();
 
@@ -37,12 +38,13 @@ router.get('/', (req, res) => {
 // Add catalog item
 router.post('/', (req, res) => {
   try {
-    const { sku, name, description, category, unit, unit_price, preferred_supplier_id, lead_time_days, image_url } = req.body;
+    const { sku, name, description, category, unit, unit_price, preferred_supplier_id, lead_time_days, image_url, line_type } = req.body;
+    const resolvedType = normalizeLineType(line_type, category);
     const stmt = db.prepare(`
-      INSERT INTO catalog_items (sku, name, description, category, unit, unit_price, preferred_supplier_id, lead_time_days, image_url)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO catalog_items (sku, name, description, category, unit, unit_price, preferred_supplier_id, lead_time_days, image_url, line_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(sku, name, description, category, unit || 'each', asCents(unit_price), preferred_supplier_id, lead_time_days || 3, image_url || '📦');
+    const result = stmt.run(sku, name, description, category, unit || 'each', asCents(unit_price), preferred_supplier_id, lead_time_days || 3, image_url || '📦', resolvedType);
     const created = db.prepare(`SELECT * FROM catalog_items WHERE id = ?`).get(result.lastInsertRowid);
     res.status(201).json(created);
   } catch (error) {

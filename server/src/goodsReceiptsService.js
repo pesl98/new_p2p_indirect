@@ -1,5 +1,7 @@
 import { toQty } from './money.js';
 import { nextDocumentNumber } from './docNumbers.js';
+import { isServiceLine } from './lineType.js';
+import { refreshPoFulfillmentStatus } from './poFulfillment.js';
 
 export class GoodsReceiptError extends Error {
   constructor(message, statusCode = 400) {
@@ -55,6 +57,11 @@ export function createGoodsReceipt(db, payload) {
       if (!poItem) {
         throw new GoodsReceiptError(
           `PO line ${item.po_item_id} was not found on this purchase order.`
+        );
+      }
+      if (isServiceLine(poItem)) {
+        throw new GoodsReceiptError(
+          `PO line ${poItem.id} (${poItem.item_description}) is a service line. Accept it on a Service Entry Sheet, not a GRN.`
         );
       }
 
@@ -122,12 +129,7 @@ export function createGoodsReceipt(db, payload) {
       }
     }
 
-    const allPOItems = db.prepare(`SELECT quantity, quantity_received FROM po_items WHERE po_id = ?`).all(po_id);
-    const isFullyReceived = allPOItems.every((i) => i.quantity_received >= i.quantity);
-    const isPartiallyReceived = allPOItems.some((i) => i.quantity_received > 0);
-
-    const newPOStatus = isFullyReceived ? 'received' : (isPartiallyReceived ? 'partially_received' : po.status);
-    db.prepare(`UPDATE purchase_orders SET status = ? WHERE id = ?`).run(newPOStatus, po_id);
+    const newPOStatus = refreshPoFulfillmentStatus(db, po_id);
 
     const actor = actor_name || 'Procurement Officer';
     db.prepare(`

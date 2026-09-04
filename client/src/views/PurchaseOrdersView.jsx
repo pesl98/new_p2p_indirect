@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
+import { isServiceLine, lineTypeLabel } from '../lineType';
 
 export default function PurchaseOrdersView({ currentUser, onNavigate }) {
   const [orders, setOrders] = useState([]);
@@ -145,8 +146,9 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                 </tr>
               ) : (
                 orders.map((po) => {
+                  const fulfilled = po.total_qty_fulfilled ?? po.total_qty_received;
                   const pct = po.total_qty_ordered > 0
-                    ? Math.round((po.total_qty_received / po.total_qty_ordered) * 100)
+                    ? Math.round((fulfilled / po.total_qty_ordered) * 100)
                     : 0;
 
                   return (
@@ -173,7 +175,8 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                           />
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
-                          {po.total_qty_received} of {po.total_qty_ordered} units received ({pct}%)
+                          {fulfilled} of {po.total_qty_ordered} units fulfilled ({pct}%)
+                          {(po.service_line_count > 0 && po.goods_line_count > 0) ? ' · mixed PO' : po.service_line_count > 0 ? ' · SES' : ' · GRN'}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-slate-500">{po.issue_date}</td>
@@ -186,13 +189,22 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                           <Eye className="w-3.5 h-3.5" />
                           <span>View PO</span>
                         </button>
-                        {po.status !== 'received' && po.status !== 'closed' && (
+                        {po.status !== 'received' && po.status !== 'closed' && po.goods_line_count > 0 && (
                           <button
                             onClick={() => onNavigate('goods_receipt')}
                             className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                           >
                             <Package className="w-3.5 h-3.5" />
-                            <span>Receive</span>
+                            <span>GRN</span>
+                          </button>
+                        )}
+                        {po.status !== 'received' && po.status !== 'closed' && po.service_line_count > 0 && (
+                          <button
+                            onClick={() => onNavigate('service_entry')}
+                            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-semibold text-[11px] inline-flex items-center space-x-1"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>SES</span>
                           </button>
                         )}
                       </td>
@@ -350,22 +362,31 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                   <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px]">
                     <tr>
                       <th className="py-2.5 px-3">Item / Service Description</th>
+                      <th className="py-2.5 px-3">Type</th>
                       <th className="py-2.5 px-3">Category</th>
                       <th className="py-2.5 px-3 text-center">Qty Ordered</th>
-                      <th className="py-2.5 px-3 text-center">Qty Received</th>
+                      <th className="py-2.5 px-3 text-center">Fulfilled</th>
                       <th className="py-2.5 px-3 text-right">Unit Price</th>
                       <th className="py-2.5 px-3 text-right">Total</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {selectedPO.items?.map((item) => (
+                    {selectedPO.items?.map((item) => {
+                      const service = isServiceLine(item);
+                      const fulfilled = service ? (item.quantity_accepted || 0) : item.quantity_received;
+                      return (
                       <tr key={item.id}>
                         <td className="py-2.5 px-3 font-medium text-slate-900">{item.item_description}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${service ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
+                            {lineTypeLabel(item)}
+                          </span>
+                        </td>
                         <td className="py-2.5 px-3 text-slate-500">{item.category}</td>
                         <td className="py-2.5 px-3 text-center font-semibold">{item.quantity}</td>
                         <td className="py-2.5 px-3 text-center">
-                          <span className={`font-semibold ${item.quantity_received >= item.quantity ? 'text-emerald-700' : 'text-amber-600'}`}>
-                            {item.quantity_received}
+                          <span className={`font-semibold ${fulfilled >= item.quantity ? 'text-emerald-700' : 'text-amber-600'}`}>
+                            {fulfilled} {service ? 'SES' : 'GRN'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">${formatMoney(item.unit_price)}</td>
@@ -373,11 +394,12 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                           ${formatMoney(item.total_price)}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                   <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
                     <tr>
-                      <td colSpan="5" className="py-2.5 px-3 text-right text-slate-600">Total Purchase Order Value:</td>
+                      <td colSpan="6" className="py-2.5 px-3 text-right text-slate-600">Total Purchase Order Value:</td>
                       <td className="py-2.5 px-3 text-right text-emerald-700 text-sm font-black">
                         ${formatMoney(selectedPO.total_amount)}
                       </td>
@@ -391,7 +413,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                 <div>
                   <span className="font-bold text-slate-700 block mb-1">Standard Purchase Terms:</span>
                   <p className="leading-relaxed">
-                    Goods subject to inspection upon receipt. Invoices must reference Purchase Order #{selectedPO.po_number} to facilitate automated 3-way matching. Payment processed per stated terms upon receipt verification.
+                    Goods are received on a GRN; services are accepted on a Service Entry Sheet. Invoices must reference Purchase Order #{selectedPO.po_number}. Goods match PO+GRN+invoice; services match PO+SES+invoice.
                   </p>
                 </div>
                 <div className="border border-dashed border-slate-300 rounded-xl p-3 flex flex-col justify-between">
@@ -408,6 +430,15 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                 </div>
               </div>
             </div>
+
+            {selectedPO.service_entry_sheets?.length > 0 && (
+              <div className="px-8 pb-4 text-xs">
+                <div className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Service Entry Sheets</div>
+                <div className="text-slate-600">
+                  {selectedPO.service_entry_sheets.map((ses) => `${ses.ses_number} (${ses.status})`).join(' · ')}
+                </div>
+              </div>
+            )}
 
             <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <div className="text-xs text-slate-500">

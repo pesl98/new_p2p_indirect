@@ -94,7 +94,7 @@ export function createVendorInvoice(db, payload) {
       VALUES ('invoice', ?, '3_WAY_MATCHED', 'System 3-Way Matcher', ?)
     `).run(
       invoiceId,
-      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus}`
+      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; services: PO+SES+invoice)`
     );
 
     return { invoiceId, matchOutcome };

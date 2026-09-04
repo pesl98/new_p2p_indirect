@@ -31,6 +31,7 @@ describe('document numbering', () => {
     assert.equal(nextDocumentNumber(db, 'pr', 2026), 'PR-2026-001');
     assert.equal(nextDocumentNumber(db, 'po', 2026), 'PO-2026-001');
     assert.equal(nextDocumentNumber(db, 'grn', 2026), 'GRN-2026-001');
+    assert.equal(nextDocumentNumber(db, 'ses', 2026), 'SES-2026-001');
   });
 
   test('MAX suffix skips gaps so COUNT(*)+1 cannot collide', () => {
@@ -69,6 +70,23 @@ describe('document numbering', () => {
     ]);
     const unique = new Set(numbers);
     assert.equal(unique.size, numbers.length);
+  });
+
+  test('SES MAX suffix skips gaps independently of GRN', () => {
+    const db = createTestDb();
+    db.prepare(`
+      INSERT INTO purchase_orders (po_number, supplier_id, created_by, status, total_amount, issue_date)
+      VALUES ('PO-2026-001', 1, 2, 'issued', 100, '2026-09-01')
+    `).run();
+    const poId = db.prepare(`SELECT id FROM purchase_orders WHERE po_number = 'PO-2026-001'`).get().id;
+    db.prepare(`
+      INSERT INTO service_entry_sheets (ses_number, po_id, created_by, status)
+      VALUES ('SES-2026-001', ?, 1, 'draft'),
+             ('SES-2026-003', ?, 1, 'draft')
+    `).run(poId, poId);
+
+    assert.equal(nextDocumentNumber(db, 'ses', 2026), 'SES-2026-004');
+    assert.equal(nextDocumentNumber(db, 'grn', 2026), 'GRN-2026-001');
   });
 
   test('PO and GRN sequences are independent and year-scoped', () => {

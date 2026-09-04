@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, fromCents, toCents } from '../money';
+import { isServiceLine, lineTypeLabel } from '../lineType';
 
 export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
   const [invoices, setInvoices] = useState([]);
@@ -81,9 +82,12 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
       const lines = poDetail.items.map(item => ({
         po_item_id: item.id,
         description: item.item_description,
+        line_type: item.line_type,
+        category: item.category,
         po_quantity: item.quantity,
         po_unit_price: item.unit_price,
         po_quantity_received: item.quantity_received,
+        po_quantity_accepted: item.quantity_accepted || 0,
         quantity_invoiced: item.quantity, // default to ordered
         unit_price: fromCents(item.unit_price) // billed price input is dollars
       }));
@@ -175,7 +179,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
         return (
           <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1">
             <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-            <span>Exact 3-Way Match</span>
+            <span>Exact Match</span>
           </span>
         );
       case 'tolerated_match':
@@ -229,9 +233,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Invoices & Automated 3-Way Matching</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Invoices & Matching</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Automated reconciliation comparing Purchase Orders (PO) vs. Physical Goods Receipts (GRN) vs. Supplier Invoices.
+            Goods: 3-way PO vs GRN vs invoice. Services: SES-backed 2-way (PO vs accepted SES vs invoice). Mixed POs combine both.
           </p>
         </div>
 
@@ -256,7 +260,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                 <th className="py-3 px-4">Supplier</th>
                 <th className="py-3 px-4">PO Reference</th>
                 <th className="py-3 px-4">Billed Amount</th>
-                <th className="py-3 px-4">3-Way Match Audit</th>
+                <th className="py-3 px-4">Match Audit</th>
                 <th className="py-3 px-4">Invoice Status</th>
                 <th className="py-3 px-4">Due Date</th>
                 <th className="py-3 px-4 text-right">Actions</th>
@@ -301,7 +305,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                         className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] inline-flex items-center space-x-1 shadow-sm"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5" />
-                        <span>3-Way Matrix</span>
+                        <span>Match Matrix</span>
                       </button>
                     </td>
                   </tr>
@@ -319,7 +323,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Enter Supplier Vendor Invoice</h3>
-                <p className="text-xs text-slate-500">Input invoice received from vendor and run the automated 3-way match engine</p>
+                <p className="text-xs text-slate-500">Input the vendor invoice. Goods lines match against GRN; service lines match against accepted SES.</p>
               </div>
               <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -391,8 +395,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                         <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-semibold text-[11px]">
                           <tr>
                             <th className="py-2.5 px-3">Description</th>
+                            <th className="py-2.5 px-3 text-center">Type</th>
                             <th className="py-2.5 px-3 text-center">PO Price</th>
-                            <th className="py-2.5 px-3 text-center">Physically Recv</th>
+                            <th className="py-2.5 px-3 text-center">Receipt Basis</th>
                             <th className="py-2.5 px-3 text-center w-28">Billed Qty</th>
                             <th className="py-2.5 px-3 text-center w-28">Billed Price</th>
                             <th className="py-2.5 px-3 text-right">Line Total</th>
@@ -402,8 +407,15 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                           {invoiceLines.map((line, idx) => (
                             <tr key={idx} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3 font-medium text-slate-900">{line.description}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isServiceLine(line) ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
+                                  {lineTypeLabel(line)}
+                                </span>
+                              </td>
                               <td className="py-2.5 px-3 text-center text-slate-500">${formatMoney(line.po_unit_price)}</td>
-                              <td className="py-2.5 px-3 text-center font-semibold text-slate-800">{line.po_quantity_received}</td>
+                              <td className="py-2.5 px-3 text-center font-semibold text-slate-800">
+                                {isServiceLine(line) ? `${line.po_quantity_accepted} SES` : `${line.po_quantity_received} GRN`}
+                              </td>
                               <td className="py-2.5 px-3 text-center">
                                 <input
                                   type="number"
@@ -431,7 +443,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                       </table>
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1.5">
-                      💡 Tip: Try editing the billed price or quantity above to observe the 3-Way Matching engine automatically catch discrepancies!
+                      💡 Tip: Edit billed price or quantity to see match exceptions. Service lines need an accepted SES; goods lines need a GRN.
                     </p>
                   </div>
                 </>
@@ -451,7 +463,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
               >
                 <FileCheck className="w-4 h-4" />
-                <span>Submit & Run 3-Way Match</span>
+                <span>Submit & Run Match</span>
               </button>
             </div>
           </div>
@@ -482,8 +494,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
             <div className="py-4 space-y-5 text-xs overflow-y-auto flex-1">
               <div>
                 <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2 flex items-center space-x-2">
-                  <span>3-Way Line Reconciliation Matrix</span>
-                  <span className="text-slate-400 font-normal">(PO vs. Physical Goods Receipt vs. Billed Invoice)</span>
+                  <span>Line Reconciliation Matrix</span>
+                  <span className="text-slate-400 font-normal">(Goods: PO vs GRN vs invoice · Services: PO vs SES vs invoice)</span>
                 </h4>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -493,7 +505,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                         <th className="py-2.5 px-3">Item Description</th>
                         <th className="py-2.5 px-3 text-center bg-blue-50/70 text-blue-900">1. PO Ordered</th>
                         <th className="py-2.5 px-3 text-center bg-blue-50/70 text-blue-900">PO Unit Price</th>
-                        <th className="py-2.5 px-3 text-center bg-amber-50/70 text-amber-900">2. Physically Recv</th>
+                        <th className="py-2.5 px-3 text-center">Type</th>
+                        <th className="py-2.5 px-3 text-center bg-amber-50/70 text-amber-900">2. Receipt (GRN / SES)</th>
                         <th className="py-2.5 px-3 text-center bg-purple-50/70 text-purple-900">3. Invoiced Qty</th>
                         <th className="py-2.5 px-3 text-center bg-purple-50/70 text-purple-900">Invoiced Price</th>
                         <th className="py-2.5 px-3 text-center">3-Way Match Status</th>
@@ -507,6 +520,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                           <tr key={res.id} className={`hover:bg-slate-50 ${isFail ? 'bg-rose-50/40' : ''}`}>
                             <td className="py-2.5 px-3 font-medium text-slate-900">
                               {res.item_description}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${res.line_type === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
+                                {lineTypeLabel(res.line_type || 'goods')}
+                              </span>
                             </td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 font-semibold">{res.ordered_qty}</td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">${formatMoney(res.po_unit_price)}</td>
@@ -551,6 +569,13 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
                       <li key={i}>{r.message}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+
+              {selectedInvoice.service_entry_sheets?.length > 0 && (
+                <div className="text-[11px] text-slate-600">
+                  <span className="font-bold text-slate-700 uppercase tracking-wider">Service Entry Sheets: </span>
+                  {selectedInvoice.service_entry_sheets.map((ses) => `${ses.ses_number} (${ses.status})`).join(' · ')}
                 </div>
               )}
 

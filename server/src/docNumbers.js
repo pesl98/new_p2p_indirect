@@ -1,5 +1,5 @@
 /**
- * Sequential document numbers (PR-/PO-/GRN-YYYY-NNN).
+ * Sequential document numbers (PR-/PO-/GRN-/SES-YYYY-NNN).
  *
  * Uses MAX of the numeric suffix for the current year, not COUNT(*)+1.
  * COUNT(*)+1 collides after deletes or when numbers are not dense (seed gaps).
@@ -9,7 +9,8 @@
 const DOC_KINDS = {
   pr: { table: 'purchase_requisitions', column: 'pr_number', prefix: 'PR' },
   po: { table: 'purchase_orders', column: 'po_number', prefix: 'PO' },
-  grn: { table: 'goods_receipts', column: 'grn_number', prefix: 'GRN' }
+  grn: { table: 'goods_receipts', column: 'grn_number', prefix: 'GRN' },
+  ses: { table: 'service_entry_sheets', column: 'ses_number', prefix: 'SES' }
 };
 
 export function nextDocumentNumber(db, kind, year = new Date().getFullYear()) {

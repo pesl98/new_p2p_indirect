@@ -6,6 +6,7 @@ import RequisitionsView from './views/RequisitionsView';
 import ApprovalsView from './views/ApprovalsView';
 import PurchaseOrdersView from './views/PurchaseOrdersView';
 import GoodsReceiptView from './views/GoodsReceiptView';
+import ServiceEntrySheetsView from './views/ServiceEntrySheetsView';
 import InvoicesMatchingView from './views/InvoicesMatchingView';
 import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
@@ -100,6 +101,13 @@ export default function App() {
 
           {activeTab === 'goods_receipt' && (
             <GoodsReceiptView
+              currentUser={currentUser}
+              onDataChanged={fetchCoreData}
+            />
+          )}
+
+          {activeTab === 'service_entry' && (
+            <ServiceEntrySheetsView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
             />

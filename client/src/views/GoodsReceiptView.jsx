@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
+import { isServiceLine } from '../lineType';
 
 export default function GoodsReceiptView({ currentUser, onDataChanged }) {
   const [receipts, setReceipts] = useState([]);
@@ -40,7 +41,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
       ]);
       setReceipts(grns);
       // Filter POs that still have unreceived items or are active
-      setActivePOs(pos.filter(po => po.status !== 'closed' && po.status !== 'cancelled'));
+      setActivePOs(pos.filter(po => po.status !== 'closed' && po.status !== 'cancelled' && (po.goods_line_count || 0) > 0));
     } catch (err) {
       console.error(err);
     } finally {
@@ -64,7 +65,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
       const poDetail = await api.getPurchaseOrderDetail(poId);
       setTargetPOData(poDetail);
       // Initialize receiving lines
-      const items = poDetail.items.map(item => {
+      const items = poDetail.items.filter((item) => !isServiceLine(item)).map(item => {
         const remaining = Math.max(0, item.quantity - item.quantity_received);
         return {
           po_item_id: item.id,
@@ -166,9 +167,9 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Goods & Service Receipts (GRN)</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Goods Receipts (GRN)</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Log physical deliveries, verify packaging conditions, and authorize partial shipments for 3-way matching.
+            Log physical deliveries against goods PO lines. Service lines use Service Entry Sheets, not GRN.
           </p>
         </div>
 
@@ -255,8 +256,8 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Receive Goods or Services</h3>
-                <p className="text-xs text-slate-500">Document physical delivery against an active Purchase Order</p>
+                <h3 className="text-base font-bold text-slate-900">Receive Goods</h3>
+                <p className="text-xs text-slate-500">Document physical delivery against goods lines on an active Purchase Order</p>
               </div>
               <button onClick={() => setShowReceiveModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -281,7 +282,13 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                 </select>
               </div>
 
-              {targetPOData && (
+              {targetPOData && receivingItems.length === 0 && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
+                  This PO has no goods lines. Use Service Entry Sheets to accept services.
+                </div>
+              )}
+
+              {targetPOData && receivingItems.length > 0 && (
                 <>
                   {/* Delivery Slip & Carrier Info */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
@@ -410,7 +417,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                 Cancel
               </button>
               <button
-                disabled={!targetPOData}
+                disabled={!targetPOData || receivingItems.length === 0}
                 onClick={handleSubmitReceipt}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
               >

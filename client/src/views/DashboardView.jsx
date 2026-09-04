@@ -39,8 +39,8 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
               Welcome back, {currentUser?.name || 'User'}
             </h2>
             <p className="text-slate-300 text-sm mt-1 max-w-2xl">
-              Complete non-production purchasing lifecycle management. Monitor requisitions, 
-              expedite multi-tier approvals, issue purchase orders, and verify 3-way invoice matching.
+              Complete non-production purchasing lifecycle. Monitor requisitions, sequential approvals,
+              purchase orders, goods receipts, service entry sheets, and dual invoice matching.
             </p>
           </div>
           <div className="flex items-center space-x-3">
@@ -55,7 +55,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                 onClick={() => onNavigate('invoices')}
                 className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
               >
-                <span>Review 3-Way Matches</span>
+                <span>Review Invoice Matches</span>
               </button>
             )}
           </div>

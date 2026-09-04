@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { nextDocumentNumber } from '../docNumbers.js';
+import { normalizeLineType } from '../lineType.js';
 
 const router = express.Router();
 
@@ -19,7 +20,12 @@ router.get('/', (req, res) => {
         (SELECT COUNT(*) FROM po_items WHERE po_id = po.id) as item_count,
         (SELECT COALESCE(SUM(quantity), 0) FROM po_items WHERE po_id = po.id) as total_qty_ordered,
         (SELECT COALESCE(SUM(quantity_received), 0) FROM po_items WHERE po_id = po.id) as total_qty_received,
+        (SELECT COALESCE(SUM(quantity_accepted), 0) FROM po_items WHERE po_id = po.id) as total_qty_accepted,
+        (SELECT COALESCE(SUM(CASE WHEN line_type = 'service' THEN quantity_accepted ELSE quantity_received END), 0) FROM po_items WHERE po_id = po.id) as total_qty_fulfilled,
+        (SELECT COUNT(*) FROM po_items WHERE po_id = po.id AND line_type = 'service') as service_line_count,
+        (SELECT COUNT(*) FROM po_items WHERE po_id = po.id AND line_type = 'goods') as goods_line_count,
         (SELECT COUNT(*) FROM goods_receipts WHERE po_id = po.id) as receipts_count,
+        (SELECT COUNT(*) FROM service_entry_sheets WHERE po_id = po.id) as ses_count,
         (SELECT COUNT(*) FROM invoices WHERE po_id = po.id) as invoices_count
       FROM purchase_orders po
       JOIN suppliers s ON po.supplier_id = s.id
@@ -91,6 +97,15 @@ router.get('/:id', (req, res) => {
       ORDER BY gr.receipt_date DESC
     `).all(id);
 
+    const serviceSheets = db.prepare(`
+      SELECT ses.*, u.name as created_by_name,
+        (SELECT COUNT(*) FROM service_entry_sheet_items WHERE ses_id = ses.id) as items_count
+      FROM service_entry_sheets ses
+      JOIN users u ON ses.created_by = u.id
+      WHERE ses.po_id = ?
+      ORDER BY ses.id DESC
+    `).all(id);
+
     // Get associated Invoices
     const invoices = db.prepare(`
       SELECT inv.*,
@@ -104,6 +119,7 @@ router.get('/:id', (req, res) => {
       ...po,
       items,
       receipts,
+      service_entry_sheets: serviceSheets,
       invoices
     });
   } catch (error) {
@@ -160,8 +176,8 @@ router.post('/from-requisition', (req, res) => {
 
       // Copy PR items to PO items
       const insertPOItem = db.prepare(`
-        INSERT INTO po_items (po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_invoiced)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+        INSERT INTO po_items (po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
       `);
 
       for (const item of prItems) {
@@ -172,7 +188,8 @@ router.post('/from-requisition', (req, res) => {
           item.category,
           item.quantity,
           item.unit_price,
-          item.total_price
+          item.total_price,
+          normalizeLineType(item.line_type, item.category)
         );
       }
 
