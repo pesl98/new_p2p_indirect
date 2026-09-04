@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { formatCents } from '../money.js';
 
 const router = express.Router();
 
@@ -119,7 +120,7 @@ router.post('/:id/decide', (req, res) => {
           db.prepare(`
             INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
             VALUES ('requisition', ?, 'APPROVED', ?, ?)
-          `).run(pr.id, actor, `Fully approved for $${pr.total_amount.toFixed(2)}. Committed budget allocated.`);
+          `).run(pr.id, actor, `Fully approved for $${formatCents(pr.total_amount)}. Committed budget allocated.`);
         } else {
           db.prepare(`
             INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)

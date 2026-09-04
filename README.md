@@ -81,11 +81,16 @@ A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application bui
    node server/src/seed.js
    ```
 
+4. **Run unit tests** (`node --test`):
+   ```bash
+   npm test
+   ```
+
 ---
 
 ## 🗄️ Database Architecture (SQLite)
 
-Located at `server/data/procurement.db`:
+Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, match price variance, etc.) are stored as **integer cents**. The API returns cents; the client formats dollars for display. Quantities are whole units.
 - `departments`: Cost centers & organizational units
 - `users`: Employees with roles and authorization limits
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures

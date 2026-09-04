@@ -12,6 +12,7 @@ import {
   X
 } from 'lucide-react';
 import { api } from '../api';
+import { formatMoney } from '../money';
 
 export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }) {
   const [approvals, setApprovals] = useState([]);
@@ -86,7 +87,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
           <span className="font-bold text-slate-900">{currentUser?.name}</span>
           <span className="text-slate-400">•</span>
           <span className="text-emerald-700 font-semibold">
-            Signing Limit: ${currentUser?.approval_limit ? currentUser.approval_limit.toLocaleString() : 'Unlimited'}
+            Signing Limit: ${currentUser?.approval_limit ? formatMoney(currentUser.approval_limit) : 'Unlimited'}
           </span>
         </div>
       </div>
@@ -141,8 +142,8 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
 
                     {/* Budget Impact Indicator */}
                     <div className="flex items-center space-x-4 text-[11px] text-slate-500 pt-1">
-                      <span>Available Dept Budget: <strong className="text-slate-800">${item.available_budget?.toLocaleString()}</strong></span>
-                      <span>Total Cost: <strong className="text-emerald-700 text-xs font-bold">${item.total_amount?.toLocaleString()}</strong></span>
+                      <span>Available Dept Budget: <strong className="text-slate-800">${formatMoney(item.available_budget)}</strong></span>
+                      <span>Total Cost: <strong className="text-emerald-700 text-xs font-bold">${formatMoney(item.total_amount)}</strong></span>
                       {hasExceededBudget && (
                         <span className="text-rose-600 font-semibold flex items-center">
                           <AlertTriangle className="w-3.5 h-3.5 mr-1" />
@@ -195,7 +196,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
             </div>
             <p className="text-xs text-slate-500 mb-4">
               {decisionType === 'approved'
-                ? `Authorizing $${activeDecisionModal.total_amount?.toLocaleString()} from ${activeDecisionModal.department_name} budget.`
+                ? `Authorizing $${formatMoney(activeDecisionModal.total_amount)} from ${activeDecisionModal.department_name} budget.`
                 : 'Please document why this procurement request cannot be approved.'}
             </p>
 

@@ -17,6 +17,7 @@ import {
   FileText
 } from 'lucide-react';
 import { api } from '../api';
+import { formatMoney, toCents } from '../money';
 
 export default function RequisitionsView({ currentUser, onNavigate }) {
   const [requisitions, setRequisitions] = useState([]);
@@ -109,7 +110,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
         item_description: customDesc,
         category: customCat,
         quantity: Number(customQty) || 1,
-        unit_price: Number(customPrice),
+        unit_price: toCents(customPrice),
         estimated_supplier_id: Number(customSupplierId)
       }
     ]);
@@ -122,7 +123,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
     setCartItems(cartItems.filter((_, i) => i !== index));
   };
 
-  const calculateCartTotal = () => {
+  const calculateCartTotalCents = () => {
     return cartItems.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.unit_price)), 0);
   };
 
@@ -257,7 +258,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                       <span className="text-[10px] text-slate-400 ml-1">({pr.department_code})</span>
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                      ${pr.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${formatMoney(pr.total_amount)}
                     </td>
                     <td className="py-3 px-4">
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
@@ -374,7 +375,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                           <div className="text-xs font-bold text-slate-900">{item.name}</div>
                           <div className="text-[10px] text-slate-500 line-clamp-1">{item.description}</div>
                           <div className="text-[11px] font-bold text-emerald-700 mt-1">
-                            ${item.unit_price.toLocaleString()} <span className="text-[10px] font-normal text-slate-400">/ {item.unit}</span>
+                            ${formatMoney(item.unit_price)} <span className="text-[10px] font-normal text-slate-400">/ {item.unit}</span>
                           </div>
                         </div>
                         <button
@@ -499,7 +500,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                     <div className="flex justify-between items-center text-xs font-bold text-slate-800 mb-2">
                       <span>Line Items ({cartItems.length})</span>
                       <span className="text-emerald-700 font-extrabold text-sm">
-                        Total: ${calculateCartTotal().toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        Total: ${formatMoney(calculateCartTotalCents())}
                       </span>
                     </div>
 
@@ -514,7 +515,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                             <div className="flex-1 pr-2">
                               <div className="font-semibold text-slate-900">{item.item_description}</div>
                               <div className="text-[11px] text-slate-500">
-                                {item.quantity} × ${Number(item.unit_price).toLocaleString()} = ${(item.quantity * item.unit_price).toLocaleString()}
+                                {item.quantity} × ${formatMoney(item.unit_price)} = ${formatMoney(item.quantity * item.unit_price)}
                               </div>
                             </div>
                             <button
@@ -594,7 +595,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                 <div className="flex items-center space-x-4 mt-3 pt-3 border-t border-slate-200 text-slate-500">
                   <span>Priority: <strong className="text-slate-800">{selectedPR.priority}</strong></span>
                   <span>Needed by: <strong className="text-slate-800">{selectedPR.needed_by_date}</strong></span>
-                  <span>Total Cost: <strong className="text-emerald-700 text-sm font-bold">${selectedPR.total_amount.toLocaleString()}</strong></span>
+                  <span>Total Cost: <strong className="text-emerald-700 text-sm font-bold">${formatMoney(selectedPR.total_amount)}</strong></span>
                 </div>
               </div>
 
@@ -620,8 +621,8 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                           <td className="py-2 px-3 font-medium text-slate-900">{item.item_description}</td>
                           <td className="py-2 px-3 text-slate-500">{item.category}</td>
                           <td className="py-2 px-3">{item.quantity}</td>
-                          <td className="py-2 px-3">${item.unit_price.toLocaleString()}</td>
-                          <td className="py-2 px-3 text-right font-bold text-slate-900">${item.total_price.toLocaleString()}</td>
+                          <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>
+                          <td className="py-2 px-3 text-right font-bold text-slate-900">${formatMoney(item.total_price)}</td>
                         </tr>
                       ))}
                     </tbody>

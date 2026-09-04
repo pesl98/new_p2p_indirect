@@ -14,6 +14,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { api } from '../api';
+import { formatMoney } from '../money';
 
 export default function PurchaseOrdersView({ currentUser, onNavigate }) {
   const [orders, setOrders] = useState([]);
@@ -161,7 +162,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                         {po.pr_number || 'Direct Order'}
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                        ${po.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        ${formatMoney(po.total_amount)}
                       </td>
                       <td className="py-3 px-4 min-w-[160px]">
                         <div className="mb-1">{getStatusBadge(po.status)}</div>
@@ -235,7 +236,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                   >
                     <div className="flex justify-between items-center font-bold text-slate-900">
                       <span>{pr.pr_number} - {pr.department_name}</span>
-                      <span className="text-emerald-700 font-extrabold">${pr.total_amount.toLocaleString()}</span>
+                      <span className="text-emerald-700 font-extrabold">${formatMoney(pr.total_amount)}</span>
                     </div>
                     <p className="text-slate-500 text-[11px] mt-1 line-clamp-1">{pr.justification}</p>
                   </div>
@@ -367,9 +368,9 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                             {item.quantity_received}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-right">${item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2.5 px-3 text-right">${formatMoney(item.unit_price)}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                          ${item.total_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          ${formatMoney(item.total_price)}
                         </td>
                       </tr>
                     ))}
@@ -378,7 +379,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
                     <tr>
                       <td colSpan="5" className="py-2.5 px-3 text-right text-slate-600">Total Purchase Order Value:</td>
                       <td className="py-2.5 px-3 text-right text-emerald-700 text-sm font-black">
-                        ${selectedPO.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        ${formatMoney(selectedPO.total_amount)}
                       </td>
                     </tr>
                   </tfoot>

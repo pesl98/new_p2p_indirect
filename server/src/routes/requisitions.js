@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { APPROVAL_TIER2_CENTS, APPROVAL_TIER3_CENTS, asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 
 const router = express.Router();
 
@@ -116,7 +117,7 @@ function createApprovalChain(prId, totalAmount, departmentId) {
   `).run(prId);
 
   // Step 2: Strategic Sourcing/Procurement if > $1,000 (Carol Zhang, id=3)
-  if (totalAmount > 1000) {
+  if (totalAmount > APPROVAL_TIER2_CENTS) {
     db.prepare(`
       INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
       VALUES (?, 3, 2, 'pending')
@@ -124,7 +125,7 @@ function createApprovalChain(prId, totalAmount, departmentId) {
   }
 
   // Step 3: Finance Controller / CFO if > $10,000 (David Miller, id=4 or Elena, id=5)
-  if (totalAmount > 10000) {
+  if (totalAmount > APPROVAL_TIER3_CENTS) {
     db.prepare(`
       INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
       VALUES (?, 4, 3, 'pending')
@@ -141,7 +142,10 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'Requisition must have at least one line item.' });
     }
 
-    const calculatedTotal = items.reduce((acc, item) => acc + (Number(item.quantity) * Number(item.unit_price)), 0);
+    const calculatedTotal = items.reduce(
+      (acc, item) => acc + lineTotalCents(item.quantity, item.unit_price),
+      0
+    );
 
     const createTransaction = db.transaction(() => {
       // Generate sequence PR number
@@ -175,14 +179,16 @@ router.post('/', (req, res) => {
       `);
 
       for (const item of items) {
+        const qty = toQty(item.quantity);
+        const unitPrice = asCents(item.unit_price);
         insertItem.run(
           prId,
           item.catalog_item_id || null,
           item.item_description,
           item.category || 'Office Supplies',
-          Number(item.quantity),
-          Number(item.unit_price),
-          Number(item.quantity) * Number(item.unit_price),
+          qty,
+          unitPrice,
+          lineTotalCents(qty, unitPrice),
           item.estimated_supplier_id || 1
         );
       }
@@ -191,7 +197,7 @@ router.post('/', (req, res) => {
       db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'CREATED', 'System', ?)
-      `).run(prId, `Requisition ${prNumber} created with ${items.length} item(s) for $${calculatedTotal.toFixed(2)}`);
+      `).run(prId, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
 
       if (submitImmediately) {
         createApprovalChain(prId, calculatedTotal, department_id || 1);

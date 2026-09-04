@@ -12,6 +12,7 @@ import {
   FileCheck
 } from 'lucide-react';
 import { api } from '../api';
+import { formatMoney } from '../money';
 
 export default function GoodsReceiptView({ currentUser, onDataChanged }) {
   const [receipts, setReceipts] = useState([]);
@@ -262,7 +263,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
                   <option value="">-- Choose a Purchase Order --</option>
                   {activePOs.map(po => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} (${po.total_amount.toLocaleString()}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} (${formatMoney(po.total_amount)}) [{po.status}]
                     </option>
                   ))}
                 </select>
