@@ -23,11 +23,15 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
   const [processing, setProcessing] = useState(false);
 
   const loadApprovals = async () => {
+    if (!currentUser?.id) {
+      setApprovals([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      // Personal queue only: waiting steps never appear (API defaults to pending),
-      // and procurement/admin must not see another persona's pending step.
-      const list = await api.getApprovals(currentUser?.id);
+      // Personal queue only: waiting steps never appear (API defaults to pending).
+      const list = await api.getApprovals(currentUser.id);
       setApprovals(list);
     } catch (err) {
       console.error(err);
