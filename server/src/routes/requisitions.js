@@ -71,10 +71,16 @@ router.get('/:id', (req, res) => {
     }
 
     const items = db.prepare(`
-      SELECT ri.*, s.name as estimated_supplier_name, ci.sku as catalog_sku
+      SELECT
+        ri.*,
+        s.name as estimated_supplier_name,
+        ci.sku as catalog_sku,
+        ci.preferred_supplier_id as catalog_preferred_supplier_id,
+        ps.name as catalog_preferred_supplier_name
       FROM requisition_items ri
       LEFT JOIN suppliers s ON ri.estimated_supplier_id = s.id
       LEFT JOIN catalog_items ci ON ri.catalog_item_id = ci.id
+      LEFT JOIN suppliers ps ON ci.preferred_supplier_id = ps.id
       WHERE ri.requisition_id = ?
     `).all(id);
 
@@ -92,19 +98,23 @@ router.get('/:id', (req, res) => {
       ORDER BY created_at DESC
     `).all(id);
 
-    // Also check if converted to PO
-    const po = db.prepare(`
-      SELECT id, po_number, status, total_amount, created_at
-      FROM purchase_orders
-      WHERE requisition_id = ?
-    `).get(id);
+    const purchaseOrders = db.prepare(`
+      SELECT
+        po.id, po.po_number, po.status, po.total_amount, po.supplier_id, po.created_at,
+        s.name as supplier_name, s.code as supplier_code
+      FROM purchase_orders po
+      JOIN suppliers s ON po.supplier_id = s.id
+      WHERE po.requisition_id = ?
+      ORDER BY po.id ASC
+    `).all(id);
 
     res.json({
       ...pr,
       items,
       approvals,
       logs,
-      purchase_order: po || null
+      purchase_orders: purchaseOrders,
+      purchase_order: purchaseOrders[0] || null
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

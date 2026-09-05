@@ -618,6 +618,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                       <tr>
                         <th className="py-2.5 px-3">Description</th>
                         <th className="py-2.5 px-3">Category</th>
+                        <th className="py-2.5 px-3">Supplier</th>
                         <th className="py-2.5 px-3">Qty</th>
                         <th className="py-2.5 px-3">Unit Price</th>
                         <th className="py-2.5 px-3 text-right">Total</th>
@@ -633,6 +634,11 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                             </span>
                           </td>
                           <td className="py-2 px-3 text-slate-500">{item.category}</td>
+                          <td className="py-2 px-3 text-slate-600">
+                            {item.estimated_supplier_name || item.catalog_preferred_supplier_name || (
+                              <span className="text-rose-600">Unassigned</span>
+                            )}
+                          </td>
                           <td className="py-2 px-3">{item.quantity}</td>
                           <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>
                           <td className="py-2 px-3 text-right font-bold text-slate-900">${formatMoney(item.total_price)}</td>
@@ -642,6 +648,36 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                   </table>
                 </div>
               </div>
+
+              {(selectedPR.purchase_orders?.length > 0 || selectedPR.purchase_order) && (
+                <div>
+                  <div className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2">
+                    Linked Purchase Orders
+                    {selectedPR.purchase_orders?.length > 1 ? ` (${selectedPR.purchase_orders.length} split)` : ''}
+                  </div>
+                  <div className="space-y-2">
+                    {(selectedPR.purchase_orders?.length ? selectedPR.purchase_orders : [selectedPR.purchase_order]).map((po) => (
+                      <div key={po.id} className="p-3 border border-indigo-200 bg-indigo-50/40 rounded-xl flex items-center justify-between">
+                        <div>
+                          <div className="font-mono font-bold text-slate-900">{po.po_number}</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            {po.supplier_name || 'Supplier'} · ${formatMoney(po.total_amount)} · {po.status}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSelectedPR(null);
+                            onNavigate('purchase_orders');
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold"
+                        >
+                          View POs
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Multi-Tier Approval Chain */}
               <div>
