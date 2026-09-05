@@ -8,6 +8,7 @@ import requisitionsRouter from './routes/requisitions.js';
 import approvalsRouter from './routes/approvals.js';
 import purchaseOrdersRouter from './routes/purchaseOrders.js';
 import goodsReceiptsRouter from './routes/goodsReceipts.js';
+import serviceEntrySheetsRouter from './routes/serviceEntrySheets.js';
 import invoicesRouter from './routes/invoices.js';
 import analyticsRouter from './routes/analytics.js';
 import './db.js'; // Ensure DB is initialized
@@ -27,6 +28,7 @@ app.use('/api/requisitions', requisitionsRouter);
 app.use('/api/approvals', approvalsRouter);
 app.use('/api/purchase-orders', purchaseOrdersRouter);
 app.use('/api/goods-receipts', goodsReceiptsRouter);
+app.use('/api/service-entry-sheets', serviceEntrySheetsRouter);
 app.use('/api/invoices', invoicesRouter);
 app.use('/api/analytics', analyticsRouter);
 

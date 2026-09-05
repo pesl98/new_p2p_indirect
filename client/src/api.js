@@ -103,7 +103,55 @@ export const api = {
     return data;
   },
 
-  // Invoices & 3-Way Match
+  // Service Entry Sheets
+  getServiceEntrySheets: (po_id = '') => {
+    const params = new URLSearchParams();
+    if (po_id) params.append('po_id', po_id);
+    return fetch(`${API_BASE}/service-entry-sheets?${params.toString()}`).then(r => r.json());
+  },
+  getServiceEntrySheetDetail: (id) => fetch(`${API_BASE}/service-entry-sheets/${id}`).then(r => r.json()),
+  createServiceEntrySheet: async (sesData) => {
+    const r = await fetch(`${API_BASE}/service-entry-sheets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sesData)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to create service entry sheet');
+    return data;
+  },
+  submitServiceEntrySheet: async (id, data = {}) => {
+    const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || 'Failed to submit service entry sheet');
+    return result;
+  },
+  acceptServiceEntrySheet: async (id, data = {}) => {
+    const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/accept`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || 'Failed to accept service entry sheet');
+    return result;
+  },
+  rejectServiceEntrySheet: async (id, data = {}) => {
+    const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || 'Failed to reject service entry sheet');
+    return result;
+  },
+
+  // Invoices & Matching
   getInvoices: (status = '') => {
     const params = new URLSearchParams();
     if (status) params.append('status', status);

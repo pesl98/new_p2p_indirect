@@ -4,7 +4,8 @@ import {
   FileText, 
   CheckSquare, 
   ShoppingCart, 
-  PackageCheck, 
+  PackageCheck,
+  ClipboardCheck,
   FileSpreadsheet, 
   Landmark, 
   Store,
@@ -43,11 +44,17 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       id: 'goods_receipt',
       label: 'Goods Receipt (GRN)',
       icon: PackageCheck,
-      desc: 'Receiving inspection & partial delivery'
+      desc: 'Physical receiving for goods lines'
+    },
+    {
+      id: 'service_entry',
+      label: 'Service Entry (SES)',
+      icon: ClipboardCheck,
+      desc: 'Accept services; SES-backed 2-way match'
     },
     {
       id: 'invoices',
-      label: 'Invoices & 3-Way Match',
+      label: 'Invoices & Matching',
       icon: FileSpreadsheet,
       badge: varianceInvoicesCount > 0 ? `${varianceInvoicesCount} Alert` : null,
       badgeColor: 'bg-rose-500 text-white',
@@ -112,7 +119,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
             <span className="text-[10px] text-emerald-400 font-mono">100% Traceable</span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5">
-            PR ➔ Approval ➔ PO ➔ Goods Receipt ➔ 3-Way Invoice Matching ➔ Payment
+            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Invoice Match ➔ Payment
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>

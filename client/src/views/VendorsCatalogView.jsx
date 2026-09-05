@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Store, BookOpen, Plus, Search, Filter, Star, Phone, Mail, MapPin, X } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, toCents } from '../money';
+import { lineTypeLabel } from '../lineType';
 
 export default function VendorsCatalogView() {
   const [subTab, setSubTab] = useState('catalog'); // 'catalog' | 'suppliers'
@@ -201,8 +202,13 @@ export default function VendorsCatalogView() {
                 <div>
                   <div className="flex items-center justify-between text-[11px] mb-1">
                     <span className="font-mono text-slate-400 font-bold">{item.sku}</span>
-                    <span className="bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded text-[10px]">
-                      {item.category}
+                    <span className="flex items-center gap-1">
+                      <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${item.line_type === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
+                        {lineTypeLabel(item)}
+                      </span>
+                      <span className="bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded text-[10px]">
+                        {item.category}
+                      </span>
                     </span>
                   </div>
                   <h3 className="text-sm font-bold text-slate-900 mt-1">{item.name}</h3>

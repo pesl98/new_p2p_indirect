@@ -25,30 +25,64 @@ function createTestDb() {
   return db;
 }
 
-function insertPoLine(db, { ordered, received, unitPriceCents, invoiced = 0 }) {
-  db.prepare(`
-    INSERT INTO purchase_orders (id, po_number, supplier_id, created_by, status, total_amount, issue_date)
-    VALUES (1, 'PO-TEST-001', 1, 1, 'partially_received', ?, '2026-09-01')
-  `).run(ordered * unitPriceCents);
+function insertPoLine(db, {
+  ordered,
+  received,
+  unitPriceCents,
+  invoiced = 0,
+  accepted = 0,
+  lineType = 'goods',
+  category = 'IT Hardware',
+  description = 'Test Monitor',
+  poId = 1,
+  itemId = 1,
+  poNumber = 'PO-TEST-001'
+}) {
+  const existingPo = db.prepare(`SELECT id FROM purchase_orders WHERE id = ?`).get(poId);
+  if (!existingPo) {
+    db.prepare(`
+      INSERT INTO purchase_orders (id, po_number, supplier_id, created_by, status, total_amount, issue_date)
+      VALUES (?, ?, 1, 1, 'partially_received', ?, '2026-09-01')
+    `).run(poId, poNumber, ordered * unitPriceCents);
+  }
 
   db.prepare(`
-    INSERT INTO po_items (id, po_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_invoiced)
-    VALUES (1, 1, 'Test Monitor', 'IT Hardware', ?, ?, ?, ?, ?)
-  `).run(ordered, unitPriceCents, ordered * unitPriceCents, received, invoiced);
+    INSERT INTO po_items (id, po_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    itemId,
+    poId,
+    description,
+    category,
+    ordered,
+    unitPriceCents,
+    ordered * unitPriceCents,
+    received,
+    accepted,
+    invoiced,
+    lineType
+  );
 }
 
-function invoicePayload({ qty, unitPriceCents, invoiceNumber = 'INV-TEST-1' }) {
+function invoicePayload({
+  qty,
+  unitPriceCents,
+  invoiceNumber = 'INV-TEST-1',
+  poId = 1,
+  itemId = 1,
+  description = 'Test Monitor'
+}) {
   return {
     invoice_number: invoiceNumber,
-    po_id: 1,
+    po_id: poId,
     supplier_id: 1,
     invoice_date: '2026-09-04',
     due_date: '2026-10-04',
     tax_amount: 0,
     items: [
       {
-        po_item_id: 1,
-        description: 'Test Monitor',
+        po_item_id: itemId,
+        description,
         quantity_invoiced: qty,
         unit_price: unitPriceCents
       }
@@ -186,3 +220,136 @@ describe('invoice number uniqueness', () => {
     assert.ok(second.invoiceId);
   });
 });
+
+describe('service SES-backed 2-way match', () => {
+  test('service invoice matches PO + accepted SES without any GRN', () => {
+    const db = createTestDb();
+    insertPoLine(db, {
+      ordered: 1,
+      received: 0,
+      accepted: 1,
+      unitPriceCents: 1250000,
+      lineType: 'service',
+      category: 'Consulting & Professional Services',
+      description: 'SOC 2 Type II Annual Security Penetration Test'
+    });
+
+    const result = createVendorInvoice(db, invoicePayload({
+      qty: 1,
+      unitPriceCents: 1250000,
+      description: 'SOC 2 Type II Annual Security Penetration Test'
+    }));
+    assert.equal(result.matchOutcome.overallMatchStatus, 'perfect_match');
+    assert.equal(result.matchOutcome.invoiceStatus, 'matched');
+
+    const line = db.prepare(`SELECT received_qty, status, message FROM match_results WHERE invoice_id = ?`).get(result.invoiceId);
+    assert.equal(line.received_qty, 1);
+    assert.equal(line.status, 'pass');
+    assert.match(line.message, /SES-backed match/i);
+  });
+
+  test('service invoice without accepted SES fails quantity match', () => {
+    const db = createTestDb();
+    insertPoLine(db, {
+      ordered: 1,
+      received: 0,
+      accepted: 0,
+      unitPriceCents: 1250000,
+      lineType: 'service',
+      category: 'Consulting & Professional Services',
+      description: 'SOC 2 Type II Annual Security Penetration Test'
+    });
+
+    const result = createVendorInvoice(db, invoicePayload({
+      qty: 1,
+      unitPriceCents: 1250000,
+      description: 'SOC 2 Type II Annual Security Penetration Test'
+    }));
+    assert.equal(result.matchOutcome.overallMatchStatus, 'quantity_variance');
+    assert.equal(result.matchOutcome.invoiceStatus, 'variance_flagged');
+
+    const line = db.prepare(`SELECT message FROM match_results WHERE invoice_id = ?`).get(result.invoiceId);
+    assert.match(line.message, /accepted on SES/i);
+  });
+
+  test('mixed PO: goods 3-way and service SES 2-way both pass', () => {
+    const db = createTestDb();
+    insertPoLine(db, {
+      ordered: 2,
+      received: 2,
+      unitPriceCents: 74900,
+      lineType: 'goods',
+      category: 'IT Hardware',
+      description: 'Dell Monitor'
+    });
+    insertPoLine(db, {
+      ordered: 1,
+      received: 0,
+      accepted: 1,
+      unitPriceCents: 54000,
+      lineType: 'service',
+      category: 'Software & Cloud',
+      description: 'Figma Organization Annual User License',
+      itemId: 2,
+      poId: 1
+    });
+
+    const result = createVendorInvoice(db, {
+      invoice_number: 'INV-MIXED-1',
+      po_id: 1,
+      supplier_id: 1,
+      invoice_date: '2026-09-04',
+      due_date: '2026-10-04',
+      tax_amount: 0,
+      items: [
+        { po_item_id: 1, description: 'Dell Monitor', quantity_invoiced: 2, unit_price: 74900 },
+        { po_item_id: 2, description: 'Figma Organization Annual User License', quantity_invoiced: 1, unit_price: 54000 }
+      ]
+    });
+    assert.equal(result.matchOutcome.overallMatchStatus, 'perfect_match');
+
+    const lines = db.prepare(`SELECT po_item_id, status, message FROM match_results WHERE invoice_id = ? ORDER BY po_item_id`).all(result.invoiceId);
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0].status, 'pass');
+    assert.match(lines[0].message, /physical receipts/i);
+    assert.equal(lines[1].status, 'pass');
+    assert.match(lines[1].message, /SES-backed match/i);
+  });
+
+  test('mixed PO overall status is quantity_variance when only the service line fails', () => {
+    const db = createTestDb();
+    insertPoLine(db, {
+      ordered: 2,
+      received: 2,
+      unitPriceCents: 74900,
+      lineType: 'goods'
+    });
+    insertPoLine(db, {
+      ordered: 1,
+      received: 0,
+      accepted: 0,
+      unitPriceCents: 54000,
+      lineType: 'service',
+      category: 'Software & Cloud',
+      description: 'Figma seat',
+      itemId: 2,
+      poId: 1
+    });
+
+    const result = createVendorInvoice(db, {
+      invoice_number: 'INV-MIXED-FAIL',
+      po_id: 1,
+      supplier_id: 1,
+      invoice_date: '2026-09-04',
+      due_date: '2026-10-04',
+      tax_amount: 0,
+      items: [
+        { po_item_id: 1, description: 'Test Monitor', quantity_invoiced: 2, unit_price: 74900 },
+        { po_item_id: 2, description: 'Figma seat', quantity_invoiced: 1, unit_price: 54000 }
+      ]
+    });
+    assert.equal(result.matchOutcome.overallMatchStatus, 'quantity_variance');
+    assert.equal(result.matchOutcome.invoiceStatus, 'variance_flagged');
+  });
+});
+

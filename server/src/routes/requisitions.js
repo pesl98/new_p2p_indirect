@@ -3,6 +3,7 @@ import db from '../db.js';
 import { insertApprovalChain } from '../approvalPolicy.js';
 import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
+import { normalizeLineType } from '../lineType.js';
 
 const router = express.Router();
 
@@ -153,22 +154,24 @@ router.post('/', (req, res) => {
 
       // Insert line items
       const insertItem = db.prepare(`
-        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const item of items) {
         const qty = toQty(item.quantity);
         const unitPrice = asCents(item.unit_price);
+        const category = item.category || 'Office Supplies';
         insertItem.run(
           prId,
           item.catalog_item_id || null,
           item.item_description,
-          item.category || 'Office Supplies',
+          category,
           qty,
           unitPrice,
           lineTotalCents(qty, unitPrice),
-          item.estimated_supplier_id || 1
+          item.estimated_supplier_id || 1,
+          normalizeLineType(item.line_type, category)
         );
       }
 

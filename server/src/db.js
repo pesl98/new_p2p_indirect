@@ -27,6 +27,7 @@ export function applySchema(database = db) {
   database.exec(schema);
   migrateApprovalRequestsWaitingStatus(database);
   migrateInvoiceNumberUniqueness(database);
+  migrateLineTypesAndServiceEntrySheets(database);
 }
 
 /** Existing DBs created before sequential routing need CHECK to allow `waiting`. */
@@ -76,6 +77,49 @@ function migrateInvoiceNumberUniqueness(database) {
   database.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS invoices_supplier_invoice_number ON invoices(supplier_id, invoice_number)`
   );
+}
+
+function tableHasColumn(database, table, column) {
+  const cols = database.prepare(`PRAGMA table_info(${table})`).all();
+  return cols.some((c) => c.name === column);
+}
+
+const SERVICE_CATEGORY_SQL = `'Consulting & Professional Services', 'Software & Cloud', 'Marketing & Events', 'Travel & Subscriptions'`;
+
+/** Existing DBs need line_type / quantity_accepted columns; SES tables come from schema.sql. */
+function migrateLineTypesAndServiceEntrySheets(database) {
+  const tables = database.prepare(
+    `SELECT name FROM sqlite_master WHERE type = 'table'`
+  ).all().map((row) => row.name);
+
+  if (tables.includes('catalog_items') && !tableHasColumn(database, 'catalog_items', 'line_type')) {
+    database.exec(`ALTER TABLE catalog_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`);
+  }
+  if (tables.includes('requisition_items') && !tableHasColumn(database, 'requisition_items', 'line_type')) {
+    database.exec(`ALTER TABLE requisition_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`);
+  }
+  if (tables.includes('po_items') && !tableHasColumn(database, 'po_items', 'line_type')) {
+    database.exec(`ALTER TABLE po_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`);
+  }
+  if (tables.includes('po_items') && !tableHasColumn(database, 'po_items', 'quantity_accepted')) {
+    database.exec(`ALTER TABLE po_items ADD COLUMN quantity_accepted INTEGER DEFAULT 0`);
+  }
+
+  if (tables.includes('catalog_items')) {
+    database.exec(
+      `UPDATE catalog_items SET line_type = 'service' WHERE category IN (${SERVICE_CATEGORY_SQL})`
+    );
+  }
+  if (tables.includes('requisition_items')) {
+    database.exec(
+      `UPDATE requisition_items SET line_type = 'service' WHERE category IN (${SERVICE_CATEGORY_SQL})`
+    );
+  }
+  if (tables.includes('po_items')) {
+    database.exec(
+      `UPDATE po_items SET line_type = 'service' WHERE category IN (${SERVICE_CATEGORY_SQL})`
+    );
+  }
 }
 
 applySchema(db);

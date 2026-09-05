@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite (`better-sqlite3`)**. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, 3-way match, receiving/budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, dual invoice match, GRN/SES receiving, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -27,27 +27,30 @@ Control model (integer cents, sequential approvals, 3-way match, receiving/budge
    - Printable & exportable corporate Purchase Order layout complete with vendor address, payment terms, delivery instructions, and signature block.
    - Real-time fulfillment tracking with partial delivery indicators.
 
-4. **Goods & Service Receipts (GRN)**
-   - Receiving inspection wizard against active Purchase Orders.
+4. **Goods Receipts (GRN)**
+   - Receiving inspection wizard against **goods** PO lines (IT hardware, office, facilities).
    - Line-by-line inspection (quantity received, condition: good/damaged/partial, carrier tracking, supplier delivery slip).
    - Automatically updates PO fulfillment status and calculates unreceived balances.
    - **Over-receipt is blocked (HTTP 400)** unless the request includes explicit `allow_over_receipt: true` (audited exception).
+   - Service lines are rejected on a GRN — use a Service Entry Sheet instead.
 
-5. **Automated 3-Way Matching Engine (PO vs. GRN vs. Invoice)**
-   - Matrix comparison analyzing:
-     1. **Purchase Order**: Authorized line item quantities and contracted unit prices
-     2. **Goods Receipt (GRN)**: Physically received and inspected quantities
-     3. **Supplier Invoice**: Invoiced quantities and billed unit prices
-   - Automated discrepancy detection:
-     - Exact Match (100% agreement)
-     - Price Variance (Flags if billed unit price exceeds PO contract price)
-     - Quantity Variance (Flags if billed quantity exceeds physically received units on GRN)
+5. **Service Entry Sheets (SES)**
+   - Acceptance flow for **service** PO lines (consulting, SaaS, marketing): draft → submitted → accepted/rejected.
+   - Line-by-line accepted quantity; amount is qty × PO unit price in integer cents. Numbered `SES-YYYY-NNN`.
+   - Accepting an SES increments `po_items.quantity_accepted` (parallel to GRN `quantity_received`).
+   - **Over-acceptance is blocked (HTTP 400)** unless `allow_over_acceptance: true` (audited exception).
+
+6. **Dual Invoice Matching (goods 3-way / services SES-backed)**
+   - **Goods lines:** PO vs GRN received vs invoice (unchanged 3-way).
+   - **Service lines:** PO vs SES-accepted vs invoice. Physical GRN is not required.
+   - Mixed POs combine both; overall invoice status reflects any failing line.
+   - Price rules unchanged (exact cents, 1% tolerated warning, else fail).
    - Finance / Accounts Payable review, exception override, and ACH payment release.
 
-6. **Department Budgets & Cost Centers**
+7. **Department Budgets & Cost Centers**
    - Real-time departmental tracking in cents: Allocated vs. **Committed (on final PR approve)** vs. Actual Spent (AP-approved invoices) vs. Remaining (`total − committed − actual`).
 
-7. **Multi-Persona Testing Switcher (demo only — not real auth)**
+8. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
      - **Bob Martinez** (Approver / Dept Head - Marketing Director)
@@ -93,7 +96,9 @@ Control model (integer cents, sequential approvals, 3-way match, receiving/budge
 
 ---
 
-Document numbers (`PR-` / `PO-` / `GRN-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
+Document numbers (`PR-` / `PO-` / `GRN-` / `SES-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
+
+Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 
 ---
 
@@ -104,11 +109,12 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `users`: Employees with roles and authorization limits
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures
 - `suppliers`: Approved vendor repository with payment terms & ratings
-- `catalog_items`: Non-production items and pre-negotiated pricing
+- `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service)
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items
 - `approval_requests`: Multi-tier approval routing steps
-- `purchase_orders` & `po_items`: Official Purchase Orders
-- `goods_receipts` & `goods_receipt_items`: Inward receiving records
+- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`)
+- `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
+- `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
 - `invoices` & `invoice_items`: Supplier billing entries
-- `match_results`: 3-way line item match logs & variance records
+- `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
 - `audit_logs`: Complete immutable event history

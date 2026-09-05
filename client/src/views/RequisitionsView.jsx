@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, toCents } from '../money';
+import { lineTypeFromCategory, lineTypeLabel } from '../lineType';
 
 export default function RequisitionsView({ currentUser, onNavigate }) {
   const [requisitions, setRequisitions] = useState([]);
@@ -93,6 +94,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
           catalog_item_id: catItem.id,
           item_description: catItem.name,
           category: catItem.category,
+          line_type: catItem.line_type || lineTypeFromCategory(catItem.category),
           quantity: 1,
           unit_price: catItem.unit_price,
           estimated_supplier_id: catItem.preferred_supplier_id
@@ -109,6 +111,7 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
         catalog_item_id: null,
         item_description: customDesc,
         category: customCat,
+        line_type: lineTypeFromCategory(customCat),
         quantity: Number(customQty) || 1,
         unit_price: toCents(customPrice),
         estimated_supplier_id: Number(customSupplierId)
@@ -513,7 +516,12 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                         {cartItems.map((item, idx) => (
                           <div key={idx} className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-lg flex items-center justify-between text-xs">
                             <div className="flex-1 pr-2">
-                              <div className="font-semibold text-slate-900">{item.item_description}</div>
+                              <div className="font-semibold text-slate-900">
+                                {item.item_description}
+                                <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.line_type === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
+                                  {lineTypeLabel(item)}
+                                </span>
+                              </div>
                               <div className="text-[11px] text-slate-500">
                                 {item.quantity} × ${formatMoney(item.unit_price)} = ${formatMoney(item.quantity * item.unit_price)}
                               </div>
@@ -618,7 +626,12 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
                     <tbody className="divide-y divide-slate-100">
                       {selectedPR.items?.map(item => (
                         <tr key={item.id}>
-                          <td className="py-2 px-3 font-medium text-slate-900">{item.item_description}</td>
+                          <td className="py-2 px-3 font-medium text-slate-900">
+                            {item.item_description}
+                            <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.line_type === 'service' || lineTypeFromCategory(item.category) === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
+                              {lineTypeLabel(item)}
+                            </span>
+                          </td>
                           <td className="py-2 px-3 text-slate-500">{item.category}</td>
                           <td className="py-2 px-3">{item.quantity}</td>
                           <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>

@@ -85,6 +85,8 @@ router.get('/:id', (req, res) => {
         poi.unit_price as po_unit_price,
         poi.total_price as po_total_price,
         poi.quantity_received as po_quantity_received,
+        poi.quantity_accepted as po_quantity_accepted,
+        poi.line_type as po_line_type,
         poi.item_description as po_description
       FROM invoice_items ii
       JOIN po_items poi ON ii.po_item_id = poi.id
@@ -92,7 +94,7 @@ router.get('/:id', (req, res) => {
     `).all(id);
 
     const matchResults = db.prepare(`
-      SELECT mr.*, poi.item_description
+      SELECT mr.*, poi.item_description, poi.line_type
       FROM match_results mr
       LEFT JOIN po_items poi ON mr.po_item_id = poi.id
       WHERE mr.invoice_id = ?
@@ -106,11 +108,20 @@ router.get('/:id', (req, res) => {
       ORDER BY gr.receipt_date DESC
     `).all(invoice.po_id);
 
+    const serviceSheets = db.prepare(`
+      SELECT ses.*, u.name as created_by_name
+      FROM service_entry_sheets ses
+      JOIN users u ON ses.created_by = u.id
+      WHERE ses.po_id = ?
+      ORDER BY ses.id DESC
+    `).all(invoice.po_id);
+
     res.json({
       ...invoice,
       items,
       match_results: matchResults,
-      receipts
+      receipts,
+      service_entry_sheets: serviceSheets
     });
   } catch (error) {
     httpError(res, error);
