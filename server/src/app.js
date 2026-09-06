@@ -36,7 +36,7 @@ export function startupErrorApp(error) {
   const app = express();
   const message = error?.message || TURSO_REQUIRED_MSG;
   const status = error?.statusCode || 503;
-  mountConfigErrorApp(app, `${error?.name || 'Error'}: ${message}`, status);
+  mountConfigErrorApp(app, message, status);
   return app;
 }
 
