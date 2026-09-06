@@ -20,7 +20,7 @@ import { api } from '../api';
 import { formatMoney, toCents } from '../money';
 import { lineTypeFromCategory, lineTypeLabel } from '../lineType';
 
-export default function RequisitionsView({ currentUser, onNavigate }) {
+export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
   const [requisitions, setRequisitions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -71,6 +71,12 @@ export default function RequisitionsView({ currentUser, onNavigate }) {
   useEffect(() => {
     loadData();
   }, [statusFilter]);
+
+  useEffect(() => {
+    if (focusId) {
+      handleOpenDetail(focusId);
+    }
+  }, [focusId]);
 
   const handleOpenDetail = async (id) => {
     try {

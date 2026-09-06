@@ -18,7 +18,7 @@ import { api } from '../api';
 import { formatMoney, fromCents, toCents } from '../money';
 import { isServiceLine, lineTypeLabel } from '../lineType';
 
-export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
+export default function InvoicesMatchingView({ currentUser, onDataChanged, focusId }) {
   const [invoices, setInvoices] = useState([]);
   const [activePOs, setActivePOs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +55,12 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (focusId) {
+      handleOpenDetail(focusId);
+    }
+  }, [focusId]);
 
   const handleOpenDetail = async (id) => {
     try {

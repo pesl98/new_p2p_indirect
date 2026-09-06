@@ -11,6 +11,7 @@ import goodsReceiptsRouter from './routes/goodsReceipts.js';
 import serviceEntrySheetsRouter from './routes/serviceEntrySheets.js';
 import invoicesRouter from './routes/invoices.js';
 import analyticsRouter from './routes/analytics.js';
+import documentTrailRouter from './routes/documentTrail.js';
 import './db.js'; // Ensure DB is initialized
 
 const app = express();
@@ -31,6 +32,7 @@ app.use('/api/goods-receipts', goodsReceiptsRouter);
 app.use('/api/service-entry-sheets', serviceEntrySheetsRouter);
 app.use('/api/invoices', invoicesRouter);
 app.use('/api/analytics', analyticsRouter);
+app.use('/api/document-trail', documentTrailRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

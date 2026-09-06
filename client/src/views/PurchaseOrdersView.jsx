@@ -17,7 +17,7 @@ import { api } from '../api';
 import { formatMoney } from '../money';
 import { isServiceLine, lineTypeLabel } from '../lineType';
 
-export default function PurchaseOrdersView({ currentUser, onNavigate }) {
+export default function PurchaseOrdersView({ currentUser, onNavigate, focusId }) {
   const [orders, setOrders] = useState([]);
   const [approvedPRs, setApprovedPRs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +52,12 @@ export default function PurchaseOrdersView({ currentUser, onNavigate }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (focusId) {
+      handleOpenDetail(focusId);
+    }
+  }, [focusId]);
 
   const handleOpenDetail = async (id) => {
     try {

@@ -11,7 +11,7 @@ import { api } from '../api';
 import { formatMoney } from '../money';
 import { isServiceLine } from '../lineType';
 
-export default function ServiceEntrySheetsView({ currentUser, onDataChanged }) {
+export default function ServiceEntrySheetsView({ currentUser, onDataChanged, focusId }) {
   const [sheets, setSheets] = useState([]);
   const [activePOs, setActivePOs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +49,12 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (focusId) {
+      handleOpenDetail(focusId);
+    }
+  }, [focusId]);
 
   const handleSelectPO = async (poId) => {
     setSelectedPOId(poId);

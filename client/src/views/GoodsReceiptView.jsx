@@ -15,7 +15,7 @@ import { api } from '../api';
 import { formatMoney } from '../money';
 import { isServiceLine } from '../lineType';
 
-export default function GoodsReceiptView({ currentUser, onDataChanged }) {
+export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }) {
   const [receipts, setReceipts] = useState([]);
   const [activePOs, setActivePOs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +52,12 @@ export default function GoodsReceiptView({ currentUser, onDataChanged }) {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (focusId) {
+      handleOpenReceiptDetail(focusId);
+    }
+  }, [focusId]);
 
   const handleSelectPO = async (poId) => {
     setSelectedPOId(poId);

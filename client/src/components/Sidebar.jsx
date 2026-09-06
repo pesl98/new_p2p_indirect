@@ -9,7 +9,7 @@ import {
   FileSpreadsheet, 
   Landmark, 
   Store,
-  ArrowRight
+  GitBranch
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount }) {
@@ -59,6 +59,12 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       badge: varianceInvoicesCount > 0 ? `${varianceInvoicesCount} Alert` : null,
       badgeColor: 'bg-rose-500 text-white',
       desc: 'Automated 3-way reconciliation & AP'
+    },
+    {
+      id: 'document_trail',
+      label: 'Document trail',
+      icon: GitBranch,
+      desc: 'Full PR → PO → GRN/SES → invoice chain'
     },
     {
       id: 'budgets',

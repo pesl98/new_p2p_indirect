@@ -74,7 +74,7 @@ Waiting steps do not appear in the approver inbox (list defaults to `status=pend
 
 PR detail returns `purchase_orders` (array). `purchase_order` remains the first linked PO for older clients.
 
-Demo seed: **PR-2026-002** is a single-supplier approved convert; **PR-2026-006** is an approved TechSupply + WorkSpace split for Carol to convert. Existing SES/GRN demo POs (`PO-2026-003`, `PO-2026-004`, etc.) are unchanged.
+Demo seed: **PR-2026-001** is the complete goods document-trail happy path (`PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid`). **PR-2026-002** is a single-supplier approved convert; **PR-2026-006** is an approved TechSupply + WorkSpace split for Carol to convert — after convert the trail shows two PO branches. Existing SES/GRN demo POs (`PO-2026-003`, `PO-2026-004`, etc.) are unchanged. **PR-2026-005** is the service path (`PO-2026-003 → SES-2026-001 → INV-AAD-5501`).
 
 Remaining edge: convert-time `supplier_mappings` is API-only in this demo (the UI does not collect a per-line vendor override). Ad-hoc PR lines still default to a supplier on create (`estimated_supplier_id || 1`); convert itself does not invent one.
 
@@ -161,6 +161,25 @@ Overall invoice `match_status`: `perfect_match` | `tolerated_match` | `quantity_
 
 Invoice numbers are unique per supplier: `UNIQUE(supplier_id, invoice_number)`. The same number from two vendors is allowed.
 
+## Document trail
+
+`GET /api/document-trail` builds a chronological buying-journey view from existing FKs and `audit_logs`. It does **not** invent events.
+
+Lookup (first match wins): `requisition_id`, `pr_number`, `po_id`, `po_number`, or `q` (exact PR / PO / invoice number). Looking up a split child PO still returns the parent PR and **all** sibling POs. `GET /api/document-trail/search?q=` is the typeahead list.
+
+Response includes:
+
+- PR header + status (cents, ISO timestamps)
+- Sequential approval steps (who / when / decision)
+- Linked PO(s) — one branch per supplier
+- GRNs and SES rows (or `not_started` / `not_applicable` on the branch)
+- Invoices with `match_status`
+- AP approve / paid rows taken only from invoice `audit_logs` (`APPROVED_PAYMENT`, `APPROVED_FOR_PAYMENT`, `PAID`)
+
+The Document trail sidebar screen opens this payload as a stage strip + vertical timeline, with click-through to the existing PR / PO / GRN / SES / invoice tabs.
+
+Demo: open **PR-2026-001** for the completed goods chain. Convert **PR-2026-006** to see two PO branches.
+
 ## How to run, seed, and test
 
 Prerequisites: Node 18+, npm 9+.
@@ -184,7 +203,7 @@ npm run dev
 node server/src/index.js
 ```
 
-Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, and multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success).
+Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success), and the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events).
 
 ## Known demo limits (out of scope)
 
