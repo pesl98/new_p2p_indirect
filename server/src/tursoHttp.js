@@ -67,6 +67,51 @@ export function decodeCell(cell) {
   return cell.value;
 }
 
+export function isInsertSql(sql) {
+  return /^\s*insert\b/i.test(String(sql || ''));
+}
+
+/**
+ * Turso / Hrana may omit last_insert_rowid, return camelCase, or send "0"
+ * after INSERT on a baton stream. Treat missing/empty as 0 so callers can
+ * fall back to SELECT last_insert_rowid() on the same connection.
+ */
+export function mapLastInsertRowid(result) {
+  if (!result || typeof result !== 'object') return 0;
+  const raw = result.last_insert_rowid ?? result.lastInsertRowid ?? result.last_insert_row_id;
+  if (raw == null || raw === '') return 0;
+  const n = typeof raw === 'bigint' ? Number(raw) : Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pipelineError(item) {
+  const err = item.error || item.response?.error || {};
+  const message = err.message || String(item);
+  const sqlError = new TursoHttpError(message);
+  if (/UNIQUE constraint failed/i.test(message)) {
+    sqlError.code = 'SQLITE_CONSTRAINT_UNIQUE';
+  }
+  return sqlError;
+}
+
+/** Collect execute results from a /v2/pipeline payload (ok-wrapped or flat). */
+export function extractExecuteResults(payload) {
+  const executes = [];
+  for (const item of payload?.results || []) {
+    if (item.type === 'error') {
+      throw pipelineError(item);
+    }
+    const resp = item.response || item;
+    if (resp.type === 'error') {
+      throw pipelineError({ error: resp.error || item.error, type: 'error' });
+    }
+    if (resp.type === 'execute' || resp.result) {
+      executes.push(resp.result || {});
+    }
+  }
+  return executes;
+}
+
 /** Drop leading `--` comment lines and blank lines so DDL after a file header is kept. */
 function stripLeadingSqlComments(chunk) {
   const lines = String(chunk).split(/\r?\n/);
@@ -169,29 +214,17 @@ export class TursoHttpClient {
     this._baton = payload.baton || null;
     if (payload.base_url) this._baseUrl = payload.base_url;
 
-    let lastExecute = { cols: [], rows: [], affected_row_count: 0, last_insert_rowid: '0' };
-    for (const item of payload.results || []) {
-      if (item.type === 'error') {
-        const err = item.error || {};
-        const message = err.message || String(item);
-        const sqlError = new TursoHttpError(message);
-        if (/UNIQUE constraint failed/i.test(message)) {
-          sqlError.code = 'SQLITE_CONSTRAINT_UNIQUE';
-        }
-        throw sqlError;
-      }
-      const resp = item.response || {};
-      if (resp.type === 'execute') {
-        lastExecute = resp.result || lastExecute;
-      }
-    }
+    const executes = extractExecuteResults(payload);
+    const lastExecute = executes.length
+      ? executes[executes.length - 1]
+      : { cols: [], rows: [], affected_row_count: 0, last_insert_rowid: null };
 
     if (!keepOpen && !this._inTransaction) {
       this._baton = null;
       this._baseUrl = null;
     }
 
-    return lastExecute;
+    return { ...lastExecute, executes };
   }
 
   async _execute(sql, params = [], { keepOpen = false } = {}) {
@@ -218,10 +251,37 @@ export class TursoHttpClient {
         return rowObjects(result.cols, result.rows);
       },
       async run(...params) {
-        const result = await client._execute(sql, params);
+        // Hrana /v2/pipeline often omits last_insert_rowid on INSERT (especially
+        // after BEGIN on a baton). Pair INSERT with SELECT last_insert_rowid()
+        // on the same pipeline/connection so child FKs get a real id.
+        const insertLike = isInsertSql(sql);
+        const args = [...params].map(encodeArg);
+        const stmt = { sql };
+        if (args.length) stmt.args = args;
+        const requests = [{ type: 'execute', stmt }];
+        if (insertLike) {
+          requests.push({ type: 'execute', stmt: { sql: 'SELECT last_insert_rowid() AS id' } });
+        }
+        const keepOpen = client._inTransaction > 0;
+        if (!keepOpen) requests.push({ type: 'close' });
+
+        const result = await client._pipeline(requests, { keepOpen });
+        const executes = result.executes?.length ? result.executes : [result];
+        const writeResult = executes[0] || result;
+        const idResult = insertLike && executes.length > 1 ? executes[executes.length - 1] : null;
+        const idRows = idResult ? rowObjects(idResult.cols, idResult.rows) : [];
+
+        let lastInsertRowid = mapLastInsertRowid(writeResult);
+        if (!lastInsertRowid && idRows.length) {
+          lastInsertRowid = Number(idRows[0]?.id || 0);
+        }
+        if (!lastInsertRowid) {
+          lastInsertRowid = mapLastInsertRowid(result);
+        }
+
         return {
-          lastInsertRowid: Number(result.last_insert_rowid || 0),
-          changes: Number(result.affected_row_count || 0)
+          lastInsertRowid,
+          changes: Number(writeResult.affected_row_count ?? writeResult.affectedRowCount ?? 0)
         };
       }
     };

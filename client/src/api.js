@@ -2,6 +2,20 @@
 
 const API_BASE = '/api';
 
+async function jsonOk(response, fallbackMessage) {
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    if (!response.ok) throw new Error(fallbackMessage);
+    throw new Error(fallbackMessage);
+  }
+  if (!response.ok) {
+    throw new Error(data.error || fallbackMessage);
+  }
+  return data;
+}
+
 export const api = {
   // Users & Roles
   getUsers: () => fetch(`${API_BASE}/users`).then(r => r.json()),
@@ -18,18 +32,24 @@ export const api = {
     if (search) params.append('search', search);
     return fetch(`${API_BASE}/catalog?${params.toString()}`).then(r => r.json());
   },
-  createCatalogItem: (item) => fetch(`${API_BASE}/catalog`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(item)
-  }).then(r => r.json()),
+  createCatalogItem: async (item) => {
+    const r = await fetch(`${API_BASE}/catalog`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item)
+    });
+    return jsonOk(r, 'Failed to create catalog item');
+  },
 
   getSuppliers: () => fetch(`${API_BASE}/suppliers`).then(r => r.json()),
-  createSupplier: (supplier) => fetch(`${API_BASE}/suppliers`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(supplier)
-  }).then(r => r.json()),
+  createSupplier: async (supplier) => {
+    const r = await fetch(`${API_BASE}/suppliers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(supplier)
+    });
+    return jsonOk(r, 'Failed to create supplier');
+  },
 
   // Budgets
   getBudgets: () => fetch(`${API_BASE}/budgets`).then(r => r.json()),
@@ -42,14 +62,20 @@ export const api = {
     return fetch(`${API_BASE}/requisitions?${params.toString()}`).then(r => r.json());
   },
   getRequisitionDetail: (id) => fetch(`${API_BASE}/requisitions/${id}`).then(r => r.json()),
-  createRequisition: (prData) => fetch(`${API_BASE}/requisitions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(prData)
-  }).then(r => r.json()),
-  submitRequisition: (id) => fetch(`${API_BASE}/requisitions/${id}/submit`, {
-    method: 'POST'
-  }).then(r => r.json()),
+  createRequisition: async (prData) => {
+    const r = await fetch(`${API_BASE}/requisitions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prData)
+    });
+    return jsonOk(r, 'Failed to create requisition');
+  },
+  submitRequisition: async (id) => {
+    const r = await fetch(`${API_BASE}/requisitions/${id}/submit`, {
+      method: 'POST'
+    });
+    return jsonOk(r, 'Failed to submit requisition');
+  },
 
   // Approvals
   getApprovals: (approver_id = '') => {
@@ -63,9 +89,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(decisionData)
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Failed to record approval decision');
-    return data;
+    return jsonOk(r, 'Failed to record approval decision');
   },
 
   // Purchase Orders
@@ -81,15 +105,16 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(poData)
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Failed to generate purchase order');
-    return data;
+    return jsonOk(r, 'Failed to generate purchase order');
   },
-  updatePOStatus: (id, status, notes) => fetch(`${API_BASE}/purchase-orders/${id}/status`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status, notes })
-  }).then(r => r.json()),
+  updatePOStatus: async (id, status, notes) => {
+    const r = await fetch(`${API_BASE}/purchase-orders/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, notes })
+    });
+    return jsonOk(r, 'Failed to update purchase order status');
+  },
 
   // Goods Receipts
   getGoodsReceipts: (po_id = '') => {
@@ -104,9 +129,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(receiptData)
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Failed to record goods receipt');
-    return data;
+    return jsonOk(r, 'Failed to record goods receipt');
   },
 
   // Service Entry Sheets
@@ -122,9 +145,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sesData)
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Failed to create service entry sheet');
-    return data;
+    return jsonOk(r, 'Failed to create service entry sheet');
   },
   submitServiceEntrySheet: async (id, data = {}) => {
     const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/submit`, {
@@ -132,9 +153,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    const result = await r.json();
-    if (!r.ok) throw new Error(result.error || 'Failed to submit service entry sheet');
-    return result;
+    return jsonOk(r, 'Failed to submit service entry sheet');
   },
   acceptServiceEntrySheet: async (id, data = {}) => {
     const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/accept`, {
@@ -142,9 +161,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    const result = await r.json();
-    if (!r.ok) throw new Error(result.error || 'Failed to accept service entry sheet');
-    return result;
+    return jsonOk(r, 'Failed to accept service entry sheet');
   },
   rejectServiceEntrySheet: async (id, data = {}) => {
     const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/reject`, {
@@ -152,9 +169,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    const result = await r.json();
-    if (!r.ok) throw new Error(result.error || 'Failed to reject service entry sheet');
-    return result;
+    return jsonOk(r, 'Failed to reject service entry sheet');
   },
 
   // Invoices & Matching
@@ -170,20 +185,24 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(invoiceData)
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Failed to create invoice');
-    return data;
+    return jsonOk(r, 'Failed to create invoice');
   },
-  approveInvoicePayment: (id, data) => fetch(`${API_BASE}/invoices/${id}/approve-payment`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  }).then(r => r.json()),
-  markInvoicePaid: (id, data) => fetch(`${API_BASE}/invoices/${id}/mark-paid`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
-  }).then(r => r.json()),
+  approveInvoicePayment: async (id, data) => {
+    const r = await fetch(`${API_BASE}/invoices/${id}/approve-payment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to approve invoice payment');
+  },
+  markInvoicePaid: async (id, data) => {
+    const r = await fetch(`${API_BASE}/invoices/${id}/mark-paid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to mark invoice paid');
+  },
 
   // Document trail (PR → approvals → PO(s) → GRN/SES → invoice → AP)
   searchDocumentTrail: (q = '') => {
@@ -199,8 +218,6 @@ export const api = {
       }
     });
     const r = await fetch(`${API_BASE}/document-trail?${search.toString()}`);
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Document trail not found');
-    return data;
+    return jsonOk(r, 'Document trail not found');
   }
 };
