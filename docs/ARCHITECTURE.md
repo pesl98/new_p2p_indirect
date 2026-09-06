@@ -222,6 +222,6 @@ Vercel:               Turso required; missing env → HTML/JSON 503 config page
 
 The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) exposes `prepare` / `run` / `get` / `all` / `exec` / `transaction` for both backends. Route and service code is async so Turso HTTP is not left half-migrated. Transactions on Turso keep a Hrana **baton** so `BEGIN`/`COMMIT` share one connection.
 
-Vercel entry: root [`app.js`](../app.js) default-exports the Express app (current Express-on-Vercel convention). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`) and includes `server/src/schema.sql` in the function bundle. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
+Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
 Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production, then `npm run seed` from a laptop with those vars. See the README deploy section.

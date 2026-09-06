@@ -1,9 +1,10 @@
 /**
- * Vercel Express entrypoint.
+ * Vercel Node Function entrypoint (must live under `api/`).
  *
- * Vercel detects `app.js` at the repo root (or src/) and deploys the default
- * export as a single Fluid Function. Locally, `node server/src/index.js`
- * still listens on PORT.
+ * CLI 59.x validates `vercel.json` `functions` keys against files in `api/`.
+ * Root `app.js` is no longer a valid functions pattern (unmatched-function-pattern).
+ *
+ * Locally, `npm start` still uses `server/src/index.js` (listen on PORT).
  *
  * On Vercel (`VERCEL` / `VERCEL_ENV`):
  * - TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are required
@@ -11,10 +12,10 @@
  * - Missing Turso shows a configuration page instead of FUNCTION_INVOCATION_FAILED
  *
  * Static UI: `npm run build` copies `client/dist` → `public/` (Vercel CDN).
- * express.static is ignored on Vercel.
+ * express.static is ignored on Vercel. `/api/*` is rewritten to this function.
  */
 
-import { createApp, startupErrorApp } from './server/src/app.js';
+import { createApp, startupErrorApp } from '../server/src/app.js';
 
 let app;
 try {
