@@ -10,10 +10,12 @@ import ServiceEntrySheetsView from './views/ServiceEntrySheetsView';
 import InvoicesMatchingView from './views/InvoicesMatchingView';
 import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
+import DocumentTrailView from './views/DocumentTrailView';
 import { api } from './api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [navFocus, setNavFocus] = useState(null);
   const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [analytics, setAnalytics] = useState(null);
@@ -45,8 +47,9 @@ export default function App() {
     setCurrentUser(user);
   };
 
-  const handleNavigate = (tab) => {
+  const handleNavigate = (tab, focus = null) => {
     setActiveTab(tab);
+    setNavFocus(focus);
   };
 
   return (
@@ -77,10 +80,15 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'document_trail' && (
+            <DocumentTrailView onNavigate={handleNavigate} />
+          )}
+
           {activeTab === 'requisitions' && (
             <RequisitionsView
               currentUser={currentUser}
               onNavigate={handleNavigate}
+              focusId={navFocus?.focusId}
             />
           )}
 
@@ -96,6 +104,7 @@ export default function App() {
             <PurchaseOrdersView
               currentUser={currentUser}
               onNavigate={handleNavigate}
+              focusId={navFocus?.focusId}
             />
           )}
 
@@ -103,6 +112,7 @@ export default function App() {
             <GoodsReceiptView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
+              focusId={navFocus?.focusId}
             />
           )}
 
@@ -110,6 +120,7 @@ export default function App() {
             <ServiceEntrySheetsView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
+              focusId={navFocus?.focusId}
             />
           )}
 
@@ -117,6 +128,7 @@ export default function App() {
             <InvoicesMatchingView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
+              focusId={navFocus?.focusId}
             />
           )}
 

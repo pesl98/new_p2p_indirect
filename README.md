@@ -51,7 +51,12 @@ Control model (integer cents, sequential approvals, dual invoice match, GRN/SES 
 7. **Department Budgets & Cost Centers**
    - Real-time departmental tracking in cents: Allocated vs. **Committed (on final PR approve)** vs. Actual Spent (AP-approved invoices) vs. Remaining (`total − committed − actual`).
 
-8. **Multi-Persona Testing Switcher (demo only — not real auth)**
+8. **Document trail (P2P lifecycle overview)**
+   - One screen for a buying journey: PR header, sequential approvals, linked PO(s) (multi-supplier split as branches), GRN and/or SES, invoice `match_status`, and AP approve/paid events.
+   - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
+   - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** to see two PO branches.
+
+9. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
      - **Bob Martinez** (Approver / Dept Head - Marketing Director)
@@ -119,3 +124,4 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `invoices` & `invoice_items`: Supplier billing entries
 - `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
 - `audit_logs`: Complete immutable event history
+- Document trail is **not** a new table: `GET /api/document-trail` derives the chain from the FKs above plus AP rows in `audit_logs`

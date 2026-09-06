@@ -120,6 +120,10 @@ db.transaction(() => {
   `);
 
   // 6. Purchase Requisitions & Items
+  // Document trail demos:
+  //   PR-2026-001 — complete goods path: PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid
+  //   PR-2026-005 — complete service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched)
+  //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -324,6 +328,7 @@ db.transaction(() => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  // Happy-path goods trail (PR-2026-001): invoice is AP-approved and paid so the Document Trail screen is complete.
   insertInvoice.run(
     1,
     'INV-WED-9042',
@@ -334,10 +339,10 @@ db.transaction(() => {
     259000,
     0,
     259000,
-    'approved_for_payment',
+    'paid',
     'perfect_match',
-    'ACH-SCHEDULED-1017',
-    'Perfect match against GRN-2026-001 and PO-2026-001.'
+    'ACH-1017-WED9042',
+    'Perfect match against GRN-2026-001 and PO-2026-001. AP approved and paid.'
   );
   insertInvoiceItem.run(1, 1, 'Herman Miller Aeron Ergonomic Chair (Size B)', 2, 129500, 259000);
   insertMatch.run(1, 1, 1, 2, 2, 2, 129500, 129500, 0, 0, 'pass', 'Exact match on quantity (2) and price ($1,295.00).');
@@ -392,6 +397,7 @@ db.transaction(() => {
   insertAudit.run('goods_receipt', 1, 'RECEIVED', 'Carol Zhang', 'GRN-2026-001 confirmed 2 chairs received in good condition', '-2 days');
   insertAudit.run('invoice', 1, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-2 days');
   insertAudit.run('invoice', 1, 'APPROVED_PAYMENT', 'David Miller', 'Approved invoice INV-WED-9042 for payment', '-1 days');
+  insertAudit.run('invoice', 1, 'PAID', 'David Miller', 'Marked as paid with reference ACH-1017-WED9042', '0 days');
   insertAudit.run('invoice', 2, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged price variance (+ $50/unit) and quantity discrepancy', '0 days');
   insertAudit.run('requisition', 5, 'CREATED', 'Alice Chen', 'Requisition created for SOC 2 Type II penetration test', '-10 days');
   insertAudit.run('requisition', 5, 'APPROVED', 'David Miller', 'Final approval and ITE budget commit for PR-2026-005', '-9 days');

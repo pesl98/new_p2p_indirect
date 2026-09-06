@@ -182,5 +182,24 @@ export const api = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
-  }).then(r => r.json())
+  }).then(r => r.json()),
+
+  // Document trail (PR → approvals → PO(s) → GRN/SES → invoice → AP)
+  searchDocumentTrail: (q = '') => {
+    const params = new URLSearchParams();
+    if (q) params.append('q', q);
+    return fetch(`${API_BASE}/document-trail/search?${params.toString()}`).then(r => r.json());
+  },
+  getDocumentTrail: async (params = {}) => {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        search.append(key, value);
+      }
+    });
+    const r = await fetch(`${API_BASE}/document-trail?${search.toString()}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Document trail not found');
+    return data;
+  }
 };
