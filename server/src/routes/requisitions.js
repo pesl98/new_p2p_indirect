@@ -162,7 +162,20 @@ router.post('/', async (req, res) => {
         priority || 'Medium'
       );
 
-      const prId = prResult.lastInsertRowid;
+      // Turso /v2/pipeline may omit last_insert_rowid; the row is still visible
+      // in this transaction. Never persist child lines against id 0.
+      let prId = Number(prResult.lastInsertRowid);
+      if (!prId) {
+        const created = await db.prepare(
+          `SELECT id FROM purchase_requisitions WHERE pr_number = ?`
+        ).get(prNumber);
+        prId = Number(created?.id || 0);
+      }
+      if (!prId) {
+        const err = new Error('Failed to allocate requisition id after insert');
+        err.statusCode = 500;
+        throw err;
+      }
 
       // Insert line items
       const insertItem = db.prepare(`

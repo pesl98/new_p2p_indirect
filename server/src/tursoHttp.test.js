@@ -6,6 +6,9 @@ import {
   TursoHttpError,
   decodeCell,
   encodeArg,
+  extractExecuteResults,
+  isInsertSql,
+  mapLastInsertRowid,
   pipelineUrl,
   splitSqlScript
 } from './tursoHttp.js';
@@ -164,4 +167,137 @@ CREATE TABLE IF NOT EXISTS users (
     assert.ok(calls.some((c) => c.baton === 'baton-1'));
     assert.equal(calls[calls.length - 1].requests[0].type, 'close');
   });
+
+  test('mapLastInsertRowid accepts snake_case, camelCase, and missing', () => {
+    assert.equal(mapLastInsertRowid({ last_insert_rowid: '7' }), 7);
+    assert.equal(mapLastInsertRowid({ lastInsertRowid: 9 }), 9);
+    assert.equal(mapLastInsertRowid({}), 0);
+    assert.equal(mapLastInsertRowid({ last_insert_rowid: '0' }), 0);
+    assert.equal(mapLastInsertRowid(null), 0);
+    assert.equal(isInsertSql('INSERT INTO t (a) VALUES (1)'), true);
+    assert.equal(isInsertSql('SELECT 1'), false);
+  });
+
+  test('extractExecuteResults reads ok-wrapped and flat execute items', () => {
+    const executes = extractExecuteResults({
+      results: [
+        {
+          type: 'ok',
+          response: {
+            type: 'execute',
+            result: { cols: [], rows: [], affected_row_count: 1 }
+          }
+        },
+        {
+          type: 'execute',
+          result: {
+            cols: [{ name: 'id' }],
+            rows: [[{ type: 'integer', value: '12' }]]
+          }
+        }
+      ]
+    });
+    assert.equal(executes.length, 2);
+    assert.equal(executes[0].affected_row_count, 1);
+    assert.equal(executes[1].rows.length, 1);
+  });
+
+  test('run recovers lastInsertRowid via SELECT last_insert_rowid when pipeline omits it', async () => {
+    const fetchImpl = mockPipelineBySql((sql) => {
+      if (/^insert\b/i.test(sql)) {
+        return { cols: [], rows: [], affected_row_count: 1 };
+      }
+      if (/last_insert_rowid/i.test(sql)) {
+        return {
+          cols: [{ name: 'id' }],
+          rows: [[{ type: 'integer', value: '42' }]],
+          affected_row_count: 0
+        };
+      }
+      return { cols: [], rows: [], affected_row_count: 0 };
+    });
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl });
+    const run = await client.prepare(
+      'INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount) VALUES (?, ?, ?, ?, ?)'
+    ).run('PR-2026-100', 1, 1, 'draft', 12500);
+    assert.equal(run.lastInsertRowid, 42);
+    assert.equal(run.changes, 1);
+  });
+
+  test('transaction INSERT still maps lastInsertRowid when execute result has 0', async () => {
+    const calls = [];
+    const fetchImpl = mockPipelineBySql((sql) => {
+      if (/^begin\b|^commit\b|^rollback\b/i.test(sql)) {
+        return { cols: [], rows: [], affected_row_count: 0, last_insert_rowid: '0' };
+      }
+      if (/^insert\b/i.test(sql)) {
+        return { cols: [], rows: [], affected_row_count: 1, last_insert_rowid: '0' };
+      }
+      if (/last_insert_rowid/i.test(sql)) {
+        return {
+          cols: [{ name: 'id' }],
+          rows: [[{ type: 'integer', value: '8' }]],
+          affected_row_count: 0
+        };
+      }
+      return { cols: [], rows: [], affected_row_count: 0 };
+    }, calls);
+
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl });
+    const prId = await client.transaction(async () => {
+      const pr = await client.prepare(
+        'INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount) VALUES (?, ?, ?, ?, ?)'
+      ).run('PR-2026-101', 1, 1, 'draft', 5000);
+      await client.prepare(
+        'INSERT INTO requisition_items (requisition_id, item_description, category, quantity, unit_price, total_price) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(pr.lastInsertRowid, 'Notebooks', 'Office Supplies', 2, 2500, 5000);
+      return pr.lastInsertRowid;
+    });
+
+    assert.equal(prId, 8);
+    assert.equal(calls[0].requests[0].stmt.sql, 'BEGIN');
+    const insertCall = calls.find((c) =>
+      (c.requests || []).some((req) => req.type === 'execute' && /^insert\b/i.test(req.stmt?.sql || ''))
+    );
+    assert.ok(insertCall);
+    assert.ok(
+      insertCall.requests.some((req) => /last_insert_rowid/i.test(req.stmt?.sql || '')),
+      'INSERT pipeline request must also SELECT last_insert_rowid()'
+    );
+    assert.ok(calls.some((c) => c.baton === 'baton-1'));
+  });
 });
+
+function mockPipelineBySql(handler, calls = []) {
+  return async (_url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    const results = [];
+    for (const request of body.requests) {
+      if (request.type === 'close') {
+        results.push({ type: 'ok', response: { type: 'close' } });
+        continue;
+      }
+      if (request.type === 'execute') {
+        results.push({
+          type: 'ok',
+          response: {
+            type: 'execute',
+            result: handler(request.stmt.sql, request.stmt.args || [])
+          }
+        });
+      }
+    }
+    const last = body.requests[body.requests.length - 1];
+    return {
+      status: 200,
+      ok: true,
+      async text() {
+        return JSON.stringify({
+          baton: last?.type !== 'close' ? 'baton-1' : null,
+          results
+        });
+      }
+    };
+  };
+}

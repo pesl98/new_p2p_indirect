@@ -52,7 +52,7 @@ export function createApp(options = {}) {
 
   app.use(async (req, res, next) => {
     try {
-      req.db = await getDb();
+      req.db = options.db || await getDb();
       next();
     } catch (error) {
       if (config.onVercel || error instanceof TursoConfigError) {
