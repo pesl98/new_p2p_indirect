@@ -421,6 +421,7 @@ db.transaction(() => {
       WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'PAID';
 
     UPDATE purchase_requisitions SET created_at = '2026-08-24 09:00:00' WHERE id = 5;
+    UPDATE purchase_requisitions SET created_at = '2026-09-03 08:00:00' WHERE id = 6;
     UPDATE purchase_orders SET created_at = '2026-08-26 10:00:00' WHERE id = 3;
     UPDATE service_entry_sheets SET created_at = '2026-09-21 09:00:00' WHERE id = 1;
     UPDATE invoices SET created_at = '2026-09-22 11:00:00' WHERE id = 3;
