@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
 import {
   TursoHttpClient,
   TursoHttpError,
@@ -8,7 +9,7 @@ import {
   pipelineUrl,
   splitSqlScript
 } from './tursoHttp.js';
-import { preferTursoHttp } from './dbConfig.js';
+import { preferTursoHttp, schemaPath } from './dbConfig.js';
 
 function mockFetch(payload, { status = 200 } = {}) {
   return async () => ({
@@ -53,6 +54,39 @@ describe('Turso HTTP pipeline client', () => {
     assert.deepEqual(
       splitSqlScript('CREATE TABLE a (id INT); CREATE INDEX i ON a(id);'),
       ['CREATE TABLE a (id INT)', 'CREATE INDEX i ON a(id)']
+    );
+  });
+
+  test('splitSqlScript keeps CREATE after leading -- comments', () => {
+    const fixture = `-- Schema header
+-- Money columns are INTEGER cents.
+
+CREATE TABLE IF NOT EXISTS departments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL
+);
+
+-- next table
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+);
+`;
+    const stmts = splitSqlScript(fixture);
+    assert.ok(
+      stmts.some((stmt) => /CREATE TABLE IF NOT EXISTS departments/i.test(stmt)),
+      'first CREATE after file-header comments must be kept'
+    );
+    assert.match(stmts[0], /CREATE TABLE IF NOT EXISTS departments/);
+    assert.match(stmts[1], /CREATE TABLE IF NOT EXISTS users/);
+  });
+
+  test('splitSqlScript(schema.sql) includes departments CREATE', () => {
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    const stmts = splitSqlScript(schema);
+    assert.ok(
+      stmts.some((stmt) => /CREATE TABLE IF NOT EXISTS departments/i.test(stmt)),
+      'schema.sql departments CREATE must survive header -- comments'
     );
   });
 
