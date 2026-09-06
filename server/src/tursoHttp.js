@@ -67,11 +67,26 @@ export function decodeCell(cell) {
   return cell.value;
 }
 
+/** Drop leading `--` comment lines and blank lines so DDL after a file header is kept. */
+function stripLeadingSqlComments(chunk) {
+  const lines = String(chunk).split(/\r?\n/);
+  let start = 0;
+  while (start < lines.length) {
+    const trimmed = lines[start].trim();
+    if (trimmed === '' || trimmed.startsWith('--')) {
+      start += 1;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(start).join('\n').trim();
+}
+
 export function splitSqlScript(sql) {
   return String(sql)
     .split(';')
-    .map((part) => part.trim())
-    .filter((part) => part && !/^--/.test(part));
+    .map((part) => stripLeadingSqlComments(part))
+    .filter(Boolean);
 }
 
 function rowObjects(cols, rows) {
