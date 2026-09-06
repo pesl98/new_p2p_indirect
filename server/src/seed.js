@@ -408,6 +408,24 @@ db.transaction(() => {
   insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
   insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
 
+  // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
+  // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).
+  db.exec(`
+    UPDATE purchase_requisitions SET created_at = '2026-08-27 09:00:00' WHERE id = 1;
+    UPDATE purchase_orders SET created_at = '2026-08-29 09:30:00' WHERE id = 1;
+    UPDATE goods_receipts SET created_at = '2026-09-02 11:00:00' WHERE id = 1;
+    UPDATE invoices SET created_at = '2026-09-02 15:00:00' WHERE id = 1;
+    UPDATE audit_logs SET created_at = '2026-09-03 10:00:00'
+      WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'APPROVED_PAYMENT';
+    UPDATE audit_logs SET created_at = '2026-09-04 08:00:00'
+      WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'PAID';
+
+    UPDATE purchase_requisitions SET created_at = '2026-08-24 09:00:00' WHERE id = 5;
+    UPDATE purchase_orders SET created_at = '2026-08-26 10:00:00' WHERE id = 3;
+    UPDATE service_entry_sheets SET created_at = '2026-09-21 09:00:00' WHERE id = 1;
+    UPDATE invoices SET created_at = '2026-09-22 11:00:00' WHERE id = 3;
+  `);
+
 })();
 
 console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
