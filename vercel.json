@@ -1,0 +1,8 @@
+{
+  "buildCommand": "npm run build",
+  "functions": {
+    "app.js": {
+      "includeFiles": "server/src/schema.sql"
+    }
+  }
+}

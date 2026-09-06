@@ -1,21 +1,12 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createMemoryDatabase } from './db.js';
 import { createGoodsReceipt, GoodsReceiptError } from './goodsReceiptsService.js';
 
-const schemaSql = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql'),
-  'utf8'
-);
 
-function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(schemaSql);
-  db.exec(`
+async function createTestDb() {
+  const db = await createMemoryDatabase();
+    db.exec(`
     INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
     INSERT INTO users (id, name, email, role, department_id)
       VALUES (1, 'Alice', 'alice@example.com', 'requester', 1),
@@ -40,21 +31,21 @@ function receiptPayload(overrides = {}) {
 }
 
 describe('goods receipt over-receipt control', () => {
-  test('accepts a receipt that does not exceed ordered qty', () => {
-    const db = createTestDb();
-    const result = createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
+  test('accepts a receipt that does not exceed ordered qty', async () => {
+    const db = await createTestDb();
+    const result = await createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
     assert.equal(result.grnNumber, 'GRN-2026-001');
     assert.equal(result.newPOStatus, 'received');
     const poItem = db.prepare(`SELECT quantity_received FROM po_items WHERE id = 1`).get();
     assert.equal(poItem.quantity_received, 2);
   });
 
-  test('rejects over-receipt with 400 unless allow_over_receipt is set', () => {
-    const db = createTestDb();
-    createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
+  test('rejects over-receipt with 400 unless allow_over_receipt is set', async () => {
+    const db = await createTestDb();
+    await createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
 
-    assert.throws(
-      () => createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 1 }] })),
+    assert.rejects(
+      async () => createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 1 }] })),
       (err) => err instanceof GoodsReceiptError && err.statusCode === 400 && /allow_over_receipt/i.test(err.message)
     );
 
@@ -64,11 +55,11 @@ describe('goods receipt over-receipt control', () => {
     assert.equal(grnCount.cnt, 1);
   });
 
-  test('allow_over_receipt records the overage and writes an audit log', () => {
-    const db = createTestDb();
-    createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
+  test('allow_over_receipt records the overage and writes an audit log', async () => {
+    const db = await createTestDb();
+    await createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
 
-    const result = createGoodsReceipt(db, receiptPayload({
+    const result = await createGoodsReceipt(db, receiptPayload({
       items: [{ po_item_id: 1, quantity_received: 1, comments: 'Vendor shipped extra' }],
       allow_over_receipt: true,
       actor_name: 'Carol Zhang'
@@ -86,10 +77,10 @@ describe('goods receipt over-receipt control', () => {
     assert.match(overrideLog.details, /cumulative 3 vs ordered 2/);
   });
 
-  test('a single receipt that exceeds ordered qty is also blocked by default', () => {
-    const db = createTestDb();
-    assert.throws(
-      () => createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 5 }] })),
+  test('a single receipt that exceeds ordered qty is also blocked by default', async () => {
+    const db = await createTestDb();
+    assert.rejects(
+      async () => createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 5 }] })),
       (err) => err instanceof GoodsReceiptError && err.statusCode === 400
     );
     const poItem = db.prepare(`SELECT quantity_received FROM po_items WHERE id = 1`).get();

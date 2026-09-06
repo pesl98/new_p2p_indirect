@@ -1,22 +1,22 @@
 import express from 'express';
-import db from '../db.js';
 
 const router = express.Router();
 
 // Get executive dashboard metrics
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     // 1. KPI Counts
-    const openPRs = db.prepare(`SELECT COUNT(*) as count FROM purchase_requisitions WHERE status IN ('draft', 'submitted', 'pending_approval')`).get().count;
-    const pendingApprovals = db.prepare(`SELECT COUNT(*) as count FROM approval_requests WHERE status = 'pending'`).get().count;
-    const activePOs = db.prepare(`SELECT COUNT(*) as count FROM purchase_orders WHERE status IN ('issued', 'acknowledged', 'partially_received')`).get().count;
-    const invoiceVariances = db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE status = 'variance_flagged'`).get().count;
-    const totalCommitted = db.prepare(`SELECT COALESCE(SUM(committed_amount), 0) as total FROM budgets WHERE fiscal_year = 2026`).get().total;
-    const totalSpent = db.prepare(`SELECT COALESCE(SUM(actual_spent), 0) as total FROM budgets WHERE fiscal_year = 2026`).get().total;
-    const totalBudget = db.prepare(`SELECT COALESCE(SUM(total_budget), 0) as total FROM budgets WHERE fiscal_year = 2026`).get().total;
+    const openPRs = (await db.prepare(`SELECT COUNT(*) as count FROM purchase_requisitions WHERE status IN ('draft', 'submitted', 'pending_approval')`).get()).count;
+    const pendingApprovals = (await db.prepare(`SELECT COUNT(*) as count FROM approval_requests WHERE status = 'pending'`).get()).count;
+    const activePOs = (await db.prepare(`SELECT COUNT(*) as count FROM purchase_orders WHERE status IN ('issued', 'acknowledged', 'partially_received')`).get()).count;
+    const invoiceVariances = (await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE status = 'variance_flagged'`).get()).count;
+    const totalCommitted = (await db.prepare(`SELECT COALESCE(SUM(committed_amount), 0) as total FROM budgets WHERE fiscal_year = 2026`).get()).total;
+    const totalSpent = (await db.prepare(`SELECT COALESCE(SUM(actual_spent), 0) as total FROM budgets WHERE fiscal_year = 2026`).get()).total;
+    const totalBudget = (await db.prepare(`SELECT COALESCE(SUM(total_budget), 0) as total FROM budgets WHERE fiscal_year = 2026`).get()).total;
 
     // 2. Spend by Category (from PO items)
-    const spendByCategory = db.prepare(`
+    const spendByCategory = await db.prepare(`
       SELECT 
         category,
         SUM(total_price) as total_spend,
@@ -27,7 +27,7 @@ router.get('/', (req, res) => {
     `).all();
 
     // 3. Spend by Supplier
-    const spendBySupplier = db.prepare(`
+    const spendBySupplier = await db.prepare(`
       SELECT 
         s.id,
         s.name as supplier_name,
@@ -41,7 +41,7 @@ router.get('/', (req, res) => {
     `).all();
 
     // 4. Budget Status by Department
-    const departmentBudgets = db.prepare(`
+    const departmentBudgets = await db.prepare(`
       SELECT 
         d.id,
         d.name as department_name,
@@ -57,7 +57,7 @@ router.get('/', (req, res) => {
     `).all();
 
     // 5. Recent Activity Logs
-    const recentActivity = db.prepare(`
+    const recentActivity = await db.prepare(`
       SELECT * FROM audit_logs
       ORDER BY id DESC
       LIMIT 10

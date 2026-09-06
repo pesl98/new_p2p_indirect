@@ -5,6 +5,13 @@ server/node_modules/
 
 # Build outputs
 client/dist/
+public/
+
+# Local SQLite
+*.db
+*.db-wal
+*.db-shm
+server/data/
 
 # Environment and local configurations
 .env

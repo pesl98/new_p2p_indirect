@@ -1,12 +1,12 @@
 import express from 'express';
-import db from '../db.js';
 import { createGoodsReceipt } from '../goodsReceiptsService.js';
 
 const router = express.Router();
 
 // List all goods receipts
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     const { po_id } = req.query;
     let query = `
       SELECT 
@@ -30,7 +30,7 @@ router.get('/', (req, res) => {
     }
 
     query += ` ORDER BY gr.id DESC`;
-    const receipts = db.prepare(query).all(...params);
+    const receipts = await db.prepare(query).all(...params);
     res.json(receipts);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -38,10 +38,11 @@ router.get('/', (req, res) => {
 });
 
 // Get single receipt with item details
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
-    const gr = db.prepare(`
+    const gr = await db.prepare(`
       SELECT 
         gr.*,
         po.po_number,
@@ -57,7 +58,7 @@ router.get('/:id', (req, res) => {
 
     if (!gr) return res.status(404).json({ error: 'Goods receipt not found' });
 
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT gri.*, poi.item_description, poi.quantity as ordered_quantity, poi.unit_price
       FROM goods_receipt_items gri
       JOIN po_items poi ON gri.po_item_id = poi.id
@@ -71,9 +72,10 @@ router.get('/:id', (req, res) => {
 });
 
 // Receive goods/services against a PO
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const result = createGoodsReceipt(db, req.body);
+    const db = req.db;
+    const result = await createGoodsReceipt(db, req.body);
     res.status(201).json({
       receiptId: result.grId,
       grnNumber: result.grnNumber,

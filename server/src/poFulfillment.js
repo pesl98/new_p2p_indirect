@@ -11,18 +11,18 @@ export function lineFulfilledQty(item) {
  * Goods lines use GRN qty; service lines use accepted SES qty.
  * Closed / cancelled POs are left unchanged.
  */
-export function refreshPoFulfillmentStatus(db, poId) {
-  const po = db.prepare(`SELECT * FROM purchase_orders WHERE id = ?`).get(poId);
+export async function refreshPoFulfillmentStatus(db, poId) {
+  const po = await db.prepare(`SELECT * FROM purchase_orders WHERE id = ?`).get(poId);
   if (!po || po.status === 'closed' || po.status === 'cancelled') {
     return po?.status || null;
   }
 
-  const items = db.prepare(`SELECT * FROM po_items WHERE po_id = ?`).all(poId);
+  const items = await db.prepare(`SELECT * FROM po_items WHERE po_id = ?`).all(poId);
   if (items.length === 0) return po.status;
 
   const isFullyReceived = items.every((item) => lineFulfilledQty(item) >= toQty(item.quantity));
   const isPartiallyReceived = items.some((item) => lineFulfilledQty(item) > 0);
   const newStatus = isFullyReceived ? 'received' : (isPartiallyReceived ? 'partially_received' : po.status);
-  db.prepare(`UPDATE purchase_orders SET status = ? WHERE id = ?`).run(newStatus, poId);
+  await db.prepare(`UPDATE purchase_orders SET status = ? WHERE id = ?`).run(newStatus, poId);
   return newStatus;
 }

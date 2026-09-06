@@ -1,12 +1,12 @@
 import express from 'express';
-import db from '../db.js';
 
 const router = express.Router();
 
 // List all users (with department details)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const users = db.prepare(`
+    const db = req.db;
+    const users = await db.prepare(`
       SELECT u.*, d.name as department_name, d.code as department_code
       FROM users u
       LEFT JOIN departments d ON u.department_id = d.id
@@ -19,9 +19,10 @@ router.get('/', (req, res) => {
 });
 
 // List departments with budget summary
-router.get('/departments', (req, res) => {
+router.get('/departments', async (req, res) => {
   try {
-    const depts = db.prepare(`
+    const db = req.db;
+    const depts = await db.prepare(`
       SELECT d.*, b.total_budget, b.committed_amount, b.actual_spent,
              (b.total_budget - b.committed_amount - b.actual_spent) as remaining_budget
       FROM departments d

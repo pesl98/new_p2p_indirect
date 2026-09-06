@@ -8,6 +8,7 @@ export const api = {
   getDepartments: () => fetch(`${API_BASE}/users/departments`).then(r => r.json()),
 
   // Dashboard & Analytics
+  getHealth: () => fetch(`${API_BASE}/health`).then(r => r.json()),
   getAnalytics: () => fetch(`${API_BASE}/analytics`).then(r => r.json()),
 
   // Catalog & Suppliers

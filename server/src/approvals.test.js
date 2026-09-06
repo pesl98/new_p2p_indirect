@@ -1,22 +1,13 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createMemoryDatabase } from './db.js';
 import { APPROVAL_TIER2_CENTS, insertApprovalChain } from './approvalPolicy.js';
 import { ApprovalDecisionError, decideApprovalStep } from './approvalsService.js';
 
-const schemaSql = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql'),
-  'utf8'
-);
 
-function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(schemaSql);
-  db.exec(`
+async function createTestDb() {
+  const db = await createMemoryDatabase();
+    db.exec(`
     INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
     INSERT INTO users (id, name, email, role, department_id, title) VALUES
       (1, 'Alice Chen', 'alice@example.com', 'requester', 1, 'Specialist'),
@@ -44,16 +35,16 @@ function chainRows(db, prId) {
 }
 
 describe('sequential approval decisions', () => {
-  test('cannot decide a waiting step', () => {
-    const db = createTestDb();
+  test('cannot decide a waiting step', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER2_CENTS + 500;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const waiting = chainRows(db, prId)[1];
     assert.equal(waiting.status, 'waiting');
 
-    assert.throws(
-      () => decideApprovalStep(db, {
+    assert.rejects(
+      async () => decideApprovalStep(db, {
         approvalId: waiting.id,
         decision: 'approved',
         approver_id: waiting.approver_id,
@@ -67,15 +58,15 @@ describe('sequential approval decisions', () => {
     assert.equal(pr.status, 'pending_approval');
   });
 
-  test('wrong approver_id is rejected with 403', () => {
-    const db = createTestDb();
+  test('wrong approver_id is rejected with 403', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER2_CENTS + 500;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const pending = chainRows(db, prId)[0];
 
-    assert.throws(
-      () => decideApprovalStep(db, {
+    assert.rejects(
+      async () => decideApprovalStep(db, {
         approvalId: pending.id,
         decision: 'approved',
         approver_id: 3,
@@ -86,14 +77,14 @@ describe('sequential approval decisions', () => {
     assert.equal(chainRows(db, prId)[0].status, 'pending');
   });
 
-  test('approve step 1 promotes step 2 from waiting to pending', () => {
-    const db = createTestDb();
+  test('approve step 1 promotes step 2 from waiting to pending', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER2_CENTS + 500;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1, step2] = chainRows(db, prId);
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
       comments: 'Dept OK',
@@ -112,14 +103,14 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 1000);
   });
 
-  test('reject skips remaining waiting steps and sets PR rejected', () => {
-    const db = createTestDb();
+  test('reject skips remaining waiting steps and sets PR rejected', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER2_CENTS + 500;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'rejected',
       comments: 'Not needed',
@@ -137,14 +128,14 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 1000);
   });
 
-  test('budget commits only when the final step is approved', () => {
-    const db = createTestDb();
+  test('budget commits only when the final step is approved', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER2_CENTS + 500;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
-    decideApprovalStep(db, {
+    await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
       approver_id: step1.approver_id,
@@ -155,7 +146,7 @@ describe('sequential approval decisions', () => {
     assert.equal(midBudget.committed_amount, 1000);
 
     const step2 = chainRows(db, prId)[1];
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step2.id,
       decision: 'approved',
       approver_id: step2.approver_id,
@@ -170,15 +161,15 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 1000 + amount);
   });
 
-  test('single-step PR commits budget on the first (final) approve', () => {
-    const db = createTestDb();
+  test('single-step PR commits budget on the first (final) approve', async () => {
+    const db = await createTestDb();
     const amount = 50_000;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
     assert.equal(chainRows(db, prId).length, 1);
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
       approver_id: step1.approver_id,
@@ -189,16 +180,16 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 1000 + amount);
   });
 
-  test('final approve fails closed when remaining budget is insufficient', () => {
-    const db = createTestDb();
+  test('final approve fails closed when remaining budget is insufficient', async () => {
+    const db = await createTestDb();
     db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
     const prAmount = 50_001;
-    const prId = insertPr(db, prAmount);
-    insertApprovalChain(db, prId, prAmount, 1);
+    const prId = await insertPr(db, prAmount);
+    await insertApprovalChain(db, prId, prAmount, 1);
     const [step1] = chainRows(db, prId);
 
-    assert.throws(
-      () => decideApprovalStep(db, {
+    assert.rejects(
+      async () => decideApprovalStep(db, {
         approvalId: step1.id,
         decision: 'approved',
         approver_id: step1.approver_id,
@@ -216,15 +207,15 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 14950000);
   });
 
-  test('final approve succeeds when remaining budget equals PR total', () => {
-    const db = createTestDb();
+  test('final approve succeeds when remaining budget equals PR total', async () => {
+    const db = await createTestDb();
     const amount = 50_000;
     db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
       approver_id: step1.approver_id,
@@ -235,15 +226,15 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 15000000);
   });
 
-  test('intermediate step still approves when remaining budget is insufficient', () => {
-    const db = createTestDb();
+  test('intermediate step still approves when remaining budget is insufficient', async () => {
+    const db = await createTestDb();
     db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
     const amount = APPROVAL_TIER2_CENTS + 500;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
       approver_id: step1.approver_id,
@@ -255,15 +246,15 @@ describe('sequential approval decisions', () => {
     assert.equal(budget.committed_amount, 14950000);
   });
 
-  test('override_budget allows final approve when remaining is insufficient', () => {
-    const db = createTestDb();
+  test('override_budget allows final approve when remaining is insufficient', async () => {
+    const db = await createTestDb();
     db.prepare(`UPDATE budgets SET committed_amount = 14950000, actual_spent = 0 WHERE department_id = 1`).run();
     const amount = 60_000;
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
       approver_id: step1.approver_id,

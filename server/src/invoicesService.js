@@ -6,7 +6,7 @@ import { run3WayMatch } from './match.js';
  * qty, then always record this claim on `po_items.quantity_invoiced` for audit.
  * All money fields are integer cents.
  */
-export function createVendorInvoice(db, payload) {
+export async function createVendorInvoice(db, payload) {
   const { invoice_number, po_id, supplier_id, invoice_date, due_date, tax_amount, items, notes } = payload;
 
   if (!items || items.length === 0) {
@@ -15,7 +15,7 @@ export function createVendorInvoice(db, payload) {
     throw err;
   }
 
-  const po = db.prepare(`SELECT * FROM purchase_orders WHERE id = ?`).get(po_id);
+  const po = await db.prepare(`SELECT * FROM purchase_orders WHERE id = ?`).get(po_id);
   if (!po) {
     const err = new Error('Purchase Order not found.');
     err.statusCode = 404;
@@ -44,12 +44,12 @@ export function createVendorInvoice(db, payload) {
 
   const resolvedSupplierId = supplier_id || po.supplier_id;
 
-  const invoiceTransaction = db.transaction(() => {
+  const invoiceTransaction = db.transaction(async () => {
     const insertInvoice = db.prepare(`
       INSERT INTO invoices (invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_match', 'pending', ?)
     `);
-    const invResult = insertInvoice.run(
+    const invResult = await insertInvoice.run(
       invoice_number,
       po_id,
       resolvedSupplierId,
@@ -69,7 +69,7 @@ export function createVendorInvoice(db, payload) {
     `);
 
     for (const item of normalizedItems) {
-      insertItem.run(
+      await insertItem.run(
         invoiceId,
         item.po_item_id,
         item.description,
@@ -80,16 +80,16 @@ export function createVendorInvoice(db, payload) {
     }
 
     // Match against prior cumulative invoiced qty, then record this claim.
-    const matchOutcome = run3WayMatch(db, invoiceId, po_id, normalizedItems);
+    const matchOutcome = await run3WayMatch(db, invoiceId, po_id, normalizedItems);
 
     for (const item of normalizedItems) {
-      db.prepare(`UPDATE po_items SET quantity_invoiced = quantity_invoiced + ? WHERE id = ?`).run(
+      await db.prepare(`UPDATE po_items SET quantity_invoiced = quantity_invoiced + ? WHERE id = ?`).run(
         item.quantity_invoiced,
         item.po_item_id
       );
     }
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, '3_WAY_MATCHED', 'System 3-Way Matcher', ?)
     `).run(
@@ -101,7 +101,7 @@ export function createVendorInvoice(db, payload) {
   });
 
   try {
-    return invoiceTransaction();
+    return await invoiceTransaction();
   } catch (error) {
     if (isUniqueConstraint(error)) {
       const err = new Error(
@@ -120,8 +120,8 @@ function isUniqueConstraint(error) {
     || /UNIQUE constraint failed/i.test(error.message || '');
 }
 
-export function approveInvoicePayment(db, id, { approver_name, override_reason } = {}) {
-  const invoice = db.prepare(`
+export async function approveInvoicePayment(db, id, { approver_name, override_reason } = {}) {
+  const invoice = await db.prepare(`
     SELECT inv.*, po.requisition_id, pr.department_id
     FROM invoices inv
     JOIN purchase_orders po ON inv.po_id = po.id
@@ -135,8 +135,8 @@ export function approveInvoicePayment(db, id, { approver_name, override_reason }
     throw err;
   }
 
-  const approveTransaction = db.transaction(() => {
-    db.prepare(`
+  const approveTransaction = db.transaction(async () => {
+    await db.prepare(`
       UPDATE invoices
       SET status = 'approved_for_payment', notes = COALESCE(?, notes)
       WHERE id = ?
@@ -144,7 +144,7 @@ export function approveInvoicePayment(db, id, { approver_name, override_reason }
 
     // Integer cents: relieve committed, increase actual spent.
     if (invoice.department_id) {
-      db.prepare(`
+      await db.prepare(`
         UPDATE budgets
         SET committed_amount = MAX(0, committed_amount - ?),
             actual_spent = actual_spent + ?
@@ -152,7 +152,7 @@ export function approveInvoicePayment(db, id, { approver_name, override_reason }
       `).run(invoice.total_amount, invoice.total_amount, invoice.department_id);
     }
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, 'APPROVED_FOR_PAYMENT', ?, ?)
     `).run(
@@ -162,6 +162,6 @@ export function approveInvoicePayment(db, id, { approver_name, override_reason }
     );
   });
 
-  approveTransaction();
+  await approveTransaction();
   return { message: 'Invoice approved for payment successfully.' };
 }

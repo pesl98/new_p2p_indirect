@@ -1,12 +1,12 @@
 import express from 'express';
-import db from '../db.js';
 
 const router = express.Router();
 
 // Get budgets by department with utilization
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const budgets = db.prepare(`
+    const db = req.db;
+    const budgets = await db.prepare(`
       SELECT 
         b.id,
         b.department_id,

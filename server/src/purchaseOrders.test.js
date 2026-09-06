@@ -1,9 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createMemoryDatabase } from './db.js';
 import {
   convertRequisitionToPurchaseOrders,
   PurchaseOrderError,
@@ -11,16 +8,10 @@ import {
   groupItemsBySupplier
 } from './purchaseOrdersService.js';
 
-const schemaSql = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql'),
-  'utf8'
-);
 
-function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(schemaSql);
-  db.exec(`
+async function createTestDb() {
+  const db = await createMemoryDatabase();
+    db.exec(`
     INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
     INSERT INTO users (id, name, email, role, department_id, title)
       VALUES (1, 'Alice Chen', 'alice@example.com', 'requester', 1, 'Specialist'),
@@ -72,7 +63,7 @@ function insertApprovedPr(db, { items, status = 'approved', prNumber = 'PR-2026-
 }
 
 describe('supplier resolution', () => {
-  test('prefers convert-time mapping, then estimated, then catalog preferred', () => {
+  test('prefers convert-time mapping, then estimated, then catalog preferred', async () => {
     assert.equal(
       resolveRequisitionItemSupplier(
         { id: 1, estimated_supplier_id: 2, catalog_preferred_supplier_id: 3 },
@@ -94,7 +85,7 @@ describe('supplier resolution', () => {
     );
   });
 
-  test('does not invent a vendor when grouping unresolved lines', () => {
+  test('does not invent a vendor when grouping unresolved lines', async () => {
     const { groups, unresolved } = groupItemsBySupplier([
       { id: 1, item_description: 'Mystery', estimated_supplier_id: null }
     ]);
@@ -104,9 +95,9 @@ describe('supplier resolution', () => {
 });
 
 describe('convert approved PR to purchase orders', () => {
-  test('single-supplier PR creates exactly one PO with the PR total', () => {
-    const db = createTestDb();
-    const { prId, itemIds } = insertApprovedPr(db, {
+  test('single-supplier PR creates exactly one PO with the PR total', async () => {
+    const db = await createTestDb();
+    const { prId, itemIds } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: 1,
@@ -129,7 +120,7 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    const created = convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
+    const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.equal(created.length, 1);
     assert.equal(created[0].poNumber, 'PO-2026-001');
     assert.equal(created[0].supplier_id, 1);
@@ -149,9 +140,9 @@ describe('convert approved PR to purchase orders', () => {
     assert.equal(pr.status, 'converted_to_po');
   });
 
-  test('multi-supplier PR creates one issued PO per supplier with correct lines and totals', () => {
-    const db = createTestDb();
-    const { prId, itemIds } = insertApprovedPr(db, {
+  test('multi-supplier PR creates one issued PO per supplier with correct lines and totals', async () => {
+    const db = await createTestDb();
+    const { prId, itemIds } = await insertApprovedPr(db, {
       prNumber: 'PR-2026-200',
       items: [
         {
@@ -185,7 +176,7 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    const created = convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
+    const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.equal(created.length, 3);
     assert.deepEqual(created.map((po) => po.poNumber), ['PO-2026-001', 'PO-2026-002', 'PO-2026-003']);
     assert.deepEqual(created.map((po) => po.supplier_id), [1, 3, 2]);
@@ -234,9 +225,9 @@ describe('convert approved PR to purchase orders', () => {
     assert.match(splitAudit.details, /CloudCore Software LLC/);
   });
 
-  test('uses catalog preferred_supplier_id when estimated_supplier_id is null', () => {
-    const db = createTestDb();
-    const { prId } = insertApprovedPr(db, {
+  test('uses catalog preferred_supplier_id when estimated_supplier_id is null', async () => {
+    const db = await createTestDb();
+    const { prId } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: 2,
@@ -250,14 +241,14 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    const created = convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
+    const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.equal(created.length, 1);
     assert.equal(created[0].supplier_id, 3);
   });
 
-  test('explicit convert-time mapping can supply a missing vendor', () => {
-    const db = createTestDb();
-    const { prId, itemIds } = insertApprovedPr(db, {
+  test('explicit convert-time mapping can supply a missing vendor', async () => {
+    const db = await createTestDb();
+    const { prId, itemIds } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: null,
@@ -271,7 +262,7 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    const created = convertRequisitionToPurchaseOrders(db, {
+    const created = await convertRequisitionToPurchaseOrders(db, {
       requisition_id: prId,
       created_by: 3,
       supplier_mappings: [{ requisition_item_id: itemIds[0], supplier_id: 3 }]
@@ -279,9 +270,9 @@ describe('convert approved PR to purchase orders', () => {
     assert.equal(created[0].supplier_id, 3);
   });
 
-  test('fails closed with 400 when any line has no resolvable supplier', () => {
-    const db = createTestDb();
-    const { prId } = insertApprovedPr(db, {
+  test('fails closed with 400 when any line has no resolvable supplier', async () => {
+    const db = await createTestDb();
+    const { prId } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: 1,
@@ -305,8 +296,8 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    assert.throws(
-      () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
+    assert.rejects(
+      async () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
       (err) => err instanceof PurchaseOrderError && err.statusCode === 400 && /no resolvable supplier/i.test(err.message)
     );
 
@@ -316,9 +307,9 @@ describe('convert approved PR to purchase orders', () => {
     assert.equal(poCount.cnt, 0);
   });
 
-  test('does not invent a vendor from a leftover header-level supplier_id', () => {
-    const db = createTestDb();
-    const { prId } = insertApprovedPr(db, {
+  test('does not invent a vendor from a leftover header-level supplier_id', async () => {
+    const db = await createTestDb();
+    const { prId } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: null,
@@ -332,8 +323,8 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    assert.throws(
-      () => convertRequisitionToPurchaseOrders(db, {
+    assert.rejects(
+      async () => convertRequisitionToPurchaseOrders(db, {
         requisition_id: prId,
         created_by: 3,
         supplier_id: 1
@@ -344,9 +335,9 @@ describe('convert approved PR to purchase orders', () => {
     assert.equal(poCount.cnt, 0);
   });
 
-  test('PR status stays approved until the convert transaction succeeds', () => {
-    const db = createTestDb();
-    const { prId } = insertApprovedPr(db, {
+  test('PR status stays approved until the convert transaction succeeds', async () => {
+    const db = await createTestDb();
+    const { prId } = await insertApprovedPr(db, {
       status: 'pending_approval',
       items: [
         {
@@ -361,8 +352,8 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    assert.throws(
-      () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
+    assert.rejects(
+      async () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
       (err) => err instanceof PurchaseOrderError && err.statusCode === 400 && /approved/i.test(err.message)
     );
 
@@ -371,9 +362,9 @@ describe('convert approved PR to purchase orders', () => {
     assert.equal(db.prepare(`SELECT COUNT(*) AS cnt FROM purchase_orders`).get().cnt, 0);
   });
 
-  test('already-converted PR cannot be converted again', () => {
-    const db = createTestDb();
-    const { prId } = insertApprovedPr(db, {
+  test('already-converted PR cannot be converted again', async () => {
+    const db = await createTestDb();
+    const { prId } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: 1,
@@ -387,22 +378,22 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
-    assert.throws(
-      () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
+    await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
+    assert.rejects(
+      async () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
       (err) => err instanceof PurchaseOrderError && err.statusCode === 400
     );
     assert.equal(db.prepare(`SELECT COUNT(*) AS cnt FROM purchase_orders WHERE requisition_id = ?`).get(prId).cnt, 1);
   });
 
-  test('allocates PO numbers via MAX suffix across the split', () => {
-    const db = createTestDb();
+  test('allocates PO numbers via MAX suffix across the split', async () => {
+    const db = await createTestDb();
     db.prepare(`
       INSERT INTO purchase_orders (po_number, supplier_id, created_by, status, total_amount, issue_date)
       VALUES ('PO-2026-004', 1, 3, 'issued', 100, '2026-09-01')
     `).run();
 
-    const { prId } = insertApprovedPr(db, {
+    const { prId } = await insertApprovedPr(db, {
       items: [
         {
           catalog_item_id: 1,
@@ -425,7 +416,7 @@ describe('convert approved PR to purchase orders', () => {
       ]
     });
 
-    const created = convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
+    const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.deepEqual(created.map((po) => po.poNumber), ['PO-2026-005', 'PO-2026-006']);
   });
 });

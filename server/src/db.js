@@ -1,43 +1,42 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { TursoHttpClient } from './tursoHttp.js';
+import { SqliteAdapter } from './sqliteAdapter.js';
+import {
+  TURSO_REQUIRED_MSG,
+  TursoConfigError,
+  assertDeployableConfig,
+  defaultSqlitePath,
+  ensureSqliteDataDir,
+  loadDbConfig,
+  schemaPath
+} from './dbConfig.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+export { schemaPath, loadDbConfig, TursoConfigError, TURSO_REQUIRED_MSG };
 
-export const schemaPath = path.join(__dirname, 'schema.sql');
+const SERVICE_CATEGORY_SQL = `'Consulting & Professional Services', 'Software & Cloud', 'Marketing & Events', 'Travel & Subscriptions'`;
 
-const dataDir = path.join(__dirname, '../data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+let cachedDb;
+let cachedPromise;
+
+async function maybe(value) {
+  return value;
 }
 
-const dbPath = process.env.PROCUREMENT_DB_PATH || path.join(dataDir, 'procurement.db');
-const db = new Database(dbPath);
-
-// Enable foreign keys and WAL mode for reliability and performance
-db.pragma('foreign_keys = ON');
-if (dbPath !== ':memory:') {
-  db.pragma('journal_mode = WAL');
-}
-
-export function applySchema(database = db) {
-  const schema = fs.readFileSync(schemaPath, 'utf8');
-  database.exec(schema);
-  migrateApprovalRequestsWaitingStatus(database);
-  migrateInvoiceNumberUniqueness(database);
-  migrateLineTypesAndServiceEntrySheets(database);
+async function tableHasColumn(database, table, column) {
+  const cols = await maybe(database.prepare(`PRAGMA table_info(${table})`).all());
+  return (cols || []).some((c) => c.name === column);
 }
 
 /** Existing DBs created before sequential routing need CHECK to allow `waiting`. */
-function migrateApprovalRequestsWaitingStatus(database) {
-  const row = database.prepare(
-    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approval_requests'`
-  ).get();
+async function migrateApprovalRequestsWaitingStatus(database) {
+  const row = await maybe(
+    database.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approval_requests'`
+    ).get()
+  );
   if (!row?.sql || row.sql.includes("'waiting'")) return;
 
-  database.exec(`
+  await maybe(database.exec(`
     CREATE TABLE approval_requests_migrated (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       requisition_id INTEGER NOT NULL,
@@ -56,72 +55,143 @@ function migrateApprovalRequestsWaitingStatus(database) {
       FROM approval_requests;
     DROP TABLE approval_requests;
     ALTER TABLE approval_requests_migrated RENAME TO approval_requests;
-  `);
+  `));
 }
 
 /** Existing DBs created before supplier+invoice uniqueness need a unique index. */
-function migrateInvoiceNumberUniqueness(database) {
-  const table = database.prepare(
-    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'invoices'`
-  ).get();
+async function migrateInvoiceNumberUniqueness(database) {
+  const table = await maybe(
+    database.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'invoices'`
+    ).get()
+  );
   if ((table?.sql || '').includes('UNIQUE(supplier_id, invoice_number)')) return;
 
-  const indexes = database.prepare(
-    `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'invoices'`
-  ).all();
-  const hasUnique = indexes.some((idx) =>
+  const indexes = await maybe(
+    database.prepare(
+      `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'invoices'`
+    ).all()
+  );
+  const hasUnique = (indexes || []).some((idx) =>
     /supplier_id/i.test(idx.sql || '') && /invoice_number/i.test(idx.sql || '')
   );
   if (hasUnique) return;
 
-  database.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS invoices_supplier_invoice_number ON invoices(supplier_id, invoice_number)`
+  await maybe(
+    database.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS invoices_supplier_invoice_number ON invoices(supplier_id, invoice_number)`
+    )
   );
 }
 
-function tableHasColumn(database, table, column) {
-  const cols = database.prepare(`PRAGMA table_info(${table})`).all();
-  return cols.some((c) => c.name === column);
-}
-
-const SERVICE_CATEGORY_SQL = `'Consulting & Professional Services', 'Software & Cloud', 'Marketing & Events', 'Travel & Subscriptions'`;
-
 /** Existing DBs need line_type / quantity_accepted columns; SES tables come from schema.sql. */
-function migrateLineTypesAndServiceEntrySheets(database) {
-  const tables = database.prepare(
-    `SELECT name FROM sqlite_master WHERE type = 'table'`
-  ).all().map((row) => row.name);
+async function migrateLineTypesAndServiceEntrySheets(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
 
-  if (tables.includes('catalog_items') && !tableHasColumn(database, 'catalog_items', 'line_type')) {
-    database.exec(`ALTER TABLE catalog_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`);
+  if (tables.includes('catalog_items') && !(await tableHasColumn(database, 'catalog_items', 'line_type'))) {
+    await maybe(database.exec(`ALTER TABLE catalog_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`));
   }
-  if (tables.includes('requisition_items') && !tableHasColumn(database, 'requisition_items', 'line_type')) {
-    database.exec(`ALTER TABLE requisition_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`);
+  if (tables.includes('requisition_items') && !(await tableHasColumn(database, 'requisition_items', 'line_type'))) {
+    await maybe(database.exec(`ALTER TABLE requisition_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`));
   }
-  if (tables.includes('po_items') && !tableHasColumn(database, 'po_items', 'line_type')) {
-    database.exec(`ALTER TABLE po_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`);
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'line_type'))) {
+    await maybe(database.exec(`ALTER TABLE po_items ADD COLUMN line_type TEXT NOT NULL DEFAULT 'goods'`));
   }
-  if (tables.includes('po_items') && !tableHasColumn(database, 'po_items', 'quantity_accepted')) {
-    database.exec(`ALTER TABLE po_items ADD COLUMN quantity_accepted INTEGER DEFAULT 0`);
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'quantity_accepted'))) {
+    await maybe(database.exec(`ALTER TABLE po_items ADD COLUMN quantity_accepted INTEGER DEFAULT 0`));
   }
 
   if (tables.includes('catalog_items')) {
-    database.exec(
+    await maybe(database.exec(
       `UPDATE catalog_items SET line_type = 'service' WHERE category IN (${SERVICE_CATEGORY_SQL})`
-    );
+    ));
   }
   if (tables.includes('requisition_items')) {
-    database.exec(
+    await maybe(database.exec(
       `UPDATE requisition_items SET line_type = 'service' WHERE category IN (${SERVICE_CATEGORY_SQL})`
-    );
+    ));
   }
   if (tables.includes('po_items')) {
-    database.exec(
+    await maybe(database.exec(
       `UPDATE po_items SET line_type = 'service' WHERE category IN (${SERVICE_CATEGORY_SQL})`
-    );
+    ));
   }
 }
 
-applySchema(db);
+export async function applySchema(database) {
+  const schema = fs.readFileSync(schemaPath, 'utf8');
+  await maybe(database.exec(schema));
+  await migrateApprovalRequestsWaitingStatus(database);
+  await migrateInvoiceNumberUniqueness(database);
+  await migrateLineTypesAndServiceEntrySheets(database);
+  return database;
+}
 
-export default db;
+async function openSqlite(sqlitePath) {
+  let Database;
+  try {
+    ({ default: Database } = await import('better-sqlite3'));
+  } catch (error) {
+    throw new Error(
+      `better-sqlite3 is required for local SQLite mode but could not be loaded: ${error.message}`
+    );
+  }
+  ensureSqliteDataDir(sqlitePath);
+  const raw = new Database(sqlitePath);
+  raw.pragma('foreign_keys = ON');
+  if (sqlitePath !== ':memory:') {
+    raw.pragma('journal_mode = WAL');
+  }
+  return new SqliteAdapter(raw);
+}
+
+export async function openTursoDatabase(url, token, options = {}) {
+  const client = new TursoHttpClient(url, token, options);
+  await client.pragma('foreign_keys = ON');
+  return client;
+}
+
+export async function openDatabase(config = loadDbConfig()) {
+  assertDeployableConfig(config);
+  if (config.useTurso) {
+    const db = await openTursoDatabase(config.tursoUrl, config.tursoAuthToken);
+    await applySchema(db);
+    return db;
+  }
+  const db = await openSqlite(config.sqlitePath);
+  await applySchema(db);
+  return db;
+}
+
+export async function createMemoryDatabase() {
+  const db = await openSqlite(':memory:');
+  await applySchema(db);
+  return db;
+}
+
+export function resetDbCache() {
+  cachedDb = undefined;
+  cachedPromise = undefined;
+}
+
+export async function getDb() {
+  if (cachedDb) return cachedDb;
+  if (!cachedPromise) {
+    cachedPromise = openDatabase().then((db) => {
+      cachedDb = db;
+      return db;
+    }).catch((error) => {
+      cachedPromise = undefined;
+      throw error;
+    });
+  }
+  return cachedPromise;
+}
+
+export function peekCachedDb() {
+  return cachedDb;
+}
+
+export { defaultSqlitePath };

@@ -1,6 +1,6 @@
 # ProcureFlow - Non-Production Procurement & P2P System
 
-A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite (`better-sqlite3`)**. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
+A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
 Control model (integer cents, sequential approvals, dual invoice match, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
@@ -74,31 +74,105 @@ Control model (integer cents, sequential approvals, dual invoice match, GRN/SES 
 
 ### Running the Application
 
+From the repo root (`npm install` plus `npm install --prefix server` and `npm install --prefix client` on a fresh clone):
+
 1. **Start the Production Application (Single Port)**:
    ```bash
-   node server/src/index.js
+   npm start
+   # or: node server/src/index.js
    ```
-   Open [http://localhost:5000](http://localhost:5000) in your browser.
+   Open [http://localhost:5000](http://localhost:5000) in your browser. Express serves `client/dist` when present.
 
 2. **Or Run in Development Mode (with Live Reload)**:
    ```bash
-   # Terminal 1: Backend
-   cd server && npm run dev
-
-   # Terminal 2: Frontend
-   cd client && npm run dev
+   npm run dev
    ```
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
+   Open [http://localhost:3000](http://localhost:3000) (Vite proxies `/api` to `:5000`).
 
-3. **Re-seed the Database with Sample Data**:
+3. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set):
    ```bash
-   node server/src/seed.js
+   npm run seed
+   # or: node server/src/seed.js
    ```
 
-4. **Run unit tests** (`node --test`):
+4. **Run unit tests** (`node --test`, SQLite in-memory):
    ```bash
    npm test
    ```
+
+---
+
+## ☁️ Deploy: Vercel + Turso
+
+Local laptop default is **SQLite** at `server/data/procurement.db` (override with `PROCUREMENT_DB_PATH`). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, the same code uses Turso over **HTTP** (`POST /v2/pipeline`). No native libsql/`.so` is loaded — that crashes Vercel serverless.
+
+On Vercel (`VERCEL` / `VERCEL_ENV`), Turso is **required**. Missing vars (or a 401 from an org JWT instead of a database token) show a readable configuration page / JSON 503 instead of `FUNCTION_INVOCATION_FAILED`. There is **no cron** — this app is request-driven.
+
+### Entrypoint files
+
+| File | Role |
+| --- | --- |
+| [`app.js`](app.js) | Vercel Express entry — **default-exports** the app (current Node/Express convention: `app.js` at repo root) |
+| [`server/src/app.js`](server/src/app.js) | Express factory (API + lazy DB init). Does not `listen`. |
+| [`server/src/index.js`](server/src/index.js) | Local listen on `PORT` (default 5000) |
+| [`vercel.json`](vercel.json) | `buildCommand` + `includeFiles` for `server/src/schema.sql` |
+| [`public/`](public/) | Vite build output (`npm run build` copies `client/dist` here). Vercel CDN serves it; `express.static` is ignored on Vercel. |
+
+### Create a Turso database
+
+Use a **classic libSQL** database (not `--tursodb`) and a **database token** (not an org/platform JWT):
+
+```bash
+curl -sSfL https://get.tur.so/install.sh | bash
+turso auth login
+turso db create procureflow
+turso db show procureflow --url
+turso db tokens create procureflow
+```
+
+### Vercel environment variables
+
+In the Vercel project → Settings → Environment Variables, set **both** for **Production and Preview** (or All Environments). Preview URLs stay broken if the vars are Production-only:
+
+| Variable | Value |
+| --- | --- |
+| `TURSO_DATABASE_URL` | URL from `turso db show … --url` (often `libsql://…`) |
+| `TURSO_AUTH_TOKEN` | Token from `turso db tokens create …` |
+
+Redeploy after saving. Env changes do not apply to an already-built Preview.
+
+### Seed against Turso (from your laptop)
+
+```bash
+export TURSO_DATABASE_URL=libsql://…
+export TURSO_AUTH_TOKEN=…
+npm run seed
+```
+
+Then verify a read/write path (still on your laptop against Turso, or on the Preview URL after deploy):
+
+```bash
+# with the same TURSO_* env:
+npm start
+curl -s http://localhost:5000/api/health
+# expect: { "status":"ok", "db":"turso-http", ... }
+
+curl -s http://localhost:5000/api/users | head
+curl -s -X POST http://localhost:5000/api/catalog \
+  -H 'Content-Type: application/json' \
+  -d '{"sku":"SKU-SMOKE-1","name":"Smoke item","category":"Office Supplies","unit_price":199}'
+```
+
+Omit the Turso vars to keep using local `server/data/procurement.db`.
+
+### Build / deploy
+
+```bash
+npm run build    # client → client/dist and public/
+# Connect the Git repo in Vercel, or: vercel
+```
+
+Vercel runs `npm run build`, deploys root `app.js` as one Fluid Function, and serves `public/` statically. No Hobby-breaking cron is configured.
 
 ---
 
@@ -108,7 +182,9 @@ Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting
 
 ---
 
-## 🗄️ Database Architecture (SQLite)
+## 🗄️ Database Architecture
+
+Local default is SQLite (`better-sqlite3`). Production on Vercel is Turso via SQL-over-HTTP. Schema bootstrap (`CREATE TABLE IF NOT EXISTS` + existing migrations) runs on cold start for both.
 
 Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, match price variance, etc.) are stored as **integer cents**. The API returns cents; the client formats dollars for display. Quantities are whole units. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for lifecycle, match rules, sequential approvals, and receiving/budget controls.
 - `departments`: Cost centers & organizational units

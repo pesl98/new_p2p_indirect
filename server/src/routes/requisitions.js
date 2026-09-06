@@ -1,5 +1,4 @@
 import express from 'express';
-import db from '../db.js';
 import { insertApprovalChain } from '../approvalPolicy.js';
 import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
@@ -8,8 +7,9 @@ import { normalizeLineType } from '../lineType.js';
 const router = express.Router();
 
 // List all purchase requisitions
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     const { status, department_id, requester_id } = req.query;
     let query = `
       SELECT 
@@ -41,7 +41,7 @@ router.get('/', (req, res) => {
     }
 
     query += ` ORDER BY pr.id DESC`;
-    const prs = db.prepare(query).all(...params);
+    const prs = await db.prepare(query).all(...params);
     res.json(prs);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -49,10 +49,11 @@ router.get('/', (req, res) => {
 });
 
 // Get PR details with items and approval requests
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
-    const pr = db.prepare(`
+    const pr = await db.prepare(`
       SELECT 
         pr.*,
         u.name as requester_name,
@@ -70,7 +71,7 @@ router.get('/:id', (req, res) => {
       return res.status(404).json({ error: 'Requisition not found' });
     }
 
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT
         ri.*,
         s.name as estimated_supplier_name,
@@ -84,7 +85,7 @@ router.get('/:id', (req, res) => {
       WHERE ri.requisition_id = ?
     `).all(id);
 
-    const approvals = db.prepare(`
+    const approvals = await db.prepare(`
       SELECT ar.*, u.name as approver_name, u.role as approver_role, u.title as approver_title
       FROM approval_requests ar
       JOIN users u ON ar.approver_id = u.id
@@ -92,13 +93,13 @@ router.get('/:id', (req, res) => {
       ORDER BY ar.step_order ASC
     `).all(id);
 
-    const logs = db.prepare(`
+    const logs = await db.prepare(`
       SELECT * FROM audit_logs
       WHERE entity_type = 'requisition' AND entity_id = ?
       ORDER BY created_at DESC
     `).all(id);
 
-    const purchaseOrders = db.prepare(`
+    const purchaseOrders = await db.prepare(`
       SELECT
         po.id, po.po_number, po.status, po.total_amount, po.supplier_id, po.created_at,
         s.name as supplier_name, s.code as supplier_code
@@ -126,8 +127,9 @@ function httpErrorStatus(error) {
 }
 
 // Create new purchase requisition
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
+    const db = req.db;
     const { requester_id, department_id, justification, needed_by_date, priority, items, submitImmediately } = req.body;
 
     if (!items || items.length === 0) {
@@ -139,9 +141,9 @@ router.post('/', (req, res) => {
       0
     );
 
-    const createTransaction = db.transaction(() => {
+    const newPrId = await db.transaction(async () => {
       const currentYear = new Date().getFullYear();
-      const prNumber = nextDocumentNumber(db, 'pr', currentYear);
+      const prNumber = await nextDocumentNumber(db, 'pr', currentYear);
 
       const status = submitImmediately ? 'pending_approval' : 'draft';
 
@@ -149,7 +151,7 @@ router.post('/', (req, res) => {
         INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      const prResult = insertPR.run(
+      const prResult = await insertPR.run(
         prNumber,
         requester_id || 1,
         department_id || 1,
@@ -172,7 +174,7 @@ router.post('/', (req, res) => {
         const qty = toQty(item.quantity);
         const unitPrice = asCents(item.unit_price);
         const category = item.category || 'Office Supplies';
-        insertItem.run(
+        await insertItem.run(
           prId,
           item.catalog_item_id || null,
           item.item_description,
@@ -186,14 +188,14 @@ router.post('/', (req, res) => {
       }
 
       // Log creation
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'CREATED', 'System', ?)
       `).run(prId, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
 
       if (submitImmediately) {
-        insertApprovalChain(db, prId, calculatedTotal, department_id || 1);
-        db.prepare(`
+        await insertApprovalChain(db, prId, calculatedTotal, department_id || 1);
+        await db.prepare(`
           INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
           VALUES ('requisition', ?, 'SUBMITTED', 'System', 'Submitted for multi-tier approval routing')
         `).run(prId);
@@ -201,8 +203,6 @@ router.post('/', (req, res) => {
 
       return prId;
     });
-
-    const newPrId = createTransaction();
     res.status(201).json({ id: newPrId, message: 'Requisition created successfully' });
   } catch (error) {
     console.error('Error creating requisition:', error);
@@ -211,21 +211,22 @@ router.post('/', (req, res) => {
 });
 
 // Submit a draft requisition for approval
-router.post('/:id/submit', (req, res) => {
+router.post('/:id/submit', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
-    const pr = db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(id);
+    const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(id);
     if (!pr) return res.status(404).json({ error: 'Requisition not found' });
     if (pr.status !== 'draft') return res.status(400).json({ error: 'Only draft requisitions can be submitted' });
 
-    db.transaction(() => {
-      db.prepare(`UPDATE purchase_requisitions SET status = 'pending_approval', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
-      insertApprovalChain(db, id, pr.total_amount, pr.department_id);
-      db.prepare(`
+    await db.transaction(async () => {
+      await db.prepare(`UPDATE purchase_requisitions SET status = 'pending_approval', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+      await insertApprovalChain(db, id, pr.total_amount, pr.department_id);
+      await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'SUBMITTED', 'Requester', 'Submitted for approval routing')
       `).run(id);
-    })();
+    });
 
     res.json({ message: 'Requisition submitted for approval' });
   } catch (error) {
