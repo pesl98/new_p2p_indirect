@@ -8,7 +8,7 @@ This document describes the control model implemented in code. The header person
 
 ```
 Draft PR → Submit → Sequential approvals → (budget commit on final approve)
-        → Convert to PO
+        → Convert to PO(s) (one issued PO per resolved supplier)
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice → dual match
         → AP approve (relieve commit / book actual) → Mark paid
@@ -19,7 +19,7 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 | Requisition | Lines stored as qty × unit price in cents. Numbered `PR-YYYY-NNN`. |
 | Approval | Role-based chain; only the current `pending` step can decide. Later steps stay `waiting`. |
 | Budget commit | On **final PR approve** only: `budgets.committed_amount += PR total`. Not on PO issue. |
-| Purchase order | Copy of approved PR lines, including `line_type`. Numbered `PO-YYYY-NNN`. |
+| Purchase order | Copy of approved PR lines, including `line_type`. Numbered `PO-YYYY-NNN`. Multi-supplier PRs issue **one PO per resolved supplier**. |
 | Goods receipt | Goods lines only. Increments `po_items.quantity_received`. Over-receipt is blocked unless `allow_over_receipt: true`. Numbered `GRN-YYYY-NNN`. Service lines are rejected (use SES). |
 | Service entry sheet | Service lines only. Draft → submitted → accepted/rejected. Accept increments `po_items.quantity_accepted`. Over-acceptance is blocked unless `allow_over_acceptance: true`. Numbered `SES-YYYY-NNN`. |
 | Invoice | Unique per `(supplier_id, invoice_number)`. Dual match: goods 3-way vs GRN; services SES-backed vs accepted SES. |
@@ -54,6 +54,29 @@ Steps are sequential, not parallel:
 - Rejecting a step sets remaining `waiting`/`pending` rows to `skipped` and the PR to `rejected`. No budget movement.
 
 Waiting steps do not appear in the approver inbox (list defaults to `status=pending`).
+
+## Multi-supplier PO split
+
+`purchase_orders.supplier_id` is one vendor per PO. An approved requisition whose lines resolve to different suppliers is converted into **N issued POs**, not a single blended order.
+
+`POST /api/purchase-orders/from-requisition` (`server/src/purchaseOrdersService.js`):
+
+1. Load PR lines with catalog `preferred_supplier_id`.
+2. Resolve each line’s supplier, in order:
+   - explicit convert-time `supplier_mappings` (`[{ requisition_item_id, supplier_id }]` or `{ [itemId]: supplierId }`)
+   - `requisition_items.estimated_supplier_id`
+   - catalog `preferred_supplier_id` when the line is catalog-linked
+3. **Fail closed (HTTP 400)** if any line has no resolvable supplier. Header-level `supplier_id` is **not** a silent default (the previous path used `first line || 1` and invented a vendor).
+4. Group lines by resolved supplier. Single-supplier PRs still create exactly one PO.
+5. In one transaction: allocate each `PO-YYYY-NNN` via existing MAX-suffix numbering, write per-PO totals in integer cents, copy lines with `requisition_item_id` preserved, share `requisition_id`, then mark the PR `converted_to_po`.
+6. Audit: each PO is `ISSUED`; the PR gets `CONVERTED_TO_PO` (one supplier) or `SPLIT_CONVERTED_TO_PO` (N suppliers, listing PO numbers and vendor names).
+7. Response is `{ purchase_orders: [...], split, message }` — a list, not a single `poId`.
+
+PR detail returns `purchase_orders` (array). `purchase_order` remains the first linked PO for older clients.
+
+Demo seed: **PR-2026-002** is a single-supplier approved convert; **PR-2026-006** is an approved TechSupply + WorkSpace split for Carol to convert. Existing SES/GRN demo POs (`PO-2026-003`, `PO-2026-004`, etc.) are unchanged.
+
+Remaining edge: convert-time `supplier_mappings` is API-only in this demo (the UI does not collect a per-line vendor override). Ad-hoc PR lines still default to a supplier on create (`estimated_supplier_id || 1`); convert itself does not invent one.
 
 ## Budget commitment control
 
@@ -161,12 +184,12 @@ npm run dev
 node server/src/index.js
 ```
 
-Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, and invoice-number uniqueness.
+Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, and multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success).
 
 ## Known demo limits (out of scope)
 
 - **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary.
-- No multi-supplier PO split (one PO, one supplier).
+- Convert-time per-line supplier override (`supplier_mappings`) is API-only; the demo UI does not collect a vendor remap at convert.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - No hosted production deployment.
 - Fiscal year 2026 is fixed in queries.

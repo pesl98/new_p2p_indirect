@@ -60,7 +60,7 @@ db.transaction(() => {
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
     VALUES (?, ?, ?, ?, ?)
   `);
-  insertBudget.run(1, 2026, 15000000, 1548000, 2435000); // MKT $150,000 / $15,480 / $24,350
+  insertBudget.run(1, 2026, 15000000, 1752400, 2435000); // MKT $150,000 / $17,524 committed (includes approved multi-supplier PR-2026-006) / $24,350
   insertBudget.run(2, 2026, 32000000, 6070000, 8910000); // ITE + $12,500 committed for SOC 2 SES PO
   insertBudget.run(3, 2026, 9500000, 1230000, 1845000);  // FAC
   insertBudget.run(4, 2026, 6000000, 450000, 1120000);   // HRP
@@ -148,6 +148,11 @@ db.transaction(() => {
   insertPR.run(5, 'PR-2026-005', 1, 2, 'converted_to_po', 1250000, 'Annual SOC 2 Type II penetration test required for enterprise customer diligence.', '2026-10-15', 'High', '-10 days');
   insertPRItem.run(5, 18, 'SOC 2 Type II Annual Security Penetration Test', 'Consulting & Professional Services', 1, 1250000, 1250000, 5);
 
+  // Multi-supplier convert demo: approved, not yet converted. Carol issues one PO per vendor.
+  insertPR.run(6, 'PR-2026-006', 1, 1, 'approved', 204400, 'Q4 studio refresh: designer workstation monitor plus ergonomic chair from preferred vendors on one requisition.', '2026-10-05', 'Medium', '-2 days');
+  insertPRItem.run(6, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 1, 74900, 74900, 1);
+  insertPRItem.run(6, 9, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 1, 129500, 129500, 3);
+
   db.exec(`
     UPDATE requisition_items
     SET line_type = 'service'
@@ -175,6 +180,9 @@ db.transaction(() => {
   insertApproval.run(5, 2, 1, 'approved', 'Required for enterprise security posture.', '2026-08-25 09:10:00');
   insertApproval.run(5, 3, 2, 'approved', 'Apex Advisory is the contracted security partner.', '2026-08-25 11:40:00');
   insertApproval.run(5, 4, 3, 'approved', 'Budget committed against ITE FY26 security program.', '2026-08-25 15:05:00');
+  // PR-2026-006 is $2,044 — dept head + procurement; both approved so Carol can convert the split.
+  insertApproval.run(6, 2, 1, 'approved', 'Approved studio refresh. Split sourcing is expected.', '2026-09-03 09:40:00');
+  insertApproval.run(6, 3, 2, 'approved', 'TechSupply for the monitor; WorkSpace for the Aeron — convert will issue two POs.', '2026-09-03 11:15:00');
 
   // 8. Purchase Orders
   const insertPO = db.prepare(`
@@ -391,6 +399,8 @@ db.transaction(() => {
   insertAudit.run('service_entry_sheet', 1, 'CREATED', 'Alice Chen', 'SES-2026-001 recorded acceptance of SOC 2 engagement', '-2 days');
   insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003 (1 unit)', '-2 days');
   insertAudit.run('invoice', 3, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-AAD-5501 SES-backed match passed (PO+SES+invoice)', '-1 days');
+  insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
+  insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
 
 })();
 

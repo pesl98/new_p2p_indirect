@@ -1,7 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { nextDocumentNumber } from '../docNumbers.js';
-import { normalizeLineType } from '../lineType.js';
+import { convertRequisitionToPurchaseOrders } from '../purchaseOrdersService.js';
 
 const router = express.Router();
 
@@ -127,94 +126,22 @@ router.get('/:id', (req, res) => {
   }
 });
 
-// Create PO from Approved Requisition
+// Create one issued PO per resolved supplier from an approved requisition
 router.post('/from-requisition', (req, res) => {
   try {
-    const { requisition_id, supplier_id, created_by, shipping_address, notes, payment_terms } = req.body;
-
-    const pr = db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(requisition_id);
-    if (!pr) {
-      return res.status(404).json({ error: 'Requisition not found' });
-    }
-    if (pr.status !== 'approved') {
-      return res.status(400).json({ error: 'Requisition must be in "approved" state to generate a Purchase Order.' });
-    }
-
-    const prItems = db.prepare(`SELECT * FROM requisition_items WHERE requisition_id = ?`).all(requisition_id);
-    if (prItems.length === 0) {
-      return res.status(400).json({ error: 'Requisition has no items.' });
-    }
-
-    const targetSupplierId = supplier_id || prItems[0].estimated_supplier_id || 1;
-    const supplier = db.prepare(`SELECT * FROM suppliers WHERE id = ?`).get(targetSupplierId);
-
-    const convertTransaction = db.transaction(() => {
-      const currentYear = new Date().getFullYear();
-      const poNumber = nextDocumentNumber(db, 'po', currentYear);
-      const issueDate = new Date().toISOString().split('T')[0];
-      const deliveryDate = pr.needed_by_date || new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0];
-
-      const insertPO = db.prepare(`
-        INSERT INTO purchase_orders (po_number, requisition_id, supplier_id, created_by, status, total_amount, issue_date, expected_delivery_date, payment_terms, shipping_address, notes)
-        VALUES (?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?)
-      `);
-
-      const poResult = insertPO.run(
-        poNumber,
-        requisition_id,
-        targetSupplierId,
-        created_by || 3, // Default to Carol Zhang (Procurement)
-        pr.total_amount,
-        issueDate,
-        deliveryDate,
-        payment_terms || (supplier ? supplier.payment_terms : 'Net 30'),
-        shipping_address || 'Acme HQ - Receiving Bay 2, 450 Tech Blvd, Austin, TX 78701',
-        notes || `Generated automatically from approved requisition ${pr.pr_number}`
-      );
-
-      const poId = poResult.lastInsertRowid;
-
-      // Copy PR items to PO items
-      const insertPOItem = db.prepare(`
-        INSERT INTO po_items (po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
-      `);
-
-      for (const item of prItems) {
-        insertPOItem.run(
-          poId,
-          item.id,
-          item.item_description,
-          item.category,
-          item.quantity,
-          item.unit_price,
-          item.total_price,
-          normalizeLineType(item.line_type, item.category)
-        );
-      }
-
-      // Mark PR as converted_to_po
-      db.prepare(`UPDATE purchase_requisitions SET status = 'converted_to_po', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(requisition_id);
-
-      // Audit logs
-      db.prepare(`
-        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-        VALUES ('purchase_order', ?, 'ISSUED', 'Procurement Officer', ?)
-      `).run(poId, `PO ${poNumber} issued from PR ${pr.pr_number} to ${supplier ? supplier.name : 'Supplier'}`);
-
-      db.prepare(`
-        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-        VALUES ('requisition', ?, 'CONVERTED_TO_PO', 'Procurement Officer', ?)
-      `).run(requisition_id, `Converted to Purchase Order ${poNumber}`);
-
-      return { poId, poNumber };
+    const purchaseOrders = convertRequisitionToPurchaseOrders(db, req.body);
+    const split = purchaseOrders.length > 1;
+    res.status(201).json({
+      purchase_orders: purchaseOrders,
+      split,
+      message: split
+        ? `${purchaseOrders.length} purchase orders issued from the approved requisition`
+        : 'Purchase Order generated successfully'
     });
-
-    const result = convertTransaction();
-    res.status(201).json({ poId: result.poId, poNumber: result.poNumber, message: 'Purchase Order generated successfully' });
   } catch (error) {
-    console.error('Error generating PO:', error);
-    res.status(500).json({ error: error.message });
+    const status = error.statusCode || 500;
+    if (status >= 500) console.error('Error generating PO:', error);
+    res.status(status).json({ error: error.message });
   }
 });
 

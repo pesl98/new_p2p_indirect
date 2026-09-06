@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite (`better-sqlite3`)**. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, dual invoice match, GRN/SES receiving, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, dual invoice match, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -24,6 +24,7 @@ Control model (integer cents, sequential approvals, dual invoice match, GRN/SES 
 
 3. **Purchase Orders (PO) Management**
    - Convert approved requisitions into official binding Purchase Orders with sequential numbering (`PO-YYYY-XXX`).
+   - **Multi-supplier split:** lines are grouped by resolved supplier (`estimated_supplier_id`, else catalog `preferred_supplier_id`, else an explicit convert-time mapping). One approved PR becomes **one issued PO per vendor**. A line with no resolvable supplier fails closed (HTTP 400) — the API does not invent a vendor. Single-supplier PRs still create exactly one PO. All split POs share `requisition_id`; each has its own cents total and `PO-YYYY-NNN`. The PR is marked `converted_to_po` only after every PO writes, in one transaction.
    - Printable & exportable corporate Purchase Order layout complete with vendor address, payment terms, delivery instructions, and signature block.
    - Real-time fulfillment tracking with partial delivery indicators.
 

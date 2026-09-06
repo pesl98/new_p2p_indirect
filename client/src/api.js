@@ -74,11 +74,16 @@ export const api = {
     return fetch(`${API_BASE}/purchase-orders?${params.toString()}`).then(r => r.json());
   },
   getPurchaseOrderDetail: (id) => fetch(`${API_BASE}/purchase-orders/${id}`).then(r => r.json()),
-  createPOFromRequisition: (poData) => fetch(`${API_BASE}/purchase-orders/from-requisition`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(poData)
-  }).then(r => r.json()),
+  createPOFromRequisition: async (poData) => {
+    const r = await fetch(`${API_BASE}/purchase-orders/from-requisition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(poData)
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to generate purchase order');
+    return data;
+  },
   updatePOStatus: (id, status, notes) => fetch(`${API_BASE}/purchase-orders/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
