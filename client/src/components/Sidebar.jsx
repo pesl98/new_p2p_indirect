@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { api } from '../api';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -12,7 +13,25 @@ import {
   GitBranch
 } from 'lucide-react';
 
+function dbModeLabel(mode) {
+  if (mode === 'turso-http') return 'Turso (HTTP) active';
+  if (mode === 'sqlite') return 'SQLite (local) active';
+  return 'Database connected';
+}
+
 export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount }) {
+  const [dbMode, setDbMode] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getHealth()
+      .then((health) => {
+        if (!cancelled && health?.db) setDbMode(health.db);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const navItems = [
     {
       id: 'dashboard',
@@ -129,7 +148,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>SQLite Embedded DB Active</span>
+            <span>{dbModeLabel(dbMode)}</span>
           </div>
         </div>
       </div>
