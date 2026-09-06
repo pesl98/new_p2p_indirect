@@ -1,8 +1,12 @@
 {
   "buildCommand": "npm run build",
+  "framework": null,
   "functions": {
-    "app.js": {
+    "api/index.js": {
       "includeFiles": "server/src/schema.sql"
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ]
 }
