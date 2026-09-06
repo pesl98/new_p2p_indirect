@@ -72,8 +72,8 @@ export function groupItemsBySupplier(items, options = {}) {
   return { groups, unresolved };
 }
 
-function loadRequisitionItems(db, requisitionId) {
-  return db.prepare(`
+async function loadRequisitionItems(db, requisitionId) {
+  return await db.prepare(`
     SELECT
       ri.*,
       ci.preferred_supplier_id AS catalog_preferred_supplier_id
@@ -84,13 +84,13 @@ function loadRequisitionItems(db, requisitionId) {
   `).all(requisitionId);
 }
 
-function loadSupplier(db, supplierId) {
-  return db.prepare(`SELECT * FROM suppliers WHERE id = ?`).get(supplierId);
+async function loadSupplier(db, supplierId) {
+  return await db.prepare(`SELECT * FROM suppliers WHERE id = ?`).get(supplierId);
 }
 
-function actorNameFor(db, createdBy) {
+async function actorNameFor(db, createdBy) {
   if (!createdBy) return 'Procurement Officer';
-  const user = db.prepare(`SELECT name FROM users WHERE id = ?`).get(createdBy);
+  const user = await db.prepare(`SELECT name FROM users WHERE id = ?`).get(createdBy);
   return user?.name || 'Procurement Officer';
 }
 
@@ -99,7 +99,7 @@ function actorNameFor(db, createdBy) {
  * Single-supplier PRs still create exactly one PO. Missing suppliers fail closed (400).
  * PR is marked converted_to_po only after every split PO is written, in one transaction.
  */
-export function convertRequisitionToPurchaseOrders(db, payload) {
+export async function convertRequisitionToPurchaseOrders(db, payload) {
   const {
     requisition_id,
     created_by,
@@ -109,7 +109,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
     supplier_mappings
   } = payload;
 
-  const pr = db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(requisition_id);
+  const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(requisition_id);
   if (!pr) {
     throw new PurchaseOrderError('Requisition not found', 404);
   }
@@ -117,7 +117,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
     throw new PurchaseOrderError('Requisition must be in "approved" state to generate a Purchase Order.');
   }
 
-  const prItems = loadRequisitionItems(db, requisition_id);
+  const prItems = await loadRequisitionItems(db, requisition_id);
   if (prItems.length === 0) {
     throw new PurchaseOrderError('Requisition has no items.');
   }
@@ -132,19 +132,19 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
 
   const supplierIds = [...groups.keys()];
   for (const supplierId of supplierIds) {
-    if (!loadSupplier(db, supplierId)) {
+    if (!(await loadSupplier(db, supplierId))) {
       throw new PurchaseOrderError(`Supplier ${supplierId} was resolved on a line but does not exist.`);
     }
   }
 
   const createdBy = created_by || 3;
-  const actorName = actorNameFor(db, createdBy);
+  const actorName = await actorNameFor(db, createdBy);
   const issueDate = new Date().toISOString().split('T')[0];
   const deliveryDate = pr.needed_by_date || new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0];
   const shipTo = shipping_address || 'Acme HQ - Receiving Bay 2, 450 Tech Blvd, Austin, TX 78701';
   const split = supplierIds.length > 1;
 
-  const convertTransaction = db.transaction(() => {
+  return db.transaction(async () => {
     const currentYear = new Date().getFullYear();
     const created = [];
 
@@ -166,9 +166,9 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
 
     for (const supplierId of supplierIds) {
       const items = groups.get(supplierId);
-      const supplier = loadSupplier(db, supplierId);
+      const supplier = await loadSupplier(db, supplierId);
       const poTotal = items.reduce((sum, item) => sum + asCents(item.total_price), 0);
-      const poNumber = nextDocumentNumber(db, 'po', currentYear);
+      const poNumber = await nextDocumentNumber(db, 'po', currentYear);
       const defaultNote = split
         ? `Generated from approved requisition ${pr.pr_number} (split ${created.length + 1} of ${supplierIds.length} — ${supplier.name})`
         : `Generated automatically from approved requisition ${pr.pr_number}`;
@@ -176,7 +176,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
         ? (split ? `${notes} [split ${created.length + 1} of ${supplierIds.length} — ${supplier.name}]` : notes)
         : defaultNote;
 
-      const poResult = insertPO.run(
+      const poResult = await insertPO.run(
         poNumber,
         requisition_id,
         supplierId,
@@ -192,7 +192,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
       const poId = Number(poResult.lastInsertRowid);
 
       for (const item of items) {
-        insertPOItem.run(
+        await insertPOItem.run(
           poId,
           item.id,
           item.item_description,
@@ -204,7 +204,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
         );
       }
 
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('purchase_order', ?, 'ISSUED', ?, ?)
       `).run(
@@ -224,7 +224,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
       });
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE purchase_requisitions
       SET status = 'converted_to_po', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -234,7 +234,7 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
       .map((po) => `${po.poNumber} (${po.supplier_name}, ${formatCents(po.total_amount)})`)
       .join('; ');
     const convertAction = split ? 'SPLIT_CONVERTED_TO_PO' : 'CONVERTED_TO_PO';
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('requisition', ?, ?, ?, ?)
     `).run(
@@ -248,6 +248,4 @@ export function convertRequisitionToPurchaseOrders(db, payload) {
 
     return created;
   });
-
-  return convertTransaction();
 }

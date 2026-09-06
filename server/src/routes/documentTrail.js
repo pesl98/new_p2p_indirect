@@ -1,5 +1,4 @@
 import express from 'express';
-import db from '../db.js';
 import { DocumentTrailError, getDocumentTrail, searchDocumentTrails } from '../documentTrailService.js';
 
 const router = express.Router();
@@ -11,18 +10,20 @@ function httpError(res, error) {
 }
 
 // Picker / typeahead: PRs, POs, and invoice numbers
-router.get('/search', (req, res) => {
+router.get('/search', async (req, res) => {
   try {
-    res.json(searchDocumentTrails(db, req.query.q || ''));
+    const db = req.db;
+    res.json(await searchDocumentTrails(db, req.query.q || ''));
   } catch (error) {
     httpError(res, error);
   }
 });
 
 // Chronological document trail for a PR / PO / invoice number
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getDocumentTrail(db, req.query));
+    const db = req.db;
+    res.json(await getDocumentTrail(db, req.query));
   } catch (error) {
     httpError(res, error);
   }

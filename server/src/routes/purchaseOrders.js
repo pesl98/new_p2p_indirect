@@ -1,12 +1,12 @@
 import express from 'express';
-import db from '../db.js';
 import { convertRequisitionToPurchaseOrders } from '../purchaseOrdersService.js';
 
 const router = express.Router();
 
 // List all purchase orders
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     const { status, supplier_id } = req.query;
     let query = `
       SELECT 
@@ -44,7 +44,7 @@ router.get('/', (req, res) => {
     }
 
     query += ` ORDER BY po.id DESC`;
-    const pos = db.prepare(query).all(...params);
+    const pos = await db.prepare(query).all(...params);
     res.json(pos);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -52,10 +52,11 @@ router.get('/', (req, res) => {
 });
 
 // Get PO detail by ID
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
-    const po = db.prepare(`
+    const po = await db.prepare(`
       SELECT 
         po.*,
         s.name as supplier_name,
@@ -82,12 +83,12 @@ router.get('/:id', (req, res) => {
     }
 
     // Get PO line items
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT * FROM po_items WHERE po_id = ? ORDER BY id ASC
     `).all(id);
 
     // Get associated Goods Receipts
-    const receipts = db.prepare(`
+    const receipts = await db.prepare(`
       SELECT gr.*, u.name as received_by_name,
         (SELECT COUNT(*) FROM goods_receipt_items WHERE goods_receipt_id = gr.id) as items_count
       FROM goods_receipts gr
@@ -96,7 +97,7 @@ router.get('/:id', (req, res) => {
       ORDER BY gr.receipt_date DESC
     `).all(id);
 
-    const serviceSheets = db.prepare(`
+    const serviceSheets = await db.prepare(`
       SELECT ses.*, u.name as created_by_name,
         (SELECT COUNT(*) FROM service_entry_sheet_items WHERE ses_id = ses.id) as items_count
       FROM service_entry_sheets ses
@@ -106,7 +107,7 @@ router.get('/:id', (req, res) => {
     `).all(id);
 
     // Get associated Invoices
-    const invoices = db.prepare(`
+    const invoices = await db.prepare(`
       SELECT inv.*,
         (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = inv.id) as items_count
       FROM invoices inv
@@ -127,9 +128,10 @@ router.get('/:id', (req, res) => {
 });
 
 // Create one issued PO per resolved supplier from an approved requisition
-router.post('/from-requisition', (req, res) => {
+router.post('/from-requisition', async (req, res) => {
   try {
-    const purchaseOrders = convertRequisitionToPurchaseOrders(db, req.body);
+    const db = req.db;
+    const purchaseOrders = await convertRequisitionToPurchaseOrders(db, req.body);
     const split = purchaseOrders.length > 1;
     res.status(201).json({
       purchase_orders: purchaseOrders,
@@ -146,11 +148,12 @@ router.post('/from-requisition', (req, res) => {
 });
 
 // Update PO status
-router.patch('/:id/status', (req, res) => {
+router.patch('/:id/status', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
     const { status, notes } = req.body;
-    db.prepare(`UPDATE purchase_orders SET status = ?, notes = COALESCE(?, notes) WHERE id = ?`).run(status, notes || null, id);
+    await db.prepare(`UPDATE purchase_orders SET status = ?, notes = COALESCE(?, notes) WHERE id = ?`).run(status, notes || null, id);
     res.json({ message: 'PO status updated' });
   } catch (error) {
     res.status(500).json({ error: error.message });

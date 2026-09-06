@@ -27,7 +27,7 @@ export function remainingBudgetCents(budget) {
  * Final approve fails closed if remaining department budget is insufficient
  * unless `override_budget` is true.
  */
-export function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name, override_budget }) {
+export async function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name, override_budget }) {
   if (!['approved', 'rejected'].includes(decision)) {
     throw new ApprovalDecisionError('Decision must be approved or rejected');
   }
@@ -35,8 +35,8 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
     throw new ApprovalDecisionError('approver_id is required');
   }
 
-  const processDecision = db.transaction(() => {
-    const approval = db.prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(approvalId);
+  return db.transaction(async () => {
+    const approval = await db.prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(approvalId);
     if (!approval) {
       throw new ApprovalDecisionError('Approval request not found', 404);
     }
@@ -52,12 +52,12 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
       );
     }
 
-    const pr = db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(approval.requisition_id);
+    const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(approval.requisition_id);
     if (!pr) {
       throw new ApprovalDecisionError('Associated requisition not found', 404);
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE approval_requests
       SET status = ?, comments = ?, decided_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -66,16 +66,16 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
     const actor = approver_name || 'Approver';
 
     if (decision === 'rejected') {
-      db.prepare(
+      await db.prepare(
         `UPDATE purchase_requisitions SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
       ).run(pr.id);
-      db.prepare(`
+      await db.prepare(`
         UPDATE approval_requests
         SET status = 'skipped'
         WHERE requisition_id = ? AND status IN ('pending', 'waiting')
       `).run(pr.id);
 
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'REJECTED', ?, ?)
       `).run(pr.id, actor, `Rejected by ${actor}. Reason: ${comments || 'No reason specified'}`);
@@ -83,7 +83,7 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
       return { outcome: 'rejected', budgetCommitted: false };
     }
 
-    const nextWaiting = db.prepare(`
+    const nextWaiting = await db.prepare(`
       SELECT * FROM approval_requests
       WHERE requisition_id = ? AND status = 'waiting'
       ORDER BY step_order ASC
@@ -91,15 +91,15 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
     `).get(pr.id);
 
     if (nextWaiting) {
-      db.prepare(`UPDATE approval_requests SET status = 'pending' WHERE id = ?`).run(nextWaiting.id);
-      db.prepare(`
+      await db.prepare(`UPDATE approval_requests SET status = 'pending' WHERE id = ?`).run(nextWaiting.id);
+      await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'STEP_APPROVED', ?, ?)
       `).run(pr.id, actor, `Step approved by ${actor}. Forwarded to next approver tier.`);
       return { outcome: 'step_approved', budgetCommitted: false, nextApprovalId: nextWaiting.id };
     }
 
-    const budget = db.prepare(
+    const budget = await db.prepare(
       `SELECT * FROM budgets WHERE department_id = ? AND fiscal_year = ?`
     ).get(pr.department_id, FISCAL_YEAR);
     if (!budget) {
@@ -118,23 +118,23 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
       );
     }
 
-    db.prepare(
+    await db.prepare(
       `UPDATE purchase_requisitions SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
     ).run(pr.id);
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE budgets
       SET committed_amount = committed_amount + ?
       WHERE department_id = ? AND fiscal_year = ?
     `).run(pr.total_amount, pr.department_id, FISCAL_YEAR);
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('requisition', ?, 'APPROVED', ?, ?)
     `).run(pr.id, actor, `Fully approved for $${formatCents(pr.total_amount)}. Committed budget allocated.`);
 
     if (remaining < pr.total_amount && allowBudgetOverride) {
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'BUDGET_OVERRIDE', ?, ?)
       `).run(
@@ -146,6 +146,4 @@ export function decideApprovalStep(db, { approvalId, decision, comments, approve
 
     return { outcome: 'approved', budgetCommitted: true };
   });
-
-  return processDecision();
 }

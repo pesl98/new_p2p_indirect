@@ -1,6 +1,6 @@
 # ProcureFlow architecture
 
-Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite (`better-sqlite3`). Money is integer **cents**. Quantities are whole units.
+Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite locally (`better-sqlite3`) or Turso (libSQL **SQL-over-HTTP** `/v2/pipeline`) on Vercel. Money is integer **cents**. Quantities are whole units.
 
 This document describes the control model implemented in code. The header persona switcher is **client-only demo auth** — it is not JWT, sessions, or server-enforced identity. API bodies still carry `approver_id` / `received_by` / `requester_id`; anyone who can reach the API can send any persona id.
 
@@ -189,18 +189,18 @@ Prerequisites: Node 18+, npm 9+.
 npm install
 cd server && npm install && cd ../client && npm install && cd ..
 
-# Seed SQLite sample data (money in cents)
+# Seed sample data (SQLite locally; Turso when TURSO_* are set)
 npm run seed
 # or: node server/src/seed.js
 
-# Unit tests (node --test)
+# Unit tests (node --test) — SQLite in-memory plus Turso HTTP mocks
 npm test
 
 # Dev: API :5000 + Vite :3000
 npm run dev
 
 # Production-style: Express serves client/dist if present
-node server/src/index.js
+npm start
 ```
 
 Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success), and the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events).
@@ -210,5 +210,18 @@ Tests cover money/match, sequential approvals, budget fail/override, GRN over-re
 - **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary.
 - Convert-time per-line supplier override (`supplier_mappings`) is API-only; the demo UI does not collect a vendor remap at convert.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
-- No hosted production deployment.
 - Fiscal year 2026 is fixed in queries.
+
+## Local vs Vercel / Turso
+
+```
+Laptop (no TURSO_*):  better-sqlite3 → server/data/procurement.db
+Laptop (TURSO_* set): fetch POST /v2/pipeline → Turso (same path as Vercel)
+Vercel:               Turso required; missing env → HTML/JSON 503 config page
+```
+
+The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) exposes `prepare` / `run` / `get` / `all` / `exec` / `transaction` for both backends. Route and service code is async so Turso HTTP is not left half-migrated. Transactions on Turso keep a Hrana **baton** so `BEGIN`/`COMMIT` share one connection.
+
+Vercel entry: root [`app.js`](../app.js) default-exports the Express app (current Express-on-Vercel convention). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`) and includes `server/src/schema.sql` in the function bundle. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
+
+Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production, then `npm run seed` from a laptop with those vars. See the README deploy section.

@@ -1,9 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createMemoryDatabase } from './db.js';
 import {
   DocumentTrailError,
   getDocumentTrail,
@@ -11,16 +8,10 @@ import {
   toIsoTimestamp
 } from './documentTrailService.js';
 
-const schemaSql = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql'),
-  'utf8'
-);
 
-function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(schemaSql);
-  db.exec(`
+async function createTestDb() {
+  const db = await createMemoryDatabase();
+    db.exec(`
     INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
     INSERT INTO users (id, name, email, role, department_id, title) VALUES
       (1, 'Alice Chen', 'alice@example.com', 'requester', 1, 'Specialist'),
@@ -142,7 +133,7 @@ function seedDraftPr(db) {
 }
 
 describe('toIsoTimestamp', () => {
-  test('converts SQLite datetime and date-only values to ISO-8601', () => {
+  test('converts SQLite datetime and date-only values to ISO-8601', async () => {
     assert.equal(toIsoTimestamp('2026-08-28 14:20:00'), '2026-08-28T14:20:00.000Z');
     assert.equal(toIsoTimestamp('2026-08-29'), '2026-08-29T00:00:00.000Z');
     assert.equal(toIsoTimestamp('2026-09-02T15:00:00.000Z'), '2026-09-02T15:00:00.000Z');
@@ -151,11 +142,11 @@ describe('toIsoTimestamp', () => {
 });
 
 describe('document trail — complete goods chain', () => {
-  test('returns PR header, approvals, PO, GRN, invoice match, and AP events in cents + ISO', () => {
-    const db = createTestDb();
-    seedCompleteGoodsChain(db);
+  test('returns PR header, approvals, PO, GRN, invoice match, and AP events in cents + ISO', async () => {
+    const db = await createTestDb();
+    await seedCompleteGoodsChain(db);
 
-    const trail = getDocumentTrail(db, { requisition_id: 1 });
+    const trail = await getDocumentTrail(db, { requisition_id: 1 });
 
     assert.equal(trail.starting_point.type, 'requisition');
     assert.equal(trail.starting_point.number, 'PR-2026-001');
@@ -223,14 +214,14 @@ describe('document trail — complete goods chain', () => {
     assert.equal(stageByKey.ap, 'complete');
   });
 
-  test('looks up the same chain by pr_number, po_id, po_number, and q', () => {
-    const db = createTestDb();
-    seedCompleteGoodsChain(db);
+  test('looks up the same chain by pr_number, po_id, po_number, and q', async () => {
+    const db = await createTestDb();
+    await seedCompleteGoodsChain(db);
 
-    const byPr = getDocumentTrail(db, { pr_number: 'pr-2026-001' });
-    const byPoId = getDocumentTrail(db, { po_id: 1 });
-    const byPoNumber = getDocumentTrail(db, { po_number: 'PO-2026-001' });
-    const byQ = getDocumentTrail(db, { q: 'INV-WED-9042' });
+    const byPr = await getDocumentTrail(db, { pr_number: 'pr-2026-001' });
+    const byPoId = await getDocumentTrail(db, { po_id: 1 });
+    const byPoNumber = await getDocumentTrail(db, { po_number: 'PO-2026-001' });
+    const byQ = await getDocumentTrail(db, { q: 'INV-WED-9042' });
 
     assert.equal(byPr.requisition.id, 1);
     assert.equal(byPoId.requisition.id, 1);
@@ -240,11 +231,11 @@ describe('document trail — complete goods chain', () => {
 });
 
 describe('document trail — multi-supplier split', () => {
-  test('one PR returns two PO branches and not_started receiving/invoice/AP', () => {
-    const db = createTestDb();
-    seedSplitPoChain(db);
+  test('one PR returns two PO branches and not_started receiving/invoice/AP', async () => {
+    const db = await createTestDb();
+    await seedSplitPoChain(db);
 
-    const trail = getDocumentTrail(db, { pr_number: 'PR-2026-006' });
+    const trail = await getDocumentTrail(db, { pr_number: 'PR-2026-006' });
     assert.equal(trail.split, true);
     assert.equal(trail.purchase_orders.length, 2);
     assert.deepEqual(
@@ -274,18 +265,18 @@ describe('document trail — multi-supplier split', () => {
     assert.equal(stageByKey.invoice, 'not_started');
     assert.equal(stageByKey.ap, 'not_started');
 
-    const viaChildPo = getDocumentTrail(db, { po_id: 10 });
+    const viaChildPo = await getDocumentTrail(db, { po_id: 10 });
     assert.equal(viaChildPo.purchase_orders.length, 2);
     assert.equal(viaChildPo.requisition.pr_number, 'PR-2026-006');
   });
 });
 
 describe('document trail — edge lookups', () => {
-  test('PO without a requisition still returns GRN and empty PR/approvals', () => {
-    const db = createTestDb();
-    seedStandalonePo(db);
+  test('PO without a requisition still returns GRN and empty PR/approvals', async () => {
+    const db = await createTestDb();
+    await seedStandalonePo(db);
 
-    const trail = getDocumentTrail(db, { po_number: 'PO-2026-002' });
+    const trail = await getDocumentTrail(db, { po_number: 'PO-2026-002' });
     assert.equal(trail.starting_point.type, 'purchase_order');
     assert.equal(trail.requisition, null);
     assert.equal(trail.approvals.length, 0);
@@ -295,11 +286,11 @@ describe('document trail — edge lookups', () => {
     assert.equal(trail.stages.find((stage) => stage.key === 'invoice').status, 'not_started');
   });
 
-  test('draft PR has empty later stages and no invented timeline events', () => {
-    const db = createTestDb();
-    seedDraftPr(db);
+  test('draft PR has empty later stages and no invented timeline events', async () => {
+    const db = await createTestDb();
+    await seedDraftPr(db);
 
-    const trail = getDocumentTrail(db, { requisition_id: 4 });
+    const trail = await getDocumentTrail(db, { requisition_id: 4 });
     assert.equal(trail.approvals.length, 0);
     assert.equal(trail.purchase_orders.length, 0);
     assert.equal(trail.timeline.length, 1);
@@ -308,42 +299,42 @@ describe('document trail — edge lookups', () => {
     assert.equal(trail.stages.find((stage) => stage.key === 'receiving').status, 'not_started');
   });
 
-  test('missing lookup and unknown documents fail closed', () => {
-    const db = createTestDb();
-    seedCompleteGoodsChain(db);
+  test('missing lookup and unknown documents fail closed', async () => {
+    const db = await createTestDb();
+    await seedCompleteGoodsChain(db);
 
-    assert.throws(
-      () => getDocumentTrail(db, {}),
+    assert.rejects(
+      async () => getDocumentTrail(db, {}),
       (err) => err instanceof DocumentTrailError && err.statusCode === 400
     );
-    assert.throws(
-      () => getDocumentTrail(db, { pr_number: 'PR-NOPE' }),
+    assert.rejects(
+      async () => getDocumentTrail(db, { pr_number: 'PR-NOPE' }),
       (err) => err instanceof DocumentTrailError && err.statusCode === 404
     );
-    assert.throws(
-      () => getDocumentTrail(db, { po_id: 999 }),
+    assert.rejects(
+      async () => getDocumentTrail(db, { po_id: 999 }),
       (err) => err instanceof DocumentTrailError && err.statusCode === 404
     );
-    assert.throws(
-      () => getDocumentTrail(db, { q: 'UNKNOWN-DOC' }),
+    assert.rejects(
+      async () => getDocumentTrail(db, { q: 'UNKNOWN-DOC' }),
       (err) => err instanceof DocumentTrailError && err.statusCode === 404
     );
   });
 
-  test('search returns PRs, POs, and invoices for the picker', () => {
-    const db = createTestDb();
-    seedCompleteGoodsChain(db);
-    seedSplitPoChain(db);
+  test('search returns PRs, POs, and invoices for the picker', async () => {
+    const db = await createTestDb();
+    await seedCompleteGoodsChain(db);
+    await seedSplitPoChain(db);
 
-    const all = searchDocumentTrails(db, '');
+    const all = await searchDocumentTrails(db, '');
     assert.ok(all.requisitions.some((pr) => pr.pr_number === 'PR-2026-001'));
     assert.ok(all.purchase_orders.some((po) => po.po_number === 'PO-2026-001'));
 
-    const filtered = searchDocumentTrails(db, 'PR-2026-006');
+    const filtered = await searchDocumentTrails(db, 'PR-2026-006');
     assert.equal(filtered.requisitions.length, 1);
     assert.equal(filtered.requisitions[0].pr_number, 'PR-2026-006');
 
-    const invoices = searchDocumentTrails(db, 'INV-WED');
+    const invoices = await searchDocumentTrails(db, 'INV-WED');
     assert.equal(invoices.invoices[0].invoice_number, 'INV-WED-9042');
     assert.match(all.requisitions[0].created_at, /^\d{4}-\d{2}-\d{2}T/);
   });

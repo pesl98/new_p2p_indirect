@@ -1,12 +1,12 @@
 import express from 'express';
-import db from '../db.js';
 import { decideApprovalStep } from '../approvalsService.js';
 
 const router = express.Router();
 
 // Get pending approval requests
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     const { approver_id, status } = req.query;
     let query = `
       SELECT 
@@ -54,7 +54,7 @@ router.get('/', (req, res) => {
     }
 
     query += ` ORDER BY ar.created_at DESC`;
-    const approvals = db.prepare(query).all(...params);
+    const approvals = await db.prepare(query).all(...params);
     res.json(approvals);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -62,12 +62,13 @@ router.get('/', (req, res) => {
 });
 
 // Approve or reject a requisition step
-router.post('/:id/decide', (req, res) => {
+router.post('/:id/decide', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
     const { decision, comments, approver_name, approver_id, override_budget } = req.body; // decision: 'approved' | 'rejected'
 
-    const result = decideApprovalStep(db, {
+    const result = await decideApprovalStep(db, {
       approvalId: id,
       decision,
       comments,

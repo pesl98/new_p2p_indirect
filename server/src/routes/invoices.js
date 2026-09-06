@@ -1,5 +1,4 @@
 import express from 'express';
-import db from '../db.js';
 import { createVendorInvoice, approveInvoicePayment } from '../invoicesService.js';
 
 const router = express.Router();
@@ -11,8 +10,9 @@ function httpError(res, error) {
 }
 
 // List all invoices
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     const { status, po_id, supplier_id } = req.query;
     let query = `
       SELECT 
@@ -44,7 +44,7 @@ router.get('/', (req, res) => {
     }
 
     query += ` ORDER BY inv.id DESC`;
-    const invoices = db.prepare(query).all(...params);
+    const invoices = await db.prepare(query).all(...params);
     res.json(invoices);
   } catch (error) {
     httpError(res, error);
@@ -52,10 +52,11 @@ router.get('/', (req, res) => {
 });
 
 // Get invoice detail with full 3-way match audit results
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
-    const invoice = db.prepare(`
+    const invoice = await db.prepare(`
       SELECT 
         inv.*,
         po.po_number,
@@ -78,7 +79,7 @@ router.get('/:id', (req, res) => {
 
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
 
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT 
         ii.*,
         poi.quantity as po_quantity,
@@ -93,14 +94,14 @@ router.get('/:id', (req, res) => {
       WHERE ii.invoice_id = ?
     `).all(id);
 
-    const matchResults = db.prepare(`
+    const matchResults = await db.prepare(`
       SELECT mr.*, poi.item_description, poi.line_type
       FROM match_results mr
       LEFT JOIN po_items poi ON mr.po_item_id = poi.id
       WHERE mr.invoice_id = ?
     `).all(id);
 
-    const receipts = db.prepare(`
+    const receipts = await db.prepare(`
       SELECT gr.*, u.name as received_by_name
       FROM goods_receipts gr
       JOIN users u ON gr.received_by = u.id
@@ -108,7 +109,7 @@ router.get('/:id', (req, res) => {
       ORDER BY gr.receipt_date DESC
     `).all(invoice.po_id);
 
-    const serviceSheets = db.prepare(`
+    const serviceSheets = await db.prepare(`
       SELECT ses.*, u.name as created_by_name
       FROM service_entry_sheets ses
       JOIN users u ON ses.created_by = u.id
@@ -129,9 +130,10 @@ router.get('/:id', (req, res) => {
 });
 
 // Create vendor invoice and execute automated 3-Way Match
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const result = createVendorInvoice(db, req.body);
+    const db = req.db;
+    const result = await createVendorInvoice(db, req.body);
     res.status(201).json({
       invoiceId: result.invoiceId,
       matchStatus: result.matchOutcome.overallMatchStatus,
@@ -144,9 +146,10 @@ router.post('/', (req, res) => {
 });
 
 // Approve invoice for payment (Finance / Accounts Payable)
-router.post('/:id/approve-payment', (req, res) => {
+router.post('/:id/approve-payment', async (req, res) => {
   try {
-    const result = approveInvoicePayment(db, req.params.id, req.body);
+    const db = req.db;
+    const result = await approveInvoicePayment(db, req.params.id, req.body);
     res.json(result);
   } catch (error) {
     httpError(res, error);
@@ -154,19 +157,20 @@ router.post('/:id/approve-payment', (req, res) => {
 });
 
 // Mark invoice as Paid
-router.post('/:id/mark-paid', (req, res) => {
+router.post('/:id/mark-paid', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
     const { payment_reference, payer_name } = req.body;
     const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE invoices
       SET status = 'paid', payment_reference = ?
       WHERE id = ?
     `).run(ref, id);
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, 'PAID', ?, ?)
     `).run(id, payer_name || 'Finance Lead', `Marked as paid with reference ${ref}`);

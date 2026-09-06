@@ -1,5 +1,4 @@
 import express from 'express';
-import db from '../db.js';
 import {
   acceptServiceEntrySheet,
   createServiceEntrySheet,
@@ -15,8 +14,9 @@ function httpError(res, error) {
   return res.status(status).json({ error: error.message });
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const db = req.db;
     const { po_id, status } = req.query;
     let query = `
       SELECT
@@ -47,16 +47,17 @@ router.get('/', (req, res) => {
     }
 
     query += ` ORDER BY ses.id DESC`;
-    res.json(db.prepare(query).all(...params));
+    res.json(await db.prepare(query).all(...params));
   } catch (error) {
     httpError(res, error);
   }
 });
 
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
+    const db = req.db;
     const { id } = req.params;
-    const ses = db.prepare(`
+    const ses = await db.prepare(`
       SELECT
         ses.*,
         po.po_number,
@@ -74,7 +75,7 @@ router.get('/:id', (req, res) => {
 
     if (!ses) return res.status(404).json({ error: 'Service entry sheet not found' });
 
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT
         si.*,
         poi.item_description,
@@ -93,9 +94,10 @@ router.get('/:id', (req, res) => {
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const result = createServiceEntrySheet(db, req.body);
+    const db = req.db;
+    const result = await createServiceEntrySheet(db, req.body);
     res.status(201).json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,
@@ -107,9 +109,10 @@ router.post('/', (req, res) => {
   }
 });
 
-router.post('/:id/submit', (req, res) => {
+router.post('/:id/submit', async (req, res) => {
   try {
-    const result = submitServiceEntrySheet(db, req.params.id, req.body);
+    const db = req.db;
+    const result = await submitServiceEntrySheet(db, req.params.id, req.body);
     res.json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,
@@ -121,9 +124,10 @@ router.post('/:id/submit', (req, res) => {
   }
 });
 
-router.post('/:id/accept', (req, res) => {
+router.post('/:id/accept', async (req, res) => {
   try {
-    const result = acceptServiceEntrySheet(db, req.params.id, req.body);
+    const db = req.db;
+    const result = await acceptServiceEntrySheet(db, req.params.id, req.body);
     res.json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,
@@ -137,9 +141,10 @@ router.post('/:id/accept', (req, res) => {
   }
 });
 
-router.post('/:id/reject', (req, res) => {
+router.post('/:id/reject', async (req, res) => {
   try {
-    const result = rejectServiceEntrySheet(db, req.params.id, req.body);
+    const db = req.db;
+    const result = await rejectServiceEntrySheet(db, req.params.id, req.body);
     res.json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,

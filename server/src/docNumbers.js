@@ -13,7 +13,7 @@ const DOC_KINDS = {
   ses: { table: 'service_entry_sheets', column: 'ses_number', prefix: 'SES' }
 };
 
-export function nextDocumentNumber(db, kind, year = new Date().getFullYear()) {
+export async function nextDocumentNumber(db, kind, year = new Date().getFullYear()) {
   const spec = DOC_KINDS[kind];
   if (!spec) {
     throw new Error(`Unknown document kind: ${kind}`);
@@ -21,7 +21,7 @@ export function nextDocumentNumber(db, kind, year = new Date().getFullYear()) {
 
   const yearPrefix = `${spec.prefix}-${year}-`;
   // column/table names come only from DOC_KINDS, never from request input.
-  const row = db.prepare(
+  const row = await db.prepare(
     `SELECT COALESCE(MAX(CAST(substr(${spec.column}, ?) AS INTEGER)), 0) AS max_n
      FROM ${spec.table}
      WHERE ${spec.column} LIKE ?`

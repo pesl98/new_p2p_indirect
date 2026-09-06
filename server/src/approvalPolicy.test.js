@@ -1,9 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createMemoryDatabase } from './db.js';
 import {
   APPROVAL_TIER2_CENTS,
   APPROVAL_TIER3_CENTS,
@@ -12,16 +9,10 @@ import {
   insertApprovalChain
 } from './approvalPolicy.js';
 
-const schemaSql = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql'),
-  'utf8'
-);
 
-function createTestDb({ includeFinance = true, includeAdmin = true, includeApprover = true } = {}) {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(schemaSql);
-
+async function createTestDb({ includeFinance = true, includeAdmin = true, includeApprover = true } = {}) {
+  const db = await createMemoryDatabase();
+  
   db.exec(`
     INSERT INTO departments (id, code, name) VALUES
       (1, 'MKT', 'Marketing'),
@@ -66,24 +57,24 @@ function createTestDb({ includeFinance = true, includeAdmin = true, includeAppro
 }
 
 describe('approval policy tiers', () => {
-  test('amount ≤ $1,000 (100000¢) yields only the department approver', () => {
-    const db = createTestDb();
-    const steps = buildApprovalSteps({ totalAmount: APPROVAL_TIER2_CENTS, departmentId: 1, db });
+  test('amount ≤ $1,000 (100000¢) yields only the department approver', async () => {
+    const db = await createTestDb();
+    const steps = await buildApprovalSteps({ totalAmount: APPROVAL_TIER2_CENTS, departmentId: 1, db });
     assert.equal(steps.length, 1);
     assert.deepEqual(steps[0], { step_order: 1, approver_id: 2, role: 'approver' });
   });
 
-  test('tier1 < amount ≤ tier2 yields approver then procurement; step 2 starts waiting', () => {
-    const db = createTestDb();
+  test('tier1 < amount ≤ tier2 yields approver then procurement; step 2 starts waiting', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER2_CENTS + 1;
-    const steps = buildApprovalSteps({ totalAmount: amount, departmentId: 1, db });
+    const steps = await buildApprovalSteps({ totalAmount: amount, departmentId: 1, db });
     assert.equal(steps.length, 2);
     assert.equal(steps[0].role, 'approver');
     assert.equal(steps[1].role, 'procurement');
     assert.equal(steps[1].approver_id, 3);
 
-    const prId = insertPr(db, amount);
-    insertApprovalChain(db, prId, amount, 1);
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
     const rows = db.prepare(
       `SELECT step_order, approver_id, status FROM approval_requests WHERE requisition_id = ? ORDER BY step_order`
     ).all(prId);
@@ -91,10 +82,10 @@ describe('approval policy tiers', () => {
     assert.equal(rows[1].status, 'waiting');
   });
 
-  test('amount > $10,000 (1000000¢) yields three steps including finance', () => {
-    const db = createTestDb();
+  test('amount > $10,000 (1000000¢) yields three steps including finance', async () => {
+    const db = await createTestDb();
     const amount = APPROVAL_TIER3_CENTS + 1;
-    const steps = buildApprovalSteps({ totalAmount: amount, departmentId: 1, db });
+    const steps = await buildApprovalSteps({ totalAmount: amount, departmentId: 1, db });
     assert.equal(steps.length, 3);
     assert.equal(steps[0].role, 'approver');
     assert.equal(steps[1].role, 'procurement');
@@ -102,9 +93,9 @@ describe('approval policy tiers', () => {
     assert.equal(steps[2].approver_id, 4);
   });
 
-  test('executive tier falls back to admin/CFO when no finance user exists', () => {
-    const db = createTestDb({ includeFinance: false });
-    const steps = buildApprovalSteps({
+  test('executive tier falls back to admin/CFO when no finance user exists', async () => {
+    const db = await createTestDb({ includeFinance: false });
+    const steps = await buildApprovalSteps({
       totalAmount: APPROVAL_TIER3_CENTS + 1,
       departmentId: 1,
       db
@@ -113,26 +104,24 @@ describe('approval policy tiers', () => {
     assert.equal(steps[2].approver_id, 5);
   });
 
-  test('fails with 400 when a required department approver cannot be resolved', () => {
-    const db = createTestDb({ includeApprover: false });
-    assert.throws(
-      () => buildApprovalSteps({ totalAmount: 50000, departmentId: 1, db }),
+  test('fails with 400 when a required department approver cannot be resolved', async () => {
+    const db = await createTestDb({ includeApprover: false });
+    assert.rejects(
+      async () => buildApprovalSteps({ totalAmount: 50000, departmentId: 1, db }),
       (err) => err instanceof ApprovalPolicyError && err.statusCode === 400
     );
   });
 
-  test('does not hardcode user ids 2/3/4 — different ids still resolve by role', () => {
-    const db = new Database(':memory:');
-    db.pragma('foreign_keys = ON');
-    db.exec(schemaSql);
-    db.exec(`
+  test('does not hardcode user ids 2/3/4 — different ids still resolve by role', async () => {
+    const db = await createMemoryDatabase();
+        db.exec(`
       INSERT INTO departments (id, code, name) VALUES (10, 'MKT', 'Marketing');
       INSERT INTO users (id, name, email, role, department_id, title) VALUES
         (20, 'Pat Approver', 'pat@example.com', 'approver', 10, 'Dept Head'),
         (30, 'Quinn Procure', 'quinn@example.com', 'procurement', 10, 'Buyer'),
         (40, 'Riley Finance', 'riley@example.com', 'finance', 10, 'Controller');
     `);
-    const steps = buildApprovalSteps({
+    const steps = await buildApprovalSteps({
       totalAmount: APPROVAL_TIER3_CENTS + 50,
       departmentId: 10,
       db

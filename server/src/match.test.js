@@ -1,22 +1,13 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import Database from 'better-sqlite3';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createMemoryDatabase } from './db.js';
 import { createVendorInvoice } from './invoicesService.js';
 import { priceToleranceCents } from './match.js';
 
-const schemaSql = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql'),
-  'utf8'
-);
 
-function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('foreign_keys = ON');
-  db.exec(schemaSql);
-  db.exec(`
+async function createTestDb() {
+  const db = await createMemoryDatabase();
+    db.exec(`
     INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
     INSERT INTO users (id, name, email, role, department_id, approval_limit)
       VALUES (1, 'Tester', 'tester@example.com', 'procurement', 1, 0);
@@ -91,11 +82,11 @@ function invoicePayload({
 }
 
 describe('3-way match engine', () => {
-  test('perfect match when qty and unit price match PO and GRN exactly', () => {
-    const db = createTestDb();
-    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
+  test('perfect match when qty and unit price match PO and GRN exactly', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
 
-    const result = createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: 129500 }));
+    const result = await createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: 129500 }));
     assert.equal(result.matchOutcome.overallMatchStatus, 'perfect_match');
     assert.equal(result.matchOutcome.invoiceStatus, 'matched');
 
@@ -107,14 +98,14 @@ describe('3-way match engine', () => {
     assert.equal(poItem.quantity_invoiced, 2);
   });
 
-  test('price within 1% tolerance sets tolerated_match', () => {
-    const db = createTestDb();
+  test('price within 1% tolerance sets tolerated_match', async () => {
+    const db = await createTestDb();
     const poPrice = 74900;
     const tolerance = priceToleranceCents(poPrice);
     assert.ok(tolerance > 0);
 
-    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: poPrice });
-    const result = createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: poPrice + tolerance }));
+    await insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: poPrice });
+    const result = await createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: poPrice + tolerance }));
 
     assert.equal(result.matchOutcome.overallMatchStatus, 'tolerated_match');
     assert.equal(result.matchOutcome.invoiceStatus, 'matched');
@@ -124,12 +115,12 @@ describe('3-way match engine', () => {
     assert.equal(line.price_variance, tolerance);
   });
 
-  test('price over 1% tolerance sets price_variance', () => {
-    const db = createTestDb();
+  test('price over 1% tolerance sets price_variance', async () => {
+    const db = await createTestDb();
     const poPrice = 74900;
-    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: poPrice });
+    await insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: poPrice });
 
-    const result = createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: poPrice + 5000 }));
+    const result = await createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: poPrice + 5000 }));
     assert.equal(result.matchOutcome.overallMatchStatus, 'price_variance');
     assert.equal(result.matchOutcome.invoiceStatus, 'variance_flagged');
 
@@ -141,11 +132,11 @@ describe('3-way match engine', () => {
     assert.equal(poItem.quantity_invoiced, 2, 'claimed qty is recorded even when price match fails');
   });
 
-  test('qty invoiced greater than received sets quantity_variance', () => {
-    const db = createTestDb();
-    insertPoLine(db, { ordered: 4, received: 2, unitPriceCents: 74900 });
+  test('qty invoiced greater than received sets quantity_variance', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, { ordered: 4, received: 2, unitPriceCents: 74900 });
 
-    const result = createVendorInvoice(db, invoicePayload({ qty: 3, unitPriceCents: 74900 }));
+    const result = await createVendorInvoice(db, invoicePayload({ qty: 3, unitPriceCents: 74900 }));
     assert.equal(result.matchOutcome.overallMatchStatus, 'quantity_variance');
     assert.equal(result.matchOutcome.invoiceStatus, 'variance_flagged');
 
@@ -154,14 +145,14 @@ describe('3-way match engine', () => {
     assert.equal(line.status, 'fail');
   });
 
-  test('second invoice that overbills vs received fails', () => {
-    const db = createTestDb();
-    insertPoLine(db, { ordered: 4, received: 2, unitPriceCents: 74900 });
+  test('second invoice that overbills vs received fails', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, { ordered: 4, received: 2, unitPriceCents: 74900 });
 
-    const first = createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: 74900, invoiceNumber: 'INV-1' }));
+    const first = await createVendorInvoice(db, invoicePayload({ qty: 2, unitPriceCents: 74900, invoiceNumber: 'INV-1' }));
     assert.equal(first.matchOutcome.overallMatchStatus, 'perfect_match');
 
-    const second = createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 74900, invoiceNumber: 'INV-2' }));
+    const second = await createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 74900, invoiceNumber: 'INV-2' }));
     assert.equal(second.matchOutcome.overallMatchStatus, 'quantity_variance');
     assert.equal(second.matchOutcome.invoiceStatus, 'variance_flagged');
 
@@ -173,31 +164,31 @@ describe('3-way match engine', () => {
     assert.equal(invoices[1].match_status, 'quantity_variance');
   });
 
-  test('qty and price failures together set total_variance', () => {
-    const db = createTestDb();
-    insertPoLine(db, { ordered: 4, received: 2, unitPriceCents: 74900 });
+  test('qty and price failures together set total_variance', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, { ordered: 4, received: 2, unitPriceCents: 74900 });
 
-    const result = createVendorInvoice(db, invoicePayload({ qty: 4, unitPriceCents: 79900 }));
+    const result = await createVendorInvoice(db, invoicePayload({ qty: 4, unitPriceCents: 79900 }));
     assert.equal(result.matchOutcome.overallMatchStatus, 'total_variance');
   });
 });
 
 describe('invoice number uniqueness', () => {
-  test('rejects a duplicate invoice number for the same supplier', () => {
-    const db = createTestDb();
-    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
-    createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-DUP-1' }));
+  test('rejects a duplicate invoice number for the same supplier', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
+    await createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-DUP-1' }));
 
-    assert.throws(
-      () => createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-DUP-1' })),
+    assert.rejects(
+      async () => createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-DUP-1' })),
       (err) => err.statusCode === 400 && /already exists for this supplier/i.test(err.message)
     );
   });
 
-  test('allows the same invoice number from a different supplier', () => {
-    const db = createTestDb();
+  test('allows the same invoice number from a different supplier', async () => {
+    const db = await createTestDb();
     db.exec(`INSERT INTO suppliers (id, name, code) VALUES (2, 'Other Vendor', 'SUP-2')`);
-    insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
+    await insertPoLine(db, { ordered: 2, received: 2, unitPriceCents: 129500 });
     db.prepare(`
       INSERT INTO purchase_orders (id, po_number, supplier_id, created_by, status, total_amount, issue_date)
       VALUES (2, 'PO-TEST-002', 2, 1, 'issued', 129500, '2026-09-01')
@@ -207,8 +198,8 @@ describe('invoice number uniqueness', () => {
       VALUES (2, 2, 'Other Item', 'IT Hardware', 1, 129500, 129500, 1, 0)
     `).run();
 
-    createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-SHARED' }));
-    const second = createVendorInvoice(db, {
+    await createVendorInvoice(db, invoicePayload({ qty: 1, unitPriceCents: 129500, invoiceNumber: 'INV-SHARED' }));
+    const second = await createVendorInvoice(db, {
       invoice_number: 'INV-SHARED',
       po_id: 2,
       supplier_id: 2,
@@ -222,9 +213,9 @@ describe('invoice number uniqueness', () => {
 });
 
 describe('service SES-backed 2-way match', () => {
-  test('service invoice matches PO + accepted SES without any GRN', () => {
-    const db = createTestDb();
-    insertPoLine(db, {
+  test('service invoice matches PO + accepted SES without any GRN', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, {
       ordered: 1,
       received: 0,
       accepted: 1,
@@ -234,7 +225,7 @@ describe('service SES-backed 2-way match', () => {
       description: 'SOC 2 Type II Annual Security Penetration Test'
     });
 
-    const result = createVendorInvoice(db, invoicePayload({
+    const result = await createVendorInvoice(db, invoicePayload({
       qty: 1,
       unitPriceCents: 1250000,
       description: 'SOC 2 Type II Annual Security Penetration Test'
@@ -248,9 +239,9 @@ describe('service SES-backed 2-way match', () => {
     assert.match(line.message, /SES-backed match/i);
   });
 
-  test('service invoice without accepted SES fails quantity match', () => {
-    const db = createTestDb();
-    insertPoLine(db, {
+  test('service invoice without accepted SES fails quantity match', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, {
       ordered: 1,
       received: 0,
       accepted: 0,
@@ -260,7 +251,7 @@ describe('service SES-backed 2-way match', () => {
       description: 'SOC 2 Type II Annual Security Penetration Test'
     });
 
-    const result = createVendorInvoice(db, invoicePayload({
+    const result = await createVendorInvoice(db, invoicePayload({
       qty: 1,
       unitPriceCents: 1250000,
       description: 'SOC 2 Type II Annual Security Penetration Test'
@@ -272,9 +263,9 @@ describe('service SES-backed 2-way match', () => {
     assert.match(line.message, /accepted on SES/i);
   });
 
-  test('mixed PO: goods 3-way and service SES 2-way both pass', () => {
-    const db = createTestDb();
-    insertPoLine(db, {
+  test('mixed PO: goods 3-way and service SES 2-way both pass', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, {
       ordered: 2,
       received: 2,
       unitPriceCents: 74900,
@@ -282,7 +273,7 @@ describe('service SES-backed 2-way match', () => {
       category: 'IT Hardware',
       description: 'Dell Monitor'
     });
-    insertPoLine(db, {
+    await insertPoLine(db, {
       ordered: 1,
       received: 0,
       accepted: 1,
@@ -294,7 +285,7 @@ describe('service SES-backed 2-way match', () => {
       poId: 1
     });
 
-    const result = createVendorInvoice(db, {
+    const result = await createVendorInvoice(db, {
       invoice_number: 'INV-MIXED-1',
       po_id: 1,
       supplier_id: 1,
@@ -316,15 +307,15 @@ describe('service SES-backed 2-way match', () => {
     assert.match(lines[1].message, /SES-backed match/i);
   });
 
-  test('mixed PO overall status is quantity_variance when only the service line fails', () => {
-    const db = createTestDb();
-    insertPoLine(db, {
+  test('mixed PO overall status is quantity_variance when only the service line fails', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, {
       ordered: 2,
       received: 2,
       unitPriceCents: 74900,
       lineType: 'goods'
     });
-    insertPoLine(db, {
+    await insertPoLine(db, {
       ordered: 1,
       received: 0,
       accepted: 0,
@@ -336,7 +327,7 @@ describe('service SES-backed 2-way match', () => {
       poId: 1
     });
 
-    const result = createVendorInvoice(db, {
+    const result = await createVendorInvoice(db, {
       invoice_number: 'INV-MIXED-FAIL',
       po_id: 1,
       supplier_id: 1,

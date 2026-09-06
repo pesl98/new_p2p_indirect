@@ -2,13 +2,26 @@
   "name": "procurement-system",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "seed": "node server/src/seed.js",
+    "start": "node server/src/index.js",
     "start:server": "node server/src/index.js",
     "dev:server": "node --watch server/src/index.js",
-    "dev:client": "cd client && npm run dev",
+    "dev:client": "npm --prefix client run dev",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "test": "node --test server/src/*.test.js"
+    "test": "node --test server/src/*.test.js",
+    "build": "npm --prefix client install && npm --prefix client run build && rm -rf public && mkdir -p public && cp -r client/dist/. public/"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.8.1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

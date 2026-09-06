@@ -27,14 +27,14 @@ export function priceToleranceCents(poUnitPriceCents) {
  * `quantity_invoiced` is still persisted for the claimed amount after match
  * (audit of what the vendor billed) regardless of pass/fail.
  */
-export function run3WayMatch(db, invoiceId, poId, invoiceItems) {
+export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
   const matchEntries = [];
   let hasPriceVariance = false;
   let hasQuantityVariance = false;
   let hasToleratedPrice = false;
 
   for (const item of invoiceItems) {
-    const poItem = db.prepare(`SELECT * FROM po_items WHERE id = ?`).get(item.po_item_id);
+    const poItem = await db.prepare(`SELECT * FROM po_items WHERE id = ?`).get(item.po_item_id);
     if (!poItem) continue;
 
     const serviceLine = isServiceLine(poItem);
@@ -140,7 +140,7 @@ export function run3WayMatch(db, invoiceId, poId, invoiceItems) {
   `);
 
   for (const m of matchEntries) {
-    insertMatch.run(
+    await insertMatch.run(
       invoiceId,
       poId,
       m.po_item_id,
@@ -156,7 +156,7 @@ export function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     );
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE invoices
     SET status = ?, match_status = ?
     WHERE id = ?

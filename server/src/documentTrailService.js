@@ -100,8 +100,8 @@ function mapRequisition(row) {
   };
 }
 
-function loadRequisition(db, id) {
-  return db.prepare(`
+async function loadRequisition(db, id) {
+  return await db.prepare(`
     SELECT
       pr.*,
       u.name as requester_name,
@@ -114,8 +114,8 @@ function loadRequisition(db, id) {
   `).get(id);
 }
 
-function loadPurchaseOrder(db, id) {
-  return db.prepare(`
+async function loadPurchaseOrder(db, id) {
+  return await db.prepare(`
     SELECT
       po.*,
       s.name as supplier_name,
@@ -130,8 +130,8 @@ function loadPurchaseOrder(db, id) {
   `).get(id);
 }
 
-function loadApprovals(db, requisitionId) {
-  return db.prepare(`
+async function loadApprovals(db, requisitionId) {
+  const rows = await db.prepare(`
     SELECT
       ar.id,
       ar.requisition_id,
@@ -148,7 +148,8 @@ function loadApprovals(db, requisitionId) {
     JOIN users u ON ar.approver_id = u.id
     WHERE ar.requisition_id = ?
     ORDER BY ar.step_order ASC, ar.id ASC
-  `).all(requisitionId).map((row) => ({
+  `).all(requisitionId);
+  return rows.map((row) => ({
     id: row.id,
     requisition_id: row.requisition_id,
     approver_id: row.approver_id,
@@ -163,13 +164,14 @@ function loadApprovals(db, requisitionId) {
   }));
 }
 
-function loadApEvents(db, invoiceId) {
-  return db.prepare(`
+async function loadApEvents(db, invoiceId) {
+  const rows = await db.prepare(`
     SELECT id, entity_type, entity_id, action, actor_name, details, created_at
     FROM audit_logs
     WHERE entity_type = 'invoice' AND entity_id = ?
     ORDER BY created_at ASC, id ASC
-  `).all(invoiceId)
+  `).all(invoiceId);
+  return rows
     .filter((row) => AP_AUDIT_ACTIONS.has(row.action))
     .map((row) => ({
       id: row.id,
@@ -181,8 +183,8 @@ function loadApEvents(db, invoiceId) {
     }));
 }
 
-function loadInvoiceRows(db, poId) {
-  return db.prepare(`
+async function loadInvoiceRows(db, poId) {
+  const rows = await db.prepare(`
     SELECT
       inv.id,
       inv.invoice_number,
@@ -203,7 +205,8 @@ function loadInvoiceRows(db, poId) {
     JOIN suppliers s ON inv.supplier_id = s.id
     WHERE inv.po_id = ?
     ORDER BY inv.id ASC
-  `).all(poId).map((row) => ({
+  `).all(poId);
+  return Promise.all(rows.map(async (row) => ({
     id: row.id,
     invoice_number: row.invoice_number,
     po_id: row.po_id,
@@ -219,12 +222,12 @@ function loadInvoiceRows(db, poId) {
     payment_reference: row.payment_reference,
     notes: row.notes,
     created_at: toIsoTimestamp(row.created_at),
-    ap_events: loadApEvents(db, row.id)
-  }));
+    ap_events: await loadApEvents(db, row.id)
+  })));
 }
 
-function loadGoodsReceipts(db, poId) {
-  return db.prepare(`
+async function loadGoodsReceipts(db, poId) {
+  const rows = await db.prepare(`
     SELECT
       gr.id,
       gr.grn_number,
@@ -240,7 +243,8 @@ function loadGoodsReceipts(db, poId) {
     JOIN users u ON gr.received_by = u.id
     WHERE gr.po_id = ?
     ORDER BY gr.id ASC
-  `).all(poId).map((row) => ({
+  `).all(poId);
+  return rows.map((row) => ({
     id: row.id,
     grn_number: row.grn_number,
     po_id: row.po_id,
@@ -254,8 +258,8 @@ function loadGoodsReceipts(db, poId) {
   }));
 }
 
-function loadServiceEntrySheets(db, poId) {
-  return db.prepare(`
+async function loadServiceEntrySheets(db, poId) {
+  const rows = await db.prepare(`
     SELECT
       ses.id,
       ses.ses_number,
@@ -276,7 +280,8 @@ function loadServiceEntrySheets(db, poId) {
     LEFT JOIN users du ON ses.decided_by = du.id
     WHERE ses.po_id = ?
     ORDER BY ses.id ASC
-  `).all(poId).map((row) => ({
+  `).all(poId);
+  return rows.map((row) => ({
     id: row.id,
     ses_number: row.ses_number,
     po_id: row.po_id,
@@ -294,8 +299,8 @@ function loadServiceEntrySheets(db, poId) {
   }));
 }
 
-function loadPoLineSummary(db, poId) {
-  return db.prepare(`
+async function loadPoLineSummary(db, poId) {
+  return await db.prepare(`
     SELECT
       COUNT(*) as line_count,
       SUM(CASE WHEN line_type = 'goods' THEN 1 ELSE 0 END) as goods_line_count,
@@ -305,12 +310,12 @@ function loadPoLineSummary(db, poId) {
   `).get(poId);
 }
 
-function loadPurchaseOrderBranches(db, poRows) {
-  return poRows.map((po) => {
-    const lines = loadPoLineSummary(db, po.id);
-    const goodsReceipts = loadGoodsReceipts(db, po.id);
-    const serviceEntrySheets = loadServiceEntrySheets(db, po.id);
-    const invoices = loadInvoiceRows(db, po.id);
+async function loadPurchaseOrderBranches(db, poRows) {
+  return Promise.all(poRows.map(async (po) => {
+    const lines = await loadPoLineSummary(db, po.id);
+    const goodsReceipts = await loadGoodsReceipts(db, po.id);
+    const serviceEntrySheets = await loadServiceEntrySheets(db, po.id);
+    const invoices = await loadInvoiceRows(db, po.id);
     return {
       id: po.id,
       po_number: po.po_number,
@@ -336,7 +341,7 @@ function loadPurchaseOrderBranches(db, poRows) {
         services: serviceEntrySheets.length > 0 ? 'recorded' : ((lines?.service_line_count || 0) > 0 ? 'not_started' : 'not_applicable')
       }
     };
-  });
+  }));
 }
 
 function stageStatus({ complete, current, notApplicable = false }) {
@@ -568,11 +573,11 @@ function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrde
   };
 }
 
-export function searchDocumentTrails(db, q = '') {
+export async function searchDocumentTrails(db, q = '') {
   const term = String(q || '').trim();
   const like = `%${term}%`;
 
-  const requisitions = db.prepare(`
+  const requisitions = await db.prepare(`
     SELECT
       pr.id,
       pr.pr_number,
@@ -590,12 +595,13 @@ export function searchDocumentTrails(db, q = '') {
        OR u.name LIKE ?
     ORDER BY pr.id DESC
     LIMIT 20
-  `).all(term, like, like, like).map((row) => ({
+  `).all(term, like, like, like);
+  const requisitionHits = requisitions.map((row) => ({
     ...row,
     created_at: toIsoTimestamp(row.created_at)
   }));
 
-  const purchaseOrders = db.prepare(`
+  const purchaseOrders = await db.prepare(`
     SELECT
       po.id,
       po.po_number,
@@ -614,13 +620,14 @@ export function searchDocumentTrails(db, q = '') {
        OR pr.pr_number LIKE ?
     ORDER BY po.id DESC
     LIMIT 20
-  `).all(term, like, like, like).map((row) => ({
+  `).all(term, like, like, like);
+  const purchaseOrderHits = purchaseOrders.map((row) => ({
     ...row,
     created_at: toIsoTimestamp(row.created_at)
   }));
 
   const invoices = term
-    ? db.prepare(`
+    ? await db.prepare(`
         SELECT
           inv.id,
           inv.invoice_number,
@@ -640,10 +647,10 @@ export function searchDocumentTrails(db, q = '') {
       `).all(like)
     : [];
 
-  return { requisitions, purchase_orders: purchaseOrders, invoices };
+  return { requisitions: requisitionHits, purchase_orders: purchaseOrderHits, invoices };
 }
 
-function resolveStartingDocument(db, query = {}) {
+async function resolveStartingDocument(db, query = {}) {
   const requisitionId = query.requisition_id != null && query.requisition_id !== ''
     ? Number(query.requisition_id)
     : null;
@@ -655,59 +662,59 @@ function resolveStartingDocument(db, query = {}) {
   const q = query.q ? String(query.q).trim() : '';
 
   if (requisitionId) {
-    const pr = loadRequisition(db, requisitionId);
+    const pr = await loadRequisition(db, requisitionId);
     if (!pr) throw new DocumentTrailError('Requisition not found', 404);
     return { requisition: pr, purchaseOrder: null };
   }
 
   if (prNumber) {
-    const pr = db.prepare(`
+    const pr = await db.prepare(`
       SELECT id FROM purchase_requisitions WHERE pr_number = ? COLLATE NOCASE
     `).get(prNumber);
     if (!pr) throw new DocumentTrailError('Requisition not found', 404);
-    return { requisition: loadRequisition(db, pr.id), purchaseOrder: null };
+    return { requisition: await loadRequisition(db, pr.id), purchaseOrder: null };
   }
 
   if (poId) {
-    const po = loadPurchaseOrder(db, poId);
+    const po = await loadPurchaseOrder(db, poId);
     if (!po) throw new DocumentTrailError('Purchase order not found', 404);
-    const pr = po.requisition_id ? loadRequisition(db, po.requisition_id) : null;
+    const pr = po.requisition_id ? await loadRequisition(db, po.requisition_id) : null;
     return { requisition: pr, purchaseOrder: po };
   }
 
   if (poNumber) {
-    const po = db.prepare(`
+    const po = await db.prepare(`
       SELECT id FROM purchase_orders WHERE po_number = ? COLLATE NOCASE
     `).get(poNumber);
     if (!po) throw new DocumentTrailError('Purchase order not found', 404);
-    const full = loadPurchaseOrder(db, po.id);
-    const pr = full.requisition_id ? loadRequisition(db, full.requisition_id) : null;
+    const full = await loadPurchaseOrder(db, po.id);
+    const pr = full.requisition_id ? await loadRequisition(db, full.requisition_id) : null;
     return { requisition: pr, purchaseOrder: full };
   }
 
   if (q) {
-    const prExact = db.prepare(`
+    const prExact = await db.prepare(`
       SELECT id FROM purchase_requisitions WHERE pr_number = ? COLLATE NOCASE
     `).get(q);
     if (prExact) {
-      return { requisition: loadRequisition(db, prExact.id), purchaseOrder: null };
+      return { requisition: await loadRequisition(db, prExact.id), purchaseOrder: null };
     }
 
-    const poExact = db.prepare(`
+    const poExact = await db.prepare(`
       SELECT id FROM purchase_orders WHERE po_number = ? COLLATE NOCASE
     `).get(q);
     if (poExact) {
-      const full = loadPurchaseOrder(db, poExact.id);
-      const pr = full.requisition_id ? loadRequisition(db, full.requisition_id) : null;
+      const full = await loadPurchaseOrder(db, poExact.id);
+      const pr = full.requisition_id ? await loadRequisition(db, full.requisition_id) : null;
       return { requisition: pr, purchaseOrder: full };
     }
 
-    const invoiceExact = db.prepare(`
+    const invoiceExact = await db.prepare(`
       SELECT po_id FROM invoices WHERE invoice_number = ? COLLATE NOCASE
     `).all(q);
     if (invoiceExact.length === 1) {
-      const full = loadPurchaseOrder(db, invoiceExact[0].po_id);
-      const pr = full.requisition_id ? loadRequisition(db, full.requisition_id) : null;
+      const full = await loadPurchaseOrder(db, invoiceExact[0].po_id);
+      const pr = full.requisition_id ? await loadRequisition(db, full.requisition_id) : null;
       return { requisition: pr, purchaseOrder: full };
     }
 
@@ -720,12 +727,12 @@ function resolveStartingDocument(db, query = {}) {
   );
 }
 
-export function getDocumentTrail(db, query = {}) {
-  const { requisition, purchaseOrder } = resolveStartingDocument(db, query);
+export async function getDocumentTrail(db, query = {}) {
+  const { requisition, purchaseOrder } = await resolveStartingDocument(db, query);
 
   if (requisition) {
-    const approvals = loadApprovals(db, requisition.id);
-    const poRows = db.prepare(`
+    const approvals = await loadApprovals(db, requisition.id);
+    const poRows = await db.prepare(`
       SELECT
         po.*,
         s.name as supplier_name,
@@ -737,7 +744,7 @@ export function getDocumentTrail(db, query = {}) {
       WHERE po.requisition_id = ?
       ORDER BY po.id ASC
     `).all(requisition.id);
-    const purchaseOrders = loadPurchaseOrderBranches(db, poRows);
+    const purchaseOrders = await loadPurchaseOrderBranches(db, poRows);
     return buildTrailPayload({
       startingPoint: {
         type: 'requisition',
@@ -750,7 +757,7 @@ export function getDocumentTrail(db, query = {}) {
     });
   }
 
-  const purchaseOrders = loadPurchaseOrderBranches(db, [purchaseOrder]);
+  const purchaseOrders = await loadPurchaseOrderBranches(db, [purchaseOrder]);
   return buildTrailPayload({
     startingPoint: {
       type: 'purchase_order',
