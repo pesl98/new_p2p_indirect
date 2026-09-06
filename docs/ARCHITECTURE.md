@@ -11,7 +11,7 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
         → Convert to PO(s) (one issued PO per resolved supplier)
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice → dual match
-        → AP approve (relieve commit / book actual) → Mark paid
+        → Exception workbench (hard failures only) → AP approve → Mark paid
 ```
 
 | Stage | What happens |
@@ -23,7 +23,8 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 | Goods receipt | Goods lines only. Increments `po_items.quantity_received`. Over-receipt is blocked unless `allow_over_receipt: true`. Numbered `GRN-YYYY-NNN`. Service lines are rejected (use SES). |
 | Service entry sheet | Service lines only. Draft → submitted → accepted/rejected. Accept increments `po_items.quantity_accepted`. Over-acceptance is blocked unless `allow_over_acceptance: true`. Numbered `SES-YYYY-NNN`. |
 | Invoice | Unique per `(supplier_id, invoice_number)`. Dual match: goods 3-way vs GRN; services SES-backed vs accepted SES. |
-| AP approve | Relieves committed, increases `actual_spent` by invoice total (cents). |
+| Exception workbench | Hard match failures (`variance_flagged`) require a structured AP disposition before approve/pay. |
+| AP approve | Relieves committed, increases `actual_spent` by invoice total (cents). Refuses unresolved hard exceptions and rejected invoices. |
 
 ## Money (integer cents)
 
@@ -155,6 +156,36 @@ Price:
 
 Overall invoice `match_status`: `perfect_match` | `tolerated_match` | `quantity_variance` | `price_variance` | `total_variance`.
 
+## Invoice exception workbench
+
+World-class P2P treats match exceptions as an AP control point, not a free-text note on Approve for Payment. ProcureFlow’s workbench is that queue.
+
+**Hard queue (default `GET /api/invoice-exceptions?queue=open`):** invoices with status `variance_flagged` — i.e. overall `quantity_variance`, `price_variance`, or `total_variance`. These cannot be approved or marked paid until resolved.
+
+**`tolerated_match` is not in the queue.** Those invoices already have status `matched` (soft 1% price warning). They proceed to AP approve without a disposition. Warnings remain on the match matrix. This matches Coupa/Ariba “soft hold vs hard exception”: only failing matches block STP.
+
+Queue filters: `open` (default), `resolved` (terminal dispositions only), `all` (open plus any invoice that has a disposition row).
+
+Structured dispositions (`POST /api/invoice-exceptions/:id/resolve`) require `reason` and `actor_name` (persona name; still client-only demo auth). Integer cents throughout. Written to `invoice_exception_dispositions` and `audit_logs`:
+
+| Disposition | Invoice status | Approve / pay |
+| --- | --- | --- |
+| `accept_variance` | `matched` (block cleared). `match_status` stays the engine result. Records `accepted_total_cents` = billed invoice total and `accepted_match_status`. | Approve may proceed. No second override path. |
+| `reject_invoice` | `rejected` (terminal). | Approve and mark-paid refuse. |
+| `return_to_buyer` | Stays `variance_flagged`. Audit/park only. | Still blocked. May later accept or reject. Not listed under `resolved`. |
+
+`approveInvoicePayment` / `markInvoicePaid` fail closed:
+
+- `variance_flagged` → 400 (unresolved exception)
+- `rejected` → 400 (permanent)
+- mark-paid also requires status `approved_for_payment` (cannot skip approve)
+
+The previous free-text `override_reason` on approve is a note only and does **not** unlock a hard exception.
+
+Detail (`GET /api/invoice-exceptions/:id` and `GET /api/invoices/:id`) includes `match_results`, GRN/SES receipt basis already used by match, and prior dispositions. Document trail timeline includes exception audit actions (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`) when present — it does not invent them.
+
+Demo: **INV-TSG-11029** (`PO-2026-002`, total variance) is open for David/Elena. **INV-FCJ-7701** is an already-accepted price variance (`accepted_total_cents` = 29800). **INV-WED-9042** / PR-2026-001 remains the paid happy path.
+
 ## Document numbers
 
 `PR-` / `PO-` / `GRN-` / `SES-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, and `ses_number` are UNIQUE.
@@ -175,6 +206,7 @@ Response includes:
 - GRNs and SES rows (or `not_started` / `not_applicable` on the branch)
 - Invoices with `match_status`
 - AP approve / paid rows taken only from invoice `audit_logs` (`APPROVED_PAYMENT`, `APPROVED_FOR_PAYMENT`, `PAID`)
+- Exception dispositions, when present, from the same invoice `audit_logs` (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`)
 
 The Document trail sidebar screen opens this payload as a stage strip + vertical timeline, with click-through to the existing PR / PO / GRN / SES / invoice tabs.
 
@@ -203,7 +235,7 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success), and the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events).
+Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 
@@ -211,6 +243,8 @@ Tests cover money/match, sequential approvals, budget fail/override, GRN over-re
 - Convert-time per-line supplier override (`supplier_mappings`) is API-only; the demo UI does not collect a vendor remap at convert.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
+- Exception workbench does not short-pay (no payable-amount rewrite). Accept records the billed cents; reject blocks; return-to-buyer parks. There is no buyer inbox — return is an AP audit disposition only.
+- `tolerated_match` invoices are not hard-queued; AP can still approve them from Invoices & Matching without a workbench disposition.
 
 ## Local vs Vercel / Turso
 

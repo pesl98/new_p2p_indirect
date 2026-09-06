@@ -5,6 +5,7 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'invoice_exception_dispositions',
   'match_results',
   'invoice_items',
   'invoices',
@@ -126,6 +127,7 @@ await db.transaction(async () => {
   //   PR-2026-001 — complete goods path: PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid
   //   PR-2026-005 — complete service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched)
   //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
+  // Exception workbench: INV-TSG-11029 is open (David resolves); INV-FCJ-7701 is already accept_variance.
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -265,6 +267,23 @@ await db.transaction(async () => {
   );
   await insertPOItem.run(4, 4, null, 'Figma Organization Annual User License', 'Software & Cloud', 2, 54000, 108000, 0, 0);
 
+  // Already-resolved exception demo (price variance accepted). Not on the PR-2026-001 path.
+  await insertPO.run(
+    5,
+    'PO-2026-005',
+    null,
+    4,
+    3,
+    'received',
+    29000,
+    '2026-09-01',
+    '2026-09-08',
+    'Net 30',
+    'Acme Corp HQ - Facilities Closet, 450 Tech Blvd, Austin, TX 78701',
+    'Sanitizer stand restock. Used for Exception Workbench resolved-example seed.'
+  );
+  await insertPOItem.run(5, 5, null, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO', 2, 14500, 29000, 2, 2);
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -280,6 +299,9 @@ await db.transaction(async () => {
 
   await insertGRN.run(2, 'GRN-2026-002', 2, 3, '2026-09-03', 'UPS-1Z999999999', 'DN-TSG-4412', 'Partial delivery: 2 monitors delivered; 2 remain on backorder.');
   await insertGRNItem.run(2, 2, 2, 'good', 'Boxes intact, serial numbers logged.');
+
+  await insertGRN.run(3, 'GRN-2026-003', 5, 3, '2026-09-04', 'GSO-4411982', 'DN-FCJ-1904', 'Both sanitizer stands received and staged in the facilities closet.');
+  await insertGRNItem.run(3, 5, 2, 'good', 'Units assembled; no damage.');
 
   await db.exec(`
     UPDATE po_items
@@ -387,6 +409,41 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(3, 3, 'SOC 2 Type II Annual Security Penetration Test', 1, 1250000, 1250000);
   await insertMatch.run(3, 3, 3, 1, 1, 1, 1250000, 1250000, 0, 0, 'pass', 'Exact SES-backed match: 1 units at $12500.00 matches PO & accepted service entry sheet.');
 
+  // Resolved exception example: billed $149.00 vs PO $145.00 (400¢ > 145¢ 1% band).
+  // Status is matched after accept_variance; match_status stays price_variance.
+  await insertInvoice.run(
+    4,
+    'INV-FCJ-7701',
+    5,
+    4,
+    '2026-09-05',
+    '2026-10-05',
+    29800,
+    0,
+    29800,
+    'matched',
+    'price_variance',
+    null,
+    'Price variance accepted in Exception Workbench. Billed $149.00 vs PO $145.00 (400¢).'
+  );
+  await insertInvoiceItem.run(4, 5, 'Commercial Touchless Sanitizer & Dispenser Stand', 2, 14900, 29800);
+  await insertMatch.run(4, 5, 5, 2, 2, 2, 14500, 14900, 0, 400, 'fail', 'Price discrepancy: Billed at $149.00 vs authorized PO price $145.00 (+2.76%).');
+
+  const insertDisposition = db.prepare(`
+    INSERT INTO invoice_exception_dispositions (
+      invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  await insertDisposition.run(
+    4,
+    'accept_variance',
+    'Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.',
+    'David Miller',
+    29800,
+    'price_variance',
+    '2026-09-06 09:30:00'
+  );
+
   // 11. Audit Logs
   const insertAudit = db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
@@ -407,6 +464,8 @@ await db.transaction(async () => {
   await insertAudit.run('service_entry_sheet', 1, 'CREATED', 'Alice Chen', 'SES-2026-001 recorded acceptance of SOC 2 engagement', '-2 days');
   await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003 (1 unit)', '-2 days');
   await insertAudit.run('invoice', 3, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-AAD-5501 SES-backed match passed (PO+SES+invoice)', '-1 days');
+  await insertAudit.run('invoice', 4, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-7701 flagged price_variance (400¢ over PO)', '-1 days');
+  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '0 days');
   await insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
   await insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
 
@@ -427,6 +486,12 @@ await db.transaction(async () => {
     UPDATE purchase_orders SET created_at = '2026-08-26 10:00:00' WHERE id = 3;
     UPDATE service_entry_sheets SET created_at = '2026-09-21 09:00:00' WHERE id = 1;
     UPDATE invoices SET created_at = '2026-09-22 11:00:00' WHERE id = 3;
+
+    UPDATE purchase_orders SET created_at = '2026-09-01 10:00:00' WHERE id = 5;
+    UPDATE goods_receipts SET created_at = '2026-09-04 14:00:00' WHERE id = 3;
+    UPDATE invoices SET created_at = '2026-09-05 11:00:00' WHERE id = 4;
+    UPDATE audit_logs SET created_at = '2026-09-06 09:30:00'
+      WHERE entity_type = 'invoice' AND entity_id = 4 AND action = 'EXCEPTION_ACCEPT_VARIANCE';
   `);
 
 });

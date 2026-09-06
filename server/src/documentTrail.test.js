@@ -338,4 +338,29 @@ describe('document trail — edge lookups', () => {
     assert.equal(invoices.invoices[0].invoice_number, 'INV-WED-9042');
     assert.match(all.requisitions[0].created_at, /^\d{4}-\d{2}-\d{2}T/);
   });
+
+  test('exception audit rows appear on the invoice timeline without becoming AP payment events', async () => {
+    const db = await createTestDb();
+    await seedStandalonePo(db);
+    await db.exec(`
+      INSERT INTO invoices
+        (id, invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, created_at)
+      VALUES
+        (20, 'INV-EX-1', 2, 1, '2026-09-05', '2026-10-05', 319600, 0, 319600, 'matched', 'total_variance', '2026-09-05 11:00:00');
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
+      VALUES
+        ('invoice', 20, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted total_variance on billed total $3196.00', '2026-09-06 09:00:00');
+    `);
+
+    const trail = await getDocumentTrail(db, { po_number: 'PO-2026-002' });
+    const invoice = trail.purchase_orders[0].invoices[0];
+    assert.equal(invoice.exception_events.length, 1);
+    assert.equal(invoice.exception_events[0].action, 'EXCEPTION_ACCEPT_VARIANCE');
+    assert.equal(invoice.ap_events.length, 0);
+    const exceptionEvent = trail.timeline.find((event) => event.kind === 'exception');
+    assert.ok(exceptionEvent);
+    assert.equal(exceptionEvent.title, 'Exception accepted');
+    assert.equal(exceptionEvent.tab, 'exception_workbench');
+    assert.equal(exceptionEvent.amount_cents, 319600);
+  });
 });

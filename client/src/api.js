@@ -204,6 +204,22 @@ export const api = {
     return jsonOk(r, 'Failed to mark invoice paid');
   },
 
+  getInvoiceExceptions: (queue = 'open') => {
+    const params = new URLSearchParams();
+    if (queue) params.append('queue', queue);
+    return fetch(`${API_BASE}/invoice-exceptions?${params.toString()}`).then((r) => jsonOk(r, 'Failed to load exception queue'));
+  },
+  getInvoiceExceptionDetail: (id) =>
+    fetch(`${API_BASE}/invoice-exceptions/${id}`).then((r) => jsonOk(r, 'Failed to load exception detail')),
+  resolveInvoiceException: async (id, data) => {
+    const r = await fetch(`${API_BASE}/invoice-exceptions/${id}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to resolve invoice exception');
+  },
+
   // Document trail (PR → approvals → PO(s) → GRN/SES → invoice → AP)
   searchDocumentTrail: (q = '') => {
     const params = new URLSearchParams();

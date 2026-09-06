@@ -1,5 +1,6 @@
 import express from 'express';
-import { createVendorInvoice, approveInvoicePayment } from '../invoicesService.js';
+import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from '../invoicesService.js';
+import { attachExceptionToInvoice } from '../invoiceExceptionsService.js';
 
 const router = express.Router();
 
@@ -117,13 +118,13 @@ router.get('/:id', async (req, res) => {
       ORDER BY ses.id DESC
     `).all(invoice.po_id);
 
-    res.json({
+    res.json(await attachExceptionToInvoice(db, {
       ...invoice,
       items,
       match_results: matchResults,
       receipts,
       service_entry_sheets: serviceSheets
-    });
+    }));
   } catch (error) {
     httpError(res, error);
   }
@@ -159,23 +160,8 @@ router.post('/:id/approve-payment', async (req, res) => {
 // Mark invoice as Paid
 router.post('/:id/mark-paid', async (req, res) => {
   try {
-    const db = req.db;
-    const { id } = req.params;
-    const { payment_reference, payer_name } = req.body;
-    const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
-
-    await db.prepare(`
-      UPDATE invoices
-      SET status = 'paid', payment_reference = ?
-      WHERE id = ?
-    `).run(ref, id);
-
-    await db.prepare(`
-      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-      VALUES ('invoice', ?, 'PAID', ?, ?)
-    `).run(id, payer_name || 'Finance Lead', `Marked as paid with reference ${ref}`);
-
-    res.json({ message: 'Invoice marked as paid.', payment_reference: ref });
+    const result = await markInvoicePaid(req.db, req.params.id, req.body);
+    res.json(result);
   } catch (error) {
     httpError(res, error);
   }
