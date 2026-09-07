@@ -93,6 +93,8 @@ describe('POST /api/requisitions', () => {
       assert.equal(pr.items.length, 2);
       assert.equal(pr.items[0].catalog_item_id, 1);
       assert.equal(pr.items[0].unit_price, 349900);
+      assert.equal(pr.items[0].resolved_supplier_id, 1);
+      assert.equal(pr.items[0].resolved_supplier_name, 'TechSupply Global');
       assert.equal(pr.items[1].item_description, 'Q4 Security Audit');
       assert.equal(pr.items[1].line_type, 'service');
       assert.equal(pr.approvals.length, 0);

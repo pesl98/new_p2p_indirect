@@ -1,12 +1,32 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from './db.js';
+import http from 'node:http';
+import { createApp } from './app.js';
+import { loadDbConfig } from './dbConfig.js';
 import {
   convertRequisitionToPurchaseOrders,
   PurchaseOrderError,
   resolveRequisitionItemSupplier,
-  groupItemsBySupplier
+  groupItemsBySupplier,
+  annotateResolvedSupplier,
+  listSupplierRemaps
 } from './purchaseOrdersService.js';
+
+function withServer(app, fn) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(app);
+    server.listen(0, '127.0.0.1', async () => {
+      try {
+        const { port } = server.address();
+        await fn(`http://127.0.0.1:${port}`);
+        server.close(() => resolve());
+      } catch (error) {
+        server.close(() => reject(error));
+      }
+    });
+  });
+}
 
 
 async function createTestDb() {
@@ -91,6 +111,48 @@ describe('supplier resolution', () => {
     ]);
     assert.equal(groups.size, 0);
     assert.equal(unresolved.length, 1);
+  });
+
+  test('annotateResolvedSupplier uses estimated then catalog preferred', async () => {
+    const fromEstimated = annotateResolvedSupplier({
+      id: 1,
+      estimated_supplier_id: 2,
+      estimated_supplier_name: 'CloudCore Software LLC',
+      catalog_preferred_supplier_id: 3,
+      catalog_preferred_supplier_name: 'WorkSpace Ergonomics Depot'
+    });
+    assert.equal(fromEstimated.resolved_supplier_id, 2);
+    assert.equal(fromEstimated.resolved_supplier_name, 'CloudCore Software LLC');
+
+    const fromCatalog = annotateResolvedSupplier({
+      id: 2,
+      estimated_supplier_id: null,
+      catalog_preferred_supplier_id: 3,
+      catalog_preferred_supplier_name: 'WorkSpace Ergonomics Depot'
+    });
+    assert.equal(fromCatalog.resolved_supplier_id, 3);
+    assert.equal(fromCatalog.resolved_supplier_name, 'WorkSpace Ergonomics Depot');
+
+    const missing = annotateResolvedSupplier({ id: 3, estimated_supplier_id: null });
+    assert.equal(missing.resolved_supplier_id, null);
+    assert.equal(missing.resolved_supplier_name, null);
+  });
+
+  test('listSupplierRemaps ignores mappings that match the default vendor', async () => {
+    const remaps = listSupplierRemaps(
+      [
+        { id: 10, item_description: 'Monitor', estimated_supplier_id: 1 },
+        { id: 11, item_description: 'Chair', estimated_supplier_id: 3 }
+      ],
+      [
+        { requisition_item_id: 10, supplier_id: 1 },
+        { requisition_item_id: 11, supplier_id: 2 }
+      ]
+    );
+    assert.equal(remaps.length, 1);
+    assert.equal(remaps[0].requisition_item_id, 11);
+    assert.equal(remaps[0].from_supplier_id, 3);
+    assert.equal(remaps[0].to_supplier_id, 2);
   });
 });
 
@@ -244,6 +306,55 @@ describe('convert approved PR to purchase orders', () => {
     const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.equal(created.length, 1);
     assert.equal(created[0].supplier_id, 3);
+  });
+
+  test('convert-time mapping remaps a line onto another vendor and collapses the split', async () => {
+    const db = await createTestDb();
+    const { prId, itemIds } = await insertApprovedPr(db, {
+      items: [
+        {
+          catalog_item_id: 1,
+          item_description: 'MacBook Pro',
+          category: 'IT Hardware',
+          quantity: 1,
+          unit_price: 349900,
+          total_price: 349900,
+          estimated_supplier_id: 1
+        },
+        {
+          catalog_item_id: 2,
+          item_description: 'Aeron Chair',
+          category: 'Office Supplies',
+          quantity: 1,
+          unit_price: 129500,
+          total_price: 129500,
+          estimated_supplier_id: 3
+        }
+      ]
+    });
+
+    const created = await convertRequisitionToPurchaseOrders(db, {
+      requisition_id: prId,
+      created_by: 3,
+      supplier_mappings: [{ requisition_item_id: itemIds[1], supplier_id: 1 }]
+    });
+    assert.equal(created.length, 1);
+    assert.equal(created[0].supplier_id, 1);
+    assert.equal(created[0].total_amount, 479400);
+    assert.equal(created[0].item_count, 2);
+
+    const poItems = db.prepare(`SELECT requisition_item_id FROM po_items WHERE po_id = ? ORDER BY id`).all(created[0].poId);
+    assert.deepEqual(poItems.map((row) => row.requisition_item_id), itemIds);
+
+    const audit = db.prepare(`
+      SELECT * FROM audit_logs
+      WHERE entity_type = 'requisition' AND entity_id = ? AND action = 'CONVERTED_TO_PO'
+    `).get(prId);
+    assert.ok(audit);
+    assert.match(audit.details, /Convert remaps/);
+    assert.match(audit.details, /Aeron Chair/);
+    assert.match(audit.details, /WorkSpace Ergonomics Depot/);
+    assert.match(audit.details, /TechSupply Global/);
   });
 
   test('explicit convert-time mapping can supply a missing vendor', async () => {
@@ -418,5 +529,96 @@ describe('convert approved PR to purchase orders', () => {
 
     const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.deepEqual(created.map((po) => po.poNumber), ['PO-2026-005', 'PO-2026-006']);
+  });
+});
+
+describe('POST /api/purchase-orders/from-requisition', () => {
+  test('accepts supplier_mappings and returns the issued PO list', async () => {
+    const db = await createTestDb();
+    const { prId, itemIds } = await insertApprovedPr(db, {
+      items: [
+        {
+          catalog_item_id: 1,
+          item_description: 'MacBook Pro',
+          category: 'IT Hardware',
+          quantity: 1,
+          unit_price: 349900,
+          total_price: 349900,
+          estimated_supplier_id: 1
+        },
+        {
+          catalog_item_id: 2,
+          item_description: 'Aeron Chair',
+          category: 'Office Supplies',
+          quantity: 1,
+          unit_price: 129500,
+          total_price: 129500,
+          estimated_supplier_id: 3
+        }
+      ]
+    });
+    const app = createApp({ db, config: loadDbConfig({}) });
+
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}/api/purchase-orders/from-requisition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requisition_id: prId,
+          created_by: 3,
+          supplier_mappings: [
+            { requisition_item_id: itemIds[0], supplier_id: 1 },
+            { requisition_item_id: itemIds[1], supplier_id: 2 }
+          ]
+        })
+      });
+      const body = await response.json();
+      assert.equal(response.status, 201, body.error || 'expected 201');
+      assert.equal(body.split, true);
+      assert.equal(body.purchase_orders.length, 2);
+      assert.deepEqual(body.purchase_orders.map((po) => po.supplier_id), [1, 2]);
+      assert.equal(body.purchase_orders[1].supplier_name, 'CloudCore Software LLC');
+      assert.match(body.message, /2 purchase orders/i);
+
+      const detail = await fetch(`${base}/api/requisitions/${prId}`);
+      const pr = await detail.json();
+      assert.equal(pr.status, 'converted_to_po');
+      assert.equal(pr.items[0].resolved_supplier_id, 1);
+      assert.equal(pr.purchase_orders.length, 2);
+    });
+  });
+
+  test('fails closed with HTTP 400 when a line has no resolvable supplier', async () => {
+    const db = await createTestDb();
+    const { prId } = await insertApprovedPr(db, {
+      items: [
+        {
+          catalog_item_id: null,
+          item_description: 'Mystery service',
+          category: 'Consulting & Professional Services',
+          quantity: 1,
+          unit_price: 10000,
+          total_price: 10000,
+          estimated_supplier_id: null,
+          line_type: 'service'
+        }
+      ]
+    });
+    const app = createApp({ db, config: loadDbConfig({}) });
+
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}/api/purchase-orders/from-requisition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requisition_id: prId, created_by: 3 })
+      });
+      const body = await response.json();
+      assert.equal(response.status, 400);
+      assert.match(body.error, /no resolvable supplier/i);
+      assert.match(body.error, /Mystery service/);
+
+      const pr = db.prepare(`SELECT status FROM purchase_requisitions WHERE id = ?`).get(prId);
+      assert.equal(pr.status, 'approved');
+    });
   });
 });

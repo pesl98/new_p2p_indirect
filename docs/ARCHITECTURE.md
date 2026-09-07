@@ -70,14 +70,16 @@ Waiting steps do not appear in the approver inbox (list defaults to `status=pend
 3. **Fail closed (HTTP 400)** if any line has no resolvable supplier. Header-level `supplier_id` is **not** a silent default (the previous path used `first line || 1` and invented a vendor).
 4. Group lines by resolved supplier. Single-supplier PRs still create exactly one PO.
 5. In one transaction: allocate each `PO-YYYY-NNN` via existing MAX-suffix numbering, write per-PO totals in integer cents, copy lines with `requisition_item_id` preserved, share `requisition_id`, then mark the PR `converted_to_po`.
-6. Audit: each PO is `ISSUED`; the PR gets `CONVERTED_TO_PO` (one supplier) or `SPLIT_CONVERTED_TO_PO` (N suppliers, listing PO numbers and vendor names).
+6. Audit: each PO is `ISSUED`; the PR gets `CONVERTED_TO_PO` (one supplier) or `SPLIT_CONVERTED_TO_PO` (N suppliers, listing PO numbers and vendor names). Convert-time remaps that differ from the default vendor are appended to that PR audit row.
 7. Response is `{ purchase_orders: [...], split, message }` — a list, not a single `poId`.
 
 PR detail returns `purchase_orders` (array). `purchase_order` remains the first linked PO for older clients.
 
 Demo seed: **PR-2026-001** is the complete goods document-trail happy path (`PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid`). **PR-2026-002** is a single-supplier approved convert; **PR-2026-006** is an approved TechSupply + WorkSpace split for Carol to convert — after convert the trail shows two PO branches. Existing SES/GRN demo POs (`PO-2026-003`, `PO-2026-004`, etc.) are unchanged. **PR-2026-005** is the service path (`PO-2026-003 → SES-2026-001 → INV-AAD-5501`).
 
-Remaining edge: convert-time `supplier_mappings` is API-only in this demo (the UI does not collect a per-line vendor override). Ad-hoc PR lines still default to a supplier on create (`estimated_supplier_id || 1`); convert itself does not invent one.
+The convert UI (`client/src/components/ConvertRequisitionModal.jsx`) is the Coupa/Ariba-style vendor assignment step. From an approved PR (Requisitions **Convert to PO**, or Purchase Orders **Convert Approved PR**), each line shows its resolved default supplier and a picker to override it. Confirm posts the existing `POST /api/purchase-orders/from-requisition` body including `supplier_mappings` — there is no second convert path. The response list of issued POs is shown in the same modal. Clearing a line’s supplier fails closed in the UI with the same missing-supplier rule as the API. Single-supplier PRs keep the default vendor and convert in one confirm. Ad-hoc PR lines still default to a supplier on create (`estimated_supplier_id || 1`); convert itself does not invent one.
+
+PR detail items include `resolved_supplier_id` / `resolved_supplier_name` (same resolution order, before convert-time mappings) so the UI and API share one default. When a picker remaps a line, the PR `CONVERTED_TO_PO` / `SPLIT_CONVERTED_TO_PO` audit row records the remap.
 
 ## Budget commitment control
 
@@ -235,12 +237,11 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; PR status only converts after success), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
+Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 
 - **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary.
-- Convert-time per-line supplier override (`supplier_mappings`) is API-only; the demo UI does not collect a vendor remap at convert.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
 - Exception workbench does not short-pay (no payable-amount rewrite). Accept records the billed cents; reject blocks; return-to-buyer parks. There is no buyer inbox — return is an AP audit disposition only.

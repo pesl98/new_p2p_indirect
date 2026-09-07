@@ -16,20 +16,16 @@ import {
 import { api } from '../api';
 import { formatMoney } from '../money';
 import { isServiceLine, lineTypeLabel } from '../lineType';
+import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 
-export default function PurchaseOrdersView({ currentUser, onNavigate, focusId }) {
+export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, convertRequisitionId }) {
   const [orders, setOrders] = useState([]);
   const [approvedPRs, setApprovedPRs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedPO, setSelectedPO] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedPRForPO, setSelectedPRForPO] = useState(null);
-  const [selectedPRDetail, setSelectedPRDetail] = useState(null);
-  const [convertResult, setConvertResult] = useState(null);
+  const [convertTargetId, setConvertTargetId] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
-  const [shippingAddress, setShippingAddress] = useState('Acme HQ - Receiving Bay 2, 450 Tech Blvd, Austin, TX 78701');
-  const [poNotes, setPoNotes] = useState('');
-  const [customTerms, setCustomTerms] = useState('Net 30');
 
   const loadData = async () => {
     setLoading(true);
@@ -59,6 +55,13 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId })
     }
   }, [focusId]);
 
+  useEffect(() => {
+    if (convertRequisitionId) {
+      setConvertTargetId(convertRequisitionId);
+      setShowCreateModal(true);
+    }
+  }, [convertRequisitionId]);
+
   const handleOpenDetail = async (id) => {
     try {
       const detail = await api.getPurchaseOrderDetail(id);
@@ -68,65 +71,9 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId })
     }
   };
 
-  const handleSelectPRForPO = async (pr) => {
-    setSelectedPRForPO(pr);
-    try {
-      const detail = await api.getRequisitionDetail(pr.id);
-      setSelectedPRDetail(detail);
-    } catch (err) {
-      console.error(err);
-      setSelectedPRDetail(null);
-    }
-  };
-
-  const resolvedSupplierId = (item) => item.estimated_supplier_id || item.catalog_preferred_supplier_id || null;
-
-  const resolvedSupplierName = (item) => {
-    if (item.estimated_supplier_name) return item.estimated_supplier_name;
-    if (item.catalog_preferred_supplier_name) return item.catalog_preferred_supplier_name;
-    const sid = resolvedSupplierId(item);
-    return suppliers.find((s) => s.id === sid)?.name || null;
-  };
-
-  const previewGroups = (selectedPRDetail?.items || []).reduce((acc, item) => {
-    const sid = resolvedSupplierId(item);
-    const key = sid || 'unresolved';
-    if (!acc[key]) {
-      acc[key] = {
-        supplier_id: sid,
-        supplier_name: resolvedSupplierName(item) || 'No resolvable supplier',
-        items: [],
-        total: 0
-      };
-    }
-    acc[key].items.push(item);
-    acc[key].total += Number(item.total_price) || 0;
-    return acc;
-  }, {});
-
-  const previewList = Object.values(previewGroups);
-  const unresolvedPreviewCount = (selectedPRDetail?.items || []).filter((item) => !resolvedSupplierId(item)).length;
-
-  const handleCreatePOFromPR = async (pr) => {
-    try {
-      const result = await api.createPOFromRequisition({
-        requisition_id: pr.id,
-        created_by: currentUser?.id || 3,
-        shipping_address: shippingAddress,
-        notes: poNotes || `Standard PO generated from approved requisition ${pr.pr_number}`,
-        payment_terms: customTerms
-      });
-      setShowCreateModal(false);
-      setSelectedPRForPO(null);
-      setSelectedPRDetail(null);
-      setConvertResult(result);
-      await loadData();
-      if (result.purchase_orders?.length === 1) {
-        handleOpenDetail(result.purchase_orders[0].poId);
-      }
-    } catch (err) {
-      alert(err.message);
-    }
+  const openConvertModal = (requisitionId = null) => {
+    setConvertTargetId(requisitionId);
+    setShowCreateModal(true);
   };
 
   const getStatusBadge = (status) => {
@@ -160,7 +107,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId })
         <div className="flex items-center space-x-3">
           {approvedPRs.length > 0 && (
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => openConvertModal()}
               className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-2"
             >
               <Plus className="w-4 h-4" />
@@ -268,165 +215,25 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId })
         </div>
       </div>
 
-      {/* Convert Approved Requisitions Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Issue Purchase Order(s) from Approved PR</h3>
-                <p className="text-xs text-slate-500">Lines are grouped by supplier. A multi-supplier PR issues one PO per vendor.</p>
-              </div>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="py-4 space-y-4 text-xs">
-              <label className="block text-slate-700 font-semibold uppercase tracking-wider text-[11px]">
-                Available Approved Requisitions
-              </label>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {approvedPRs.map(pr => (
-                  <div
-                    key={pr.id}
-                    onClick={() => handleSelectPRForPO(pr)}
-                    className={`p-3 border rounded-xl cursor-pointer transition-all ${
-                      selectedPRForPO?.id === pr.id
-                        ? 'border-indigo-600 bg-indigo-50/50 shadow-sm'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex justify-between items-center font-bold text-slate-900">
-                      <span>{pr.pr_number} - {pr.department_name}</span>
-                      <span className="text-emerald-700 font-extrabold">${formatMoney(pr.total_amount)}</span>
-                    </div>
-                    <p className="text-slate-500 text-[11px] mt-1 line-clamp-1">{pr.justification}</p>
-                  </div>
-                ))}
-              </div>
-
-              {selectedPRForPO && selectedPRDetail && (
-                <div className="space-y-2 pt-3 border-t border-slate-200">
-                  <div className="font-semibold text-slate-700 uppercase tracking-wider text-[11px]">
-                    Supplier split preview
-                  </div>
-                  {previewList.map((group) => (
-                    <div key={group.supplier_id || 'unresolved'} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                      <div className="flex justify-between font-semibold text-slate-900">
-                        <span>{group.supplier_name}</span>
-                        <span className="text-emerald-700">${formatMoney(group.total)}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5">
-                        {group.items.length} line{group.items.length === 1 ? '' : 's'} → one issued PO
-                      </div>
-                    </div>
-                  ))}
-                  {unresolvedPreviewCount > 0 && (
-                    <p className="text-rose-600 text-[11px] font-medium">
-                      {unresolvedPreviewCount} line(s) have no resolvable supplier. Convert will fail closed until a vendor is assigned.
-                    </p>
-                  )}
-                  {previewList.length > 1 && unresolvedPreviewCount === 0 && (
-                    <p className="text-indigo-700 text-[11px] font-medium">
-                      This requisition will issue {previewList.length} purchase orders in one transaction.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {selectedPRForPO && (
-                <div className="space-y-3 pt-3 border-t border-slate-200">
-                  <div>
-                    <label className="block text-slate-600 font-medium mb-1">Delivery / Ship-To Address</label>
-                    <input
-                      type="text"
-                      value={shippingAddress}
-                      onChange={(e) => setShippingAddress(e.target.value)}
-                      className="w-full p-2 border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-600 font-medium mb-1">Purchase Order Notes / Instructions</label>
-                    <input
-                      type="text"
-                      value={poNotes}
-                      placeholder="Special instructions for vendor delivery..."
-                      onChange={(e) => setPoNotes(e.target.value)}
-                      className="w-full p-2 border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-3 border-t border-slate-200">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={!selectedPRForPO}
-                onClick={() => handleCreatePOFromPR(selectedPRForPO)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1"
-              >
-                <span>
-                  {selectedPRDetail && previewList.length > 1
-                    ? `Generate & Issue ${previewList.length} POs`
-                    : 'Generate & Issue PO'}
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {convertResult?.purchase_orders?.length > 0 && !selectedPO && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  {convertResult.purchase_orders.length > 1 ? 'Purchase orders issued' : 'Purchase order issued'}
-                </h3>
-                <p className="text-xs text-slate-500">{convertResult.message}</p>
-              </div>
-              <button onClick={() => setConvertResult(null)} className="text-slate-400 hover:text-slate-700">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="py-4 space-y-2">
-              {convertResult.purchase_orders.map((po) => (
-                <button
-                  key={po.poId}
-                  onClick={() => {
-                    setConvertResult(null);
-                    handleOpenDetail(po.poId);
-                  }}
-                  className="w-full text-left p-3 border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 rounded-xl transition-all"
-                >
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono font-bold text-slate-900">{po.poNumber}</span>
-                    <span className="text-emerald-700 font-extrabold text-xs">${formatMoney(po.total_amount)}</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    {po.supplier_name} · {po.item_count} line{po.item_count === 1 ? '' : 's'}
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div className="flex justify-end pt-3 border-t border-slate-200">
-              <button
-                onClick={() => setConvertResult(null)}
-                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConvertRequisitionModal
+          currentUser={currentUser}
+          approvedPRs={approvedPRs}
+          suppliers={suppliers}
+          initialRequisitionId={convertTargetId}
+          onClose={() => {
+            setShowCreateModal(false);
+            setConvertTargetId(null);
+          }}
+          onConverted={() => {
+            loadData();
+          }}
+          onViewPurchaseOrder={(poId) => {
+            setShowCreateModal(false);
+            setConvertTargetId(null);
+            handleOpenDetail(poId);
+          }}
+        />
       )}
 
       {/* Printable / Formal PO Viewer Modal */}

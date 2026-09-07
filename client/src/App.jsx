@@ -106,6 +106,7 @@ export default function App() {
               currentUser={currentUser}
               onNavigate={handleNavigate}
               focusId={navFocus?.focusId}
+              convertRequisitionId={navFocus?.convertRequisitionId}
             />
           )}
 

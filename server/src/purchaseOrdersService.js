@@ -72,6 +72,61 @@ export function groupItemsBySupplier(items, options = {}) {
   return { groups, unresolved };
 }
 
+/**
+ * Attach the default (pre-mapping) resolved supplier so the convert UI
+ * and PR detail share the same fail-closed resolution as convert.
+ */
+export function annotateResolvedSupplier(item) {
+  const resolvedId = resolveRequisitionItemSupplier(item);
+  let resolvedName = null;
+  if (resolvedId) {
+    if (toPositiveInt(item.estimated_supplier_id) === resolvedId) {
+      resolvedName = item.estimated_supplier_name || null;
+    }
+    if (!resolvedName && toPositiveInt(item.catalog_preferred_supplier_id) === resolvedId) {
+      resolvedName = item.catalog_preferred_supplier_name || null;
+    }
+    if (!resolvedName) {
+      resolvedName = item.resolved_supplier_name || null;
+    }
+  }
+  return {
+    ...item,
+    resolved_supplier_id: resolvedId,
+    resolved_supplier_name: resolvedName
+  };
+}
+
+export function annotateResolvedSuppliers(items) {
+  return (items || []).map(annotateResolvedSupplier);
+}
+
+function mappingSupplierIdForItem(mappings, itemId) {
+  return toPositiveInt(mappingForItem(mappings, itemId));
+}
+
+/**
+ * Lines whose convert-time mapping differs from the default resolved supplier.
+ * Used so CONVERTED_TO_PO / SPLIT_CONVERTED_TO_PO audit rows record remaps.
+ */
+export function listSupplierRemaps(items, supplierMappings) {
+  if (!supplierMappings) return [];
+  const remaps = [];
+  for (const item of items) {
+    const mapped = mappingSupplierIdForItem(supplierMappings, item.id);
+    if (!mapped) continue;
+    const fallback = resolveRequisitionItemSupplier(item);
+    if (fallback === mapped) continue;
+    remaps.push({
+      requisition_item_id: item.id,
+      item_description: item.item_description || `line ${item.id}`,
+      from_supplier_id: fallback,
+      to_supplier_id: mapped
+    });
+  }
+  return remaps;
+}
+
 async function loadRequisitionItems(db, requisitionId) {
   return await db.prepare(`
     SELECT
@@ -143,6 +198,17 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
   const deliveryDate = pr.needed_by_date || new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0];
   const shipTo = shipping_address || 'Acme HQ - Receiving Bay 2, 450 Tech Blvd, Austin, TX 78701';
   const split = supplierIds.length > 1;
+  const remaps = listSupplierRemaps(prItems, supplier_mappings);
+  const remapLabels = [];
+  for (const remap of remaps) {
+    const from = remap.from_supplier_id ? await loadSupplier(db, remap.from_supplier_id) : null;
+    const to = await loadSupplier(db, remap.to_supplier_id);
+    remapLabels.push(
+      remap.from_supplier_id
+        ? `${remap.item_description}: ${from?.name || remap.from_supplier_id} → ${to?.name || remap.to_supplier_id}`
+        : `${remap.item_description}: assigned ${to?.name || remap.to_supplier_id}`
+    );
+  }
 
   return db.transaction(async () => {
     const currentYear = new Date().getFullYear();
@@ -234,6 +300,12 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
       .map((po) => `${po.poNumber} (${po.supplier_name}, ${formatCents(po.total_amount)})`)
       .join('; ');
     const convertAction = split ? 'SPLIT_CONVERTED_TO_PO' : 'CONVERTED_TO_PO';
+    const convertSummary = split
+      ? `Split converted to ${created.length} purchase orders: ${poSummary}`
+      : `Converted to Purchase Order ${created[0].poNumber}`;
+    const details = remapLabels.length > 0
+      ? `${convertSummary}. Convert remaps: ${remapLabels.join('; ')}.`
+      : convertSummary;
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('requisition', ?, ?, ?, ?)
@@ -241,9 +313,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
       requisition_id,
       convertAction,
       actorName,
-      split
-        ? `Split converted to ${created.length} purchase orders: ${poSummary}`
-        : `Converted to Purchase Order ${created[0].poNumber}`
+      details
     );
 
     return created;
