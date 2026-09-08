@@ -10,7 +10,8 @@ import {
   FileSpreadsheet, 
   Landmark, 
   Store,
-  GitBranch
+  GitBranch,
+  ShieldAlert
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -80,6 +81,14 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       desc: 'Automated 3-way reconciliation & AP'
     },
     {
+      id: 'exception_workbench',
+      label: 'Exception Workbench',
+      icon: ShieldAlert,
+      badge: varianceInvoicesCount > 0 ? varianceInvoicesCount : null,
+      badgeColor: 'bg-rose-500 text-white',
+      desc: 'AP triage for dual-match failures'
+    },
+    {
       id: 'document_trail',
       label: 'Document trail',
       icon: GitBranch,
@@ -144,7 +153,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
             <span className="text-[10px] text-emerald-400 font-mono">100% Traceable</span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5">
-            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Invoice Match ➔ Payment
+            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Pay
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>

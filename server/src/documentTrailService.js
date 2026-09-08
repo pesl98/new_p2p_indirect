@@ -5,6 +5,12 @@
 
 const AP_AUDIT_ACTIONS = new Set(['APPROVED_FOR_PAYMENT', 'APPROVED_PAYMENT', 'PAID']);
 
+const EXCEPTION_AUDIT_ACTIONS = {
+  EXCEPTION_ACCEPT_VARIANCE: 'Exception accepted',
+  EXCEPTION_REJECT_INVOICE: 'Exception rejected',
+  EXCEPTION_RETURN_TO_BUYER: 'Returned to buyer'
+};
+
 const KIND_ORDER = {
   requisition: 1,
   approval: 2,
@@ -12,7 +18,8 @@ const KIND_ORDER = {
   goods_receipt: 4,
   service_entry_sheet: 5,
   invoice: 6,
-  ap_event: 7
+  exception: 7,
+  ap_event: 8
 };
 
 export class DocumentTrailError extends Error {
@@ -54,6 +61,7 @@ function tabForKind(kind) {
     case 'service_entry_sheet':
       return 'service_entry';
     case 'invoice':
+    case 'exception':
     case 'ap_event':
       return 'invoices';
     default:
@@ -183,6 +191,26 @@ async function loadApEvents(db, invoiceId) {
     }));
 }
 
+async function loadExceptionEvents(db, invoiceId) {
+  const rows = await db.prepare(`
+    SELECT id, entity_type, entity_id, action, actor_name, details, created_at
+    FROM audit_logs
+    WHERE entity_type = 'invoice' AND entity_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(invoiceId);
+  return rows
+    .filter((row) => Object.prototype.hasOwnProperty.call(EXCEPTION_AUDIT_ACTIONS, row.action))
+    .map((row) => ({
+      id: row.id,
+      invoice_id: invoiceId,
+      action: row.action,
+      title: EXCEPTION_AUDIT_ACTIONS[row.action],
+      actor_name: row.actor_name,
+      details: row.details,
+      created_at: toIsoTimestamp(row.created_at)
+    }));
+}
+
 async function loadInvoiceRows(db, poId) {
   const rows = await db.prepare(`
     SELECT
@@ -222,7 +250,8 @@ async function loadInvoiceRows(db, poId) {
     payment_reference: row.payment_reference,
     notes: row.notes,
     created_at: toIsoTimestamp(row.created_at),
-    ap_events: await loadApEvents(db, row.id)
+    ap_events: await loadApEvents(db, row.id),
+    exception_events: await loadExceptionEvents(db, row.id)
   })));
 }
 
@@ -530,6 +559,28 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
         po_number: po.po_number,
         supplier_name: invoice.supplier_name
       }));
+
+      for (const exception of invoice.exception_events || []) {
+        events.push(timelineEvent({
+          id: `exception:${exception.id}`,
+          kind: 'exception',
+          entity_type: 'invoice',
+          entity_id: invoice.id,
+          number: invoice.invoice_number,
+          title: exception.title,
+          status: exception.action === 'EXCEPTION_REJECT_INVOICE' ? 'rejected' : invoice.status,
+          at: exception.created_at,
+          actor_name: exception.actor_name,
+          details: exception.details,
+          amount_cents: invoice.total_amount,
+          match_status: invoice.match_status,
+          po_id: po.id,
+          po_number: po.po_number,
+          supplier_name: invoice.supplier_name,
+          source: 'audit',
+          tab: 'exception_workbench'
+        }));
+      }
 
       for (const ap of invoice.ap_events) {
         events.push(timelineEvent({

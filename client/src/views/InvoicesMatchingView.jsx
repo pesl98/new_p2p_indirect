@@ -18,7 +18,7 @@ import { api } from '../api';
 import { formatMoney, fromCents, toCents } from '../money';
 import { isServiceLine, lineTypeLabel } from '../lineType';
 
-export default function InvoicesMatchingView({ currentUser, onDataChanged, focusId }) {
+export default function InvoicesMatchingView({ currentUser, onDataChanged, onNavigate, focusId }) {
   const [invoices, setInvoices] = useState([]);
   const [activePOs, setActivePOs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,7 +34,6 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, focus
   const [taxAmount, setTaxAmount] = useState(0);
   const [invoiceNotes, setInvoiceNotes] = useState('');
   const [invoiceLines, setInvoiceLines] = useState([]);
-  const [overrideReason, setOverrideReason] = useState('');
 
   const loadData = async () => {
     setLoading(true);
@@ -66,7 +65,6 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, focus
     try {
       const detail = await api.getInvoiceDetail(id);
       setSelectedInvoice(detail);
-      setOverrideReason('');
     } catch (err) {
       console.error(err);
     }
@@ -154,8 +152,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, focus
   const handleApprovePayment = async (invId) => {
     try {
       await api.approveInvoicePayment(invId, {
-        approver_name: currentUser?.name || 'David Miller (Finance)',
-        override_reason: overrideReason
+        approver_name: currentUser?.name || 'David Miller (Finance)'
       });
       await loadData();
       if (onDataChanged) onDataChanged();
@@ -229,6 +226,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, focus
         return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Paid</span>;
       case 'variance_flagged':
         return <span className="bg-rose-100 text-rose-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">Discrepancy Flagged</span>;
+      case 'rejected':
+        return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">Rejected</span>;
       default:
         return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{status}</span>;
     }
@@ -607,19 +606,48 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, focus
                 </div>
               </div>
 
-              {/* AP Actions & Payment Status */}
+              {selectedInvoice.exception && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 text-indigo-950 space-y-1">
+                  <div className="font-bold text-xs">
+                    Exception disposition: <span className="capitalize">{String(selectedInvoice.exception.disposition).replace(/_/g, ' ')}</span>
+                  </div>
+                  <div className="text-[11px]">
+                    {selectedInvoice.exception.actor_name} — {selectedInvoice.exception.reason}
+                  </div>
+                  {selectedInvoice.exception.accepted_total_cents != null && (
+                    <div className="text-[11px]">
+                      Recorded billed total ${formatMoney(selectedInvoice.exception.accepted_total_cents)}
+                      {selectedInvoice.exception.accepted_match_status
+                        ? ` · ${selectedInvoice.exception.accepted_match_status.replace(/_/g, ' ')}`
+                        : ''}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {selectedInvoice.status === 'variance_flagged' && (
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
-                  <label className="block text-slate-700 font-bold text-[11px]">
-                    Finance / AP Override Approval Reason (Required if overriding variances):
-                  </label>
-                  <input
-                    type="text"
-                    value={overrideReason}
-                    onChange={(e) => setOverrideReason(e.target.value)}
-                    placeholder="e.g. Approved price variance authorized by VP Marketing..."
-                    className="w-full p-2 border border-slate-300 rounded-lg text-xs"
-                  />
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-rose-900 space-y-2">
+                  <div className="font-bold text-xs">Hard exception — approve and pay are blocked</div>
+                  <p className="text-[11px]">
+                    Free-text override on this screen no longer unlocks payment. Take a structured
+                    disposition (accept variance, reject, or return to buyer) in the Exception Workbench.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setSelectedInvoice(null);
+                      onNavigate?.('exception_workbench', { focusId: selectedInvoice.id });
+                    }}
+                    className="px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    <span>Open Exception Workbench</span>
+                  </button>
+                </div>
+              )}
+
+              {selectedInvoice.status === 'rejected' && (
+                <div className="bg-slate-800 text-white rounded-xl p-3.5 text-xs">
+                  This invoice was rejected in the Exception Workbench and cannot be approved or paid.
                 </div>
               )}
             </div>
@@ -640,7 +668,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, focus
                   Close
                 </button>
 
-                {selectedInvoice.status !== 'approved_for_payment' && selectedInvoice.status !== 'paid' && (
+                {selectedInvoice.status === 'matched' && (
                   <button
                     onClick={() => handleApprovePayment(selectedInvoice.id)}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"

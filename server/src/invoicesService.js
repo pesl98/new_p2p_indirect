@@ -1,5 +1,6 @@
 import { asCents, formatCents, lineTotalCents, toQty } from './money.js';
 import { run3WayMatch } from './match.js';
+import { assertCanApprovePayment, assertCanMarkPaid } from './invoiceExceptionsService.js';
 
 /**
  * Persist a vendor invoice, run 3-way match against prior cumulative invoiced
@@ -135,6 +136,10 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
     throw err;
   }
 
+  // Fail closed: free-text override_reason is a note only — it does not unlock
+  // variance_flagged invoices. Accept the exception first.
+  assertCanApprovePayment(invoice);
+
   const approveTransaction = db.transaction(async () => {
     await db.prepare(`
       UPDATE invoices
@@ -164,4 +169,32 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
 
   await approveTransaction();
   return { message: 'Invoice approved for payment successfully.' };
+}
+
+export async function markInvoicePaid(db, id, { payment_reference, payer_name } = {}) {
+  const invoice = await db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(id);
+  if (!invoice) {
+    const err = new Error('Invoice not found.');
+    err.statusCode = 404;
+    throw err;
+  }
+  assertCanMarkPaid(invoice);
+
+  const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
+
+  const payTransaction = db.transaction(async () => {
+    await db.prepare(`
+      UPDATE invoices
+      SET status = 'paid', payment_reference = ?
+      WHERE id = ?
+    `).run(ref, id);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+      VALUES ('invoice', ?, 'PAID', ?, ?)
+    `).run(id, payer_name || 'Finance Lead', `Marked as paid with reference ${ref}`);
+  });
+
+  await payTransaction();
+  return { message: 'Invoice marked as paid.', payment_reference: ref };
 }

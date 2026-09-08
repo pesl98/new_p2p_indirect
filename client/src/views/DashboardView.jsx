@@ -50,12 +50,12 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
             >
               <span>+ New Requisition</span>
             </button>
-            {currentUser?.role === 'finance' && (
+            {(currentUser?.role === 'finance' || currentUser?.role === 'admin') && (
               <button
-                onClick={() => onNavigate('invoices')}
+                onClick={() => onNavigate('exception_workbench')}
                 className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
               >
-                <span>Review Invoice Matches</span>
+                <span>Exception Workbench</span>
               </button>
             )}
           </div>
@@ -129,7 +129,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
 
         {/* 3-Way Match Variances */}
         <div 
-          onClick={() => onNavigate('invoices')}
+          onClick={() => onNavigate('exception_workbench')}
           className="bg-white rounded-xl p-5 border border-slate-200/80 shadow-sm hover:shadow-md transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">

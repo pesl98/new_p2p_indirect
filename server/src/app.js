@@ -13,6 +13,7 @@ import purchaseOrdersRouter from './routes/purchaseOrders.js';
 import goodsReceiptsRouter from './routes/goodsReceipts.js';
 import serviceEntrySheetsRouter from './routes/serviceEntrySheets.js';
 import invoicesRouter from './routes/invoices.js';
+import invoiceExceptionsRouter from './routes/invoiceExceptions.js';
 import analyticsRouter from './routes/analytics.js';
 import documentTrailRouter from './routes/documentTrail.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
@@ -72,6 +73,7 @@ export function createApp(options = {}) {
   app.use('/api/goods-receipts', goodsReceiptsRouter);
   app.use('/api/service-entry-sheets', serviceEntrySheetsRouter);
   app.use('/api/invoices', invoicesRouter);
+  app.use('/api/invoice-exceptions', invoiceExceptionsRouter);
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/document-trail', documentTrailRouter);
 

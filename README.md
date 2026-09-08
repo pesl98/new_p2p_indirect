@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, dual invoice match, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, dual invoice match, invoice exception workbench, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -46,17 +46,26 @@ Control model (integer cents, sequential approvals, dual invoice match, GRN/SES 
    - **Service lines:** PO vs SES-accepted vs invoice. Physical GRN is not required.
    - Mixed POs combine both; overall invoice status reflects any failing line.
    - Price rules unchanged (exact cents, 1% tolerated warning, else fail).
-   - Finance / Accounts Payable review, exception override, and ACH payment release.
+   - Finance / Accounts Payable review and ACH payment release. Hard match failures cannot be approved or paid until the Exception Workbench records a structured disposition.
 
-7. **Department Budgets & Cost Centers**
+7. **Invoice Exception Workbench**
+   - Coupa/Ariba-style AP queue for dual-match failures (`variance_flagged`: quantity / price / total variance).
+   - **`tolerated_match` is not queued** — those invoices are already `matched` and may proceed to approve. Soft warnings stay on the match matrix.
+   - Structured dispositions with required reason + persona name, written to `invoice_exception_dispositions` and `audit_logs` (integer cents):
+     - **accept_variance** — clear the block (`status` → `matched`); billed total recorded as `accepted_total_cents`. Approve may then proceed; no free-text override bypass.
+     - **reject_invoice** — permanently block approve/pay (`status` → `rejected`).
+     - **return_to_buyer** — park with audit; stays in the open queue until accepted or rejected.
+   - Seed: **INV-TSG-11029** is open for David/Elena; **INV-FCJ-7701** is already accepted. **INV-WED-9042** (PR-2026-001) stays the paid happy path.
+
+8. **Department Budgets & Cost Centers**
    - Real-time departmental tracking in cents: Allocated vs. **Committed (on final PR approve)** vs. Actual Spent (AP-approved invoices) vs. Remaining (`total − committed − actual`).
 
-8. **Document trail (P2P lifecycle overview)**
+9. **Document trail (P2P lifecycle overview)**
    - One screen for a buying journey: PR header, sequential approvals, linked PO(s) (multi-supplier split as branches), GRN and/or SES, invoice `match_status`, and AP approve/paid events.
    - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
    - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** to see two PO branches.
 
-9. **Multi-Persona Testing Switcher (demo only — not real auth)**
+10. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
      - **Bob Martinez** (Approver / Dept Head - Marketing Director)
@@ -199,5 +208,6 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
 - `invoices` & `invoice_items`: Supplier billing entries
 - `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
+- `invoice_exception_dispositions`: Structured AP exception resolutions (accept / reject / return-to-buyer)
 - `audit_logs`: Complete immutable event history
 - Document trail is **not** a new table: `GET /api/document-trail` derives the chain from the FKs above plus AP rows in `audit_logs`

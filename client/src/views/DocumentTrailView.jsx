@@ -101,6 +101,8 @@ function eventIcon(kind) {
       return ClipboardCheck;
     case 'invoice':
       return FileSpreadsheet;
+    case 'exception':
+      return FileSpreadsheet;
     case 'ap_event':
       return CreditCard;
     default:

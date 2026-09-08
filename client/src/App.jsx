@@ -8,6 +8,7 @@ import PurchaseOrdersView from './views/PurchaseOrdersView';
 import GoodsReceiptView from './views/GoodsReceiptView';
 import ServiceEntrySheetsView from './views/ServiceEntrySheetsView';
 import InvoicesMatchingView from './views/InvoicesMatchingView';
+import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
 import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
@@ -128,6 +129,16 @@ export default function App() {
             <InvoicesMatchingView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
+              focusId={navFocus?.focusId}
+            />
+          )}
+
+          {activeTab === 'exception_workbench' && (
+            <ExceptionWorkbenchView
+              currentUser={currentUser}
+              onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
               focusId={navFocus?.focusId}
             />
           )}

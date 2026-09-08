@@ -244,6 +244,18 @@ CREATE TABLE IF NOT EXISTS match_results (
   FOREIGN KEY (po_item_id) REFERENCES po_items(id)
 );
 
+CREATE TABLE IF NOT EXISTS invoice_exception_dispositions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL,
+  disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer')),
+  reason TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  accepted_total_cents INTEGER,
+  accepted_match_status TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   entity_type TEXT NOT NULL,
