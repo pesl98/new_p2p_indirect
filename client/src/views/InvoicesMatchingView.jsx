@@ -293,7 +293,12 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       {inv.po_number}
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                      ${formatMoney(inv.total_amount)}
+                      <div>${formatMoney(inv.total_amount)}</div>
+                      {inv.payable_total_cents != null && (
+                        <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
+                          Pay ${formatMoney(inv.payable_total_cents)}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       {getMatchBadge(inv.match_status)}
@@ -481,10 +486,15 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
           <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3 flex-wrap gap-y-2">
                   <h3 className="text-lg font-mono font-bold text-slate-900">{selectedInvoice.invoice_number}</h3>
                   {getMatchBadge(selectedInvoice.match_status)}
                   {getStatusBadge(selectedInvoice.status)}
+                  {selectedInvoice.payable_total_cents != null && (
+                    <span className="bg-amber-100 text-amber-900 text-[11px] font-semibold px-2 py-0.5 rounded-full">
+                      Billed ${formatMoney(selectedInvoice.total_amount)} → Pay ${formatMoney(selectedInvoice.payable_total_cents)}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Vendor: <strong>{selectedInvoice.supplier_name}</strong> • Against <strong>{selectedInvoice.po_number}</strong>
@@ -597,6 +607,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   <div className="font-bold text-slate-900 text-sm">
                     ${formatMoney(selectedInvoice.total_amount)}
                   </div>
+                  {selectedInvoice.payable_total_cents != null && (
+                    <div className="text-[11px] font-semibold text-amber-800 mt-1">
+                      Pay ${formatMoney(selectedInvoice.payable_total_cents)} (short pay)
+                    </div>
+                  )}
                 </div>
                 <div>
                   <span className="text-slate-500 text-[11px]">Department Cost Center:</span>
@@ -616,7 +631,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   </div>
                   {selectedInvoice.exception.accepted_total_cents != null && (
                     <div className="text-[11px]">
-                      Recorded billed total ${formatMoney(selectedInvoice.exception.accepted_total_cents)}
+                      {selectedInvoice.exception.disposition === 'short_pay'
+                        ? `Billed $${formatMoney(selectedInvoice.exception.billed_total_cents ?? selectedInvoice.total_amount)} → Pay $${formatMoney(selectedInvoice.exception.accepted_total_cents)}`
+                        : `Recorded billed total $${formatMoney(selectedInvoice.exception.accepted_total_cents)}`}
                       {selectedInvoice.exception.accepted_match_status
                         ? ` · ${selectedInvoice.exception.accepted_match_status.replace(/_/g, ' ')}`
                         : ''}
@@ -630,7 +647,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   <div className="font-bold text-xs">Hard exception — approve and pay are blocked</div>
                   <p className="text-[11px]">
                     Free-text override on this screen no longer unlocks payment. Take a structured
-                    disposition (accept variance, reject, or return to buyer) in the Exception Workbench.
+                    disposition (accept variance, short pay, reject, or return to buyer) in the Exception Workbench.
                   </p>
                   <button
                     onClick={() => {
@@ -674,7 +691,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Approve for Payment</span>
+                    <span>
+                      {selectedInvoice.payable_total_cents != null
+                        ? `Approve $${formatMoney(selectedInvoice.payable_total_cents)} (short pay)`
+                        : 'Approve for Payment'}
+                    </span>
                   </button>
                 )}
 

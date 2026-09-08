@@ -55,9 +55,10 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
    - **`tolerated_match` is not queued** — those invoices are already `matched` and may proceed to approve. Soft warnings stay on the match matrix.
    - Structured dispositions with required reason + persona name, written to `invoice_exception_dispositions` and `audit_logs` (integer cents):
      - **accept_variance** — clear the block (`status` → `matched`); billed total recorded as `accepted_total_cents`. Approve may then proceed; no free-text override bypass.
+     - **short_pay** — clear the block (`status` → `matched`) and rewrite **payable** below billed. `invoices.total_amount` (vendor claim) is unchanged; `invoices.payable_total_cents` is the amount AP approve/pay and budget actuals use. `accepted_total_cents` on the disposition is the payable amount; `billed_total_cents` stores the billed claim.
      - **reject_invoice** — permanently block approve/pay (`status` → `rejected`).
-     - **return_to_buyer** — park with audit; stays in the open queue until accepted or rejected.
-   - Seed: **INV-TSG-11029** is open for David/Elena; **INV-FCJ-7701** is already accepted. **INV-WED-9042** (PR-2026-001) stays the paid happy path.
+     - **return_to_buyer** — park with audit; stays in the open queue until accepted, short-paid, or rejected.
+   - Seed: **INV-TSG-11029** is open for David/Elena (short-pay practice: billed $3,196.00 → e.g. pay $1,498.00 = 2 received × $749 PO price). **INV-FCJ-7701** is already accepted. **INV-WED-9042** (PR-2026-001) stays the paid happy path.
 
 8. **Department Budgets & Cost Centers**
    - Real-time departmental tracking in cents: Allocated vs. **Committed (on final PR approve)** vs. Actual Spent (AP-approved invoices) vs. Remaining (`total − committed − actual`).
@@ -110,6 +111,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    ```bash
    npm test
    ```
+
+**Short-pay walkthrough (David / Elena):** Exception Workbench → open **INV-TSG-11029** (billed $3,196.00; 4 monitors @ $799 vs 2 received @ PO $749). Choose **Short pay**, enter payable **1498.00** (2 × $749), required reason, confirm. Status becomes `matched`; billed stays $3,196.00; payable is $1,498.00. Invoices & Matching then **Approve for Payment** posts the payable cents (not billed). `match_status` stays `total_variance` — short-pay is a disposition, not a rematch.
 
 ---
 
@@ -208,8 +211,8 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`)
 - `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
-- `invoices` & `invoice_items`: Supplier billing entries
+- `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay)
 - `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
-- `invoice_exception_dispositions`: Structured AP exception resolutions (accept / reject / return-to-buyer)
+- `invoice_exception_dispositions`: Structured AP exception resolutions (accept / short-pay / reject / return-to-buyer)
 - `audit_logs`: Complete immutable event history
 - Document trail is **not** a new table: `GET /api/document-trail` derives the chain from the FKs above plus AP rows in `audit_logs`

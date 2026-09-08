@@ -1,6 +1,6 @@
 import { asCents, formatCents, lineTotalCents, toQty } from './money.js';
 import { run3WayMatch } from './match.js';
-import { assertCanApprovePayment, assertCanMarkPaid } from './invoiceExceptionsService.js';
+import { assertCanApprovePayment, assertCanMarkPaid, invoicePayableCents } from './invoiceExceptionsService.js';
 
 /**
  * Persist a vendor invoice, run 3-way match against prior cumulative invoiced
@@ -140,6 +140,10 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
   // variance_flagged invoices. Accept the exception first.
   assertCanApprovePayment(invoice);
 
+  const billedCents = asCents(invoice.total_amount);
+  const payableCents = invoicePayableCents(invoice);
+  const isShortPay = invoice.payable_total_cents != null && invoice.payable_total_cents !== '';
+
   const approveTransaction = db.transaction(async () => {
     await db.prepare(`
       UPDATE invoices
@@ -147,28 +151,38 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
       WHERE id = ?
     `).run(override_reason ? `Approved with override: ${override_reason}` : invoice.notes, id);
 
-    // Integer cents: relieve committed, increase actual spent.
+    // Integer cents: relieve committed and increase actual spent by payable
+    // (billed when payable_total_cents is NULL).
     if (invoice.department_id) {
       await db.prepare(`
         UPDATE budgets
         SET committed_amount = MAX(0, committed_amount - ?),
             actual_spent = actual_spent + ?
         WHERE department_id = ? AND fiscal_year = 2026
-      `).run(invoice.total_amount, invoice.total_amount, invoice.department_id);
+      `).run(payableCents, payableCents, invoice.department_id);
     }
 
+    const amountNote = isShortPay
+      ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
+      : `$${formatCents(payableCents)}`;
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, 'APPROVED_FOR_PAYMENT', ?, ?)
     `).run(
       id,
       approver_name || 'Finance Specialist',
-      `Approved invoice ${invoice.invoice_number} for $${formatCents(invoice.total_amount)} payment`
+      `Approved invoice ${invoice.invoice_number} for ${amountNote} payment`
     );
   });
 
   await approveTransaction();
-  return { message: 'Invoice approved for payment successfully.' };
+  return {
+    message: isShortPay
+      ? `Invoice approved for payment successfully. Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}.`
+      : 'Invoice approved for payment successfully.',
+    billed_total_cents: billedCents,
+    payable_total_cents: payableCents
+  };
 }
 
 export async function markInvoicePaid(db, id, { payment_reference, payer_name } = {}) {
@@ -181,6 +195,12 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name } 
   assertCanMarkPaid(invoice);
 
   const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
+  const billedCents = asCents(invoice.total_amount);
+  const payableCents = invoicePayableCents(invoice);
+  const isShortPay = invoice.payable_total_cents != null && invoice.payable_total_cents !== '';
+  const amountNote = isShortPay
+    ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
+    : `$${formatCents(payableCents)}`;
 
   const payTransaction = db.transaction(async () => {
     await db.prepare(`
@@ -192,9 +212,16 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name } 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, 'PAID', ?, ?)
-    `).run(id, payer_name || 'Finance Lead', `Marked as paid with reference ${ref}`);
+    `).run(id, payer_name || 'Finance Lead', `Marked as paid with reference ${ref} (${amountNote})`);
   });
 
   await payTransaction();
-  return { message: 'Invoice marked as paid.', payment_reference: ref };
+  return {
+    message: isShortPay
+      ? `Invoice marked as paid. Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}.`
+      : 'Invoice marked as paid.',
+    payment_reference: ref,
+    billed_total_cents: billedCents,
+    payable_total_cents: payableCents
+  };
 }
