@@ -26,10 +26,12 @@ export const api = {
   getAnalytics: () => fetch(`${API_BASE}/analytics`).then(r => r.json()),
 
   // Catalog & Suppliers
-  getCatalog: (category = '', search = '') => {
+  getCatalog: (category = '', search = '', options = {}) => {
     const params = new URLSearchParams();
     if (category) params.append('category', category);
     if (search) params.append('search', search);
+    if (options.status) params.append('status', options.status);
+    if (options.include_inactive) params.append('include_inactive', '1');
     return fetch(`${API_BASE}/catalog?${params.toString()}`).then(r => r.json());
   },
   createCatalogItem: async (item) => {
@@ -40,8 +42,28 @@ export const api = {
     });
     return jsonOk(r, 'Failed to create catalog item');
   },
+  updateCatalogItem: async (id, item) => {
+    const r = await fetch(`${API_BASE}/catalog/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item)
+    });
+    return jsonOk(r, 'Failed to update catalog item');
+  },
+  updateCatalogItemStatus: async (id, status) => {
+    const r = await fetch(`${API_BASE}/catalog/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    return jsonOk(r, 'Failed to update catalog item status');
+  },
 
-  getSuppliers: () => fetch(`${API_BASE}/suppliers`).then(r => r.json()),
+  getSuppliers: (status = '') => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    return fetch(`${API_BASE}/suppliers?${params.toString()}`).then(r => r.json());
+  },
   createSupplier: async (supplier) => {
     const r = await fetch(`${API_BASE}/suppliers`, {
       method: 'POST',
@@ -49,6 +71,22 @@ export const api = {
       body: JSON.stringify(supplier)
     });
     return jsonOk(r, 'Failed to create supplier');
+  },
+  updateSupplier: async (id, supplier) => {
+    const r = await fetch(`${API_BASE}/suppliers/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(supplier)
+    });
+    return jsonOk(r, 'Failed to update supplier');
+  },
+  updateSupplierStatus: async (id, status) => {
+    const r = await fetch(`${API_BASE}/suppliers/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    return jsonOk(r, 'Failed to update supplier status');
   },
 
   // Budgets

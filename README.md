@@ -10,6 +10,7 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
 
 1. **Catalog & Ad-Hoc Requisitions (PR)**
    - Pre-negotiated non-production catalog across 6 categories (IT Hardware, Software & Cloud, Office Supplies, Facilities & MRO, Consulting & Professional Services, Marketing & Events).
+   - **Master-data maintenance (Carol / procurement persona):** edit supplier and catalog fields; **soft-deactivate** (`active` / `inactive` / `under_review` for suppliers; `active` / `inactive` for catalog). No hard delete — `DELETE` returns 405. Supplier `code` is immutable. Requisition browse and buyer pickers show **active** rows only; the Vendors & Catalog admin screen lists all with status badges.
    - Dynamic Cart with direct catalog addition plus ad-hoc/custom order entry.
    - Cost center assignment, delivery requirements, and business justifications.
 
@@ -200,8 +201,8 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `departments`: Cost centers & organizational units
 - `users`: Employees with roles and authorization limits
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures
-- `suppliers`: Approved vendor repository with payment terms & ratings
-- `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service)
+- `suppliers`: Approved vendor repository with payment terms, ratings, and `status` (`active` | `inactive` | `under_review`). Edit via `PATCH /api/suppliers/:id`; deactivate via status — never hard-delete.
+- `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service, `status` active|inactive). Edit via `PATCH /api/catalog/:id`. Requisition browse defaults to active items.
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items
 - `approval_requests`: Multi-tier approval routing steps
 - `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`)

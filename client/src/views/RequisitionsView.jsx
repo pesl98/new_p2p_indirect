@@ -63,7 +63,11 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
       setRequisitions(prs);
       setCatalogItems(catalog);
       setDepartments(depts);
-      setSuppliers(sups);
+      setSuppliers(Array.isArray(sups) ? sups : []);
+      const activeSups = (Array.isArray(sups) ? sups : []).filter((s) => !s.status || s.status === 'active');
+      if (activeSups.length && !activeSups.some((s) => Number(s.id) === Number(customSupplierId))) {
+        setCustomSupplierId(activeSups[0].id);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -383,6 +387,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                   {catalogItems
                     .filter(item => {
+                      if (item.status && item.status !== 'active') return false;
                       const matchSearch = item.name.toLowerCase().includes(catalogSearch.toLowerCase()) || item.sku.toLowerCase().includes(catalogSearch.toLowerCase());
                       const matchCat = catalogCategory === 'All' || item.category === catalogCategory;
                       return matchSearch && matchCat;
@@ -437,7 +442,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         onChange={(e) => setCustomSupplierId(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
                       >
-                        {suppliers.map(s => (
+                        {suppliers.filter((s) => !s.status || s.status === 'active').map(s => (
                           <option key={s.id} value={s.id}>{s.name}</option>
                         ))}
                       </select>

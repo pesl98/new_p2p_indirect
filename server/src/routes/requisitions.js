@@ -4,6 +4,7 @@ import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
 import { normalizeLineType } from '../lineType.js';
 import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
+import { assertActiveCatalogItem, assertActiveSupplierForBuyer } from '../masterData.js';
 
 const router = express.Router();
 
@@ -137,6 +138,15 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Requisition must have at least one line item.' });
     }
 
+    for (const item of items) {
+      await assertActiveCatalogItem(db, item.catalog_item_id);
+      await assertActiveSupplierForBuyer(
+        db,
+        item.estimated_supplier_id || 1,
+        'estimated_supplier_id'
+      );
+    }
+
     const calculatedTotal = items.reduce(
       (acc, item) => acc + lineTotalCents(item.quantity, item.unit_price),
       0
@@ -219,8 +229,9 @@ router.post('/', async (req, res) => {
     });
     res.status(201).json({ id: newPrId, message: 'Requisition created successfully' });
   } catch (error) {
-    console.error('Error creating requisition:', error);
-    res.status(httpErrorStatus(error)).json({ error: error.message });
+    const status = httpErrorStatus(error);
+    if (status >= 500) console.error('Error creating requisition:', error);
+    res.status(status).json({ error: error.message });
   }
 });
 

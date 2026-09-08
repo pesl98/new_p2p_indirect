@@ -187,8 +187,14 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
 
   const supplierIds = [...groups.keys()];
   for (const supplierId of supplierIds) {
-    if (!(await loadSupplier(db, supplierId))) {
+    const supplier = await loadSupplier(db, supplierId);
+    if (!supplier) {
       throw new PurchaseOrderError(`Supplier ${supplierId} was resolved on a line but does not exist.`);
+    }
+    if (supplier.status && supplier.status !== 'active') {
+      throw new PurchaseOrderError(
+        `Cannot convert requisition: supplier ${supplier.name} (${supplier.code}) is ${supplier.status} and cannot be issued a new PO. Remap the line to an active supplier.`
+      );
     }
   }
 

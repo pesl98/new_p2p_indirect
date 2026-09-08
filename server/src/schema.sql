@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS catalog_items (
   lead_time_days INTEGER DEFAULT 3,
   image_url TEXT,
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
   FOREIGN KEY (preferred_supplier_id) REFERENCES suppliers(id)
 );
 

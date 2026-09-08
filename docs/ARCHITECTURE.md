@@ -112,6 +112,31 @@ Catalog, requisition, and PO lines store `line_type` (`goods` | `service`). Defa
 
 An explicit `line_type` on create wins over category. The stored type is what GRN, SES, and match use — they do not re-derive at control time.
 
+## Master data (suppliers & catalog)
+
+Suppliers and catalog items are **edit + soft-deactivate**, not hard-delete. Historical PR / PO / invoice / GRN / SES lines keep their FKs (no `ON DELETE CASCADE` on those tables).
+
+| Resource | Update | Status | Delete |
+| --- | --- | --- | --- |
+| Supplier | `PATCH /api/suppliers/:id` (name, contact, email, phone, address, payment_terms, status). `code` is **immutable**. | `active` \| `inactive` \| `under_review` (also `PATCH /api/suppliers/:id/status`) | **405** — deactivate instead |
+| Catalog item | `PATCH /api/catalog/:id` (sku, name, description, category, unit, unit_price cents, preferred_supplier_id, lead_time_days, image_url, line_type, status) | `active` \| `inactive` (also `PATCH /api/catalog/:id/status`) | **405** — deactivate instead |
+
+List filters:
+
+- `GET /api/suppliers` returns all (admin / Vendors view), active first. Pickers pass `?status=active`.
+- `GET /api/catalog` defaults to **active** so requisition browse hides inactive items. Admin passes `?status=all` (or `include_inactive=1`).
+
+Referential policy (fail-closed on new assignment, allow deactivate):
+
+- Deactivating a supplier that is still preferred on active catalog items **succeeds**, with a `warnings[]` note. Historical documents are untouched.
+- Creating or changing a catalog `preferred_supplier_id` to an inactive / under_review vendor is **400**. Editing other fields may keep the existing (now inactive) preferred supplier.
+- New requisition lines cannot use an inactive catalog item or an inactive `estimated_supplier_id`.
+- Convert-to-PO cannot issue a new PO to an inactive supplier — remap the line first.
+
+Unique `suppliers.code` / `catalog_items.sku` conflicts return **409**. Existing DBs without `catalog_items.status` get `ALTER TABLE … ADD COLUMN status TEXT NOT NULL DEFAULT 'active'` in `db.js` (Turso/SQLite). Master-data field edits are not written to `audit_logs` (that table is for P2P lifecycle events, not vendor/catalog CRUD).
+
+The Vendors & Catalog UI (Carol / procurement persona; same client-only demo auth as the rest of the app) has edit modals and Deactivate / Reactivate with confirm.
+
 ## Receiving (GRN) over-receipt
 
 Default: a receipt is **400** if any line’s `quantity_received` would make cumulative received **greater than ordered**.
@@ -237,7 +262,7 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
+Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 

@@ -143,6 +143,55 @@ describe('POST /api/requisitions', () => {
     });
   });
 
+  test('rejects inactive catalog items and inactive estimated suppliers', async () => {
+    const db = await createTestDb();
+    db.exec(`
+      UPDATE catalog_items SET status = 'inactive' WHERE id = 1;
+      INSERT INTO suppliers (id, name, code, status) VALUES (2, 'Parked Vendor', 'SUP-PARK', 'inactive');
+    `);
+    const app = createApp({ db, config: loadDbConfig({}) });
+
+    await withServer(app, async (base) => {
+      const inactiveCatalog = await fetch(`${base}/api/requisitions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createPayload({
+          items: [{
+            catalog_item_id: 1,
+            item_description: 'MacBook Pro',
+            category: 'IT Hardware',
+            quantity: 1,
+            unit_price: 349900,
+            estimated_supplier_id: 1,
+            line_type: 'goods'
+          }]
+        }))
+      });
+      const catalogBody = await inactiveCatalog.json();
+      assert.equal(inactiveCatalog.status, 400);
+      assert.match(catalogBody.error, /inactive/i);
+
+      const inactiveSupplier = await fetch(`${base}/api/requisitions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createPayload({
+          items: [{
+            catalog_item_id: null,
+            item_description: 'Ad-hoc pens',
+            category: 'Office Supplies',
+            quantity: 1,
+            unit_price: 500,
+            estimated_supplier_id: 2,
+            line_type: 'goods'
+          }]
+        }))
+      });
+      const supplierBody = await inactiveSupplier.json();
+      assert.equal(inactiveSupplier.status, 400);
+      assert.match(supplierBody.error, /inactive/i);
+    });
+  });
+
   test('Turso lastInsertRowid 0 still persists lines via pr_number lookup', async () => {
     const memory = await createTestDb();
     const fetchImpl = async (_url, options) => {
