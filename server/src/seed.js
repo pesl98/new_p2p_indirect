@@ -156,7 +156,8 @@ await db.transaction(async () => {
   await insertPR.run(5, 'PR-2026-005', 1, 2, 'converted_to_po', 1250000, 'Annual SOC 2 Type II penetration test required for enterprise customer diligence.', '2026-10-15', 'High', '-10 days');
   await insertPRItem.run(5, 18, 'SOC 2 Type II Annual Security Penetration Test', 'Consulting & Professional Services', 1, 1250000, 1250000, 5);
 
-  // Multi-supplier convert demo: approved, not yet converted. Carol issues one PO per vendor.
+  // Multi-supplier convert demo: approved, not yet converted. Carol's convert UI
+  // lists TechSupply + WorkSpace defaults; she can remap a line before issue.
   await insertPR.run(6, 'PR-2026-006', 1, 1, 'approved', 204400, 'Q4 studio refresh: designer workstation monitor plus ergonomic chair from preferred vendors on one requisition.', '2026-10-05', 'Medium', '-2 days');
   await insertPRItem.run(6, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 1, 74900, 74900, 1);
   await insertPRItem.run(6, 9, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 1, 129500, 129500, 3);

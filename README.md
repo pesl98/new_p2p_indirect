@@ -25,6 +25,7 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
 3. **Purchase Orders (PO) Management**
    - Convert approved requisitions into official binding Purchase Orders with sequential numbering (`PO-YYYY-XXX`).
    - **Multi-supplier split:** lines are grouped by resolved supplier (`estimated_supplier_id`, else catalog `preferred_supplier_id`, else an explicit convert-time mapping). One approved PR becomes **one issued PO per vendor**. A line with no resolvable supplier fails closed (HTTP 400) — the API does not invent a vendor. Single-supplier PRs still create exactly one PO. All split POs share `requisition_id`; each has its own cents total and `PO-YYYY-NNN`. The PR is marked `converted_to_po` only after every PO writes, in one transaction.
+   - **Convert UI (per-line supplier remap):** from an approved PR, Carol (or any demo persona) opens **Convert to PO** on Requisitions or **Convert Approved PR** on Purchase Orders. The modal lists each line with its resolved default vendor and a supplier picker. Confirm posts `POST /api/purchase-orders/from-requisition` with `supplier_mappings` and shows the issued PO list (N POs when split). Remapping a line can change the split; leaving a line unassigned fails closed with a clear error. Seed demo: convert **PR-2026-006** (TechSupply + WorkSpace) and optionally remap a line before issue.
    - Printable & exportable corporate Purchase Order layout complete with vendor address, payment terms, delivery instructions, and signature block.
    - Real-time fulfillment tracking with partial delivery indicators.
 
@@ -63,7 +64,7 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
 9. **Document trail (P2P lifecycle overview)**
    - One screen for a buying journey: PR header, sequential approvals, linked PO(s) (multi-supplier split as branches), GRN and/or SES, invoice `match_status`, and AP approve/paid events.
    - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
-   - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** to see two PO branches.
+   - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** (optionally remapping a line in the convert UI) to see two PO branches — or one, if both lines are issued to the same vendor.
 
 10. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:

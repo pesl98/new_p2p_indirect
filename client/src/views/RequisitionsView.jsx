@@ -19,6 +19,7 @@ import {
 import { api } from '../api';
 import { formatMoney, toCents } from '../money';
 import { lineTypeFromCategory, lineTypeLabel } from '../lineType';
+import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 
 export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
   const [requisitions, setRequisitions] = useState([]);
@@ -29,6 +30,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
   const [catalogItems, setCatalogItems] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [convertPrId, setConvertPrId] = useState(null);
 
   // Form state for new PR
   const [cartItems, setCartItems] = useState([]);
@@ -158,6 +161,12 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
     } catch (err) {
       alert(err.message);
     }
+  };
+
+  const openConvert = (prId) => {
+    setConvertPrId(prId);
+    setShowConvertModal(true);
+    setSelectedPR(null);
   };
 
   const handleSubmitDraft = async (prId) => {
@@ -303,11 +312,11 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       )}
                       {pr.status === 'approved' && (
                         <button
-                          onClick={() => onNavigate('purchase_orders')}
+                          onClick={() => openConvert(pr.id)}
                           className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold"
-                          title="Generate PO"
+                          title="Convert to PO with per-line supplier assignment"
                         >
-                          Create PO
+                          Convert to PO
                         </button>
                       )}
                     </td>
@@ -641,7 +650,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           </td>
                           <td className="py-2 px-3 text-slate-500">{item.category}</td>
                           <td className="py-2 px-3 text-slate-600">
-                            {item.estimated_supplier_name || item.catalog_preferred_supplier_name || (
+                            {item.resolved_supplier_name || item.estimated_supplier_name || item.catalog_preferred_supplier_name || (
                               <span className="text-rose-600">Unassigned</span>
                             )}
                           </td>
@@ -740,7 +749,15 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               </div>
             </div>
 
-            <div className="p-4 border-t border-slate-200 flex justify-end">
+            <div className="p-4 border-t border-slate-200 flex justify-end space-x-2">
+              {selectedPR.status === 'approved' && (
+                <button
+                  onClick={() => openConvert(selectedPR.id)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold"
+                >
+                  Convert to PO
+                </button>
+              )}
               <button
                 onClick={() => setSelectedPR(null)}
                 className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
@@ -750,6 +767,27 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
             </div>
           </div>
         </div>
+      )}
+
+      {showConvertModal && (
+        <ConvertRequisitionModal
+          currentUser={currentUser}
+          approvedPRs={requisitions.filter((pr) => pr.status === 'approved')}
+          suppliers={suppliers}
+          initialRequisitionId={convertPrId}
+          onClose={() => {
+            setShowConvertModal(false);
+            setConvertPrId(null);
+          }}
+          onConverted={() => {
+            loadData();
+          }}
+          onViewPurchaseOrder={(poId) => {
+            setShowConvertModal(false);
+            setConvertPrId(null);
+            onNavigate('purchase_orders', { focusId: poId });
+          }}
+        />
       )}
     </div>
   );

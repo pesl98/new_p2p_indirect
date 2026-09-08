@@ -3,6 +3,7 @@ import { insertApprovalChain } from '../approvalPolicy.js';
 import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
 import { normalizeLineType } from '../lineType.js';
+import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
 
 const router = express.Router();
 
@@ -111,7 +112,7 @@ router.get('/:id', async (req, res) => {
 
     res.json({
       ...pr,
-      items,
+      items: annotateResolvedSuppliers(items),
       approvals,
       logs,
       purchase_orders: purchaseOrders,
