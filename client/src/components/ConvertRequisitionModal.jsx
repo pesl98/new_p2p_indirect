@@ -25,6 +25,12 @@ function selectedSupplierId(item, mappings) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function pickerSuppliers(suppliers, selectedId) {
+  return (suppliers || []).filter((s) => (
+    !s.status || s.status === 'active' || Number(s.id) === Number(selectedId)
+  ));
+}
+
 export default function ConvertRequisitionModal({
   currentUser,
   approvedPRs = [],
@@ -124,6 +130,19 @@ export default function ConvertRequisitionModal({
       const labels = unresolved.map((item) => item.item_description || `line ${item.id}`).join(', ');
       setError(
         `Cannot convert requisition: ${unresolved.length} line(s) have no resolvable supplier (${labels}). Assign a vendor on each line — convert does not invent a supplier.`
+      );
+      return;
+    }
+
+    const inactiveAssigned = items.filter((item) => {
+      const sid = selectedSupplierId(item, supplierMappings);
+      const supplier = suppliers.find((s) => Number(s.id) === Number(sid));
+      return supplier && supplier.status && supplier.status !== 'active';
+    });
+    if (inactiveAssigned.length > 0) {
+      const labels = inactiveAssigned.map((item) => item.item_description || `line ${item.id}`).join(', ');
+      setError(
+        `Cannot convert requisition: ${inactiveAssigned.length} line(s) are assigned to an inactive supplier (${labels}). Remap each line to an active supplier.`
       );
       return;
     }
@@ -266,6 +285,8 @@ export default function ConvertRequisitionModal({
                         const fallbackId = Number(defaultSupplierId(item)) || null;
                         const selected = selectedSupplierId(item, supplierMappings);
                         const remapped = selected && fallbackId && selected !== fallbackId;
+                        const selectedSupplier = suppliers.find((s) => Number(s.id) === Number(selected));
+                        const inactiveSelected = selectedSupplier && selectedSupplier.status && selectedSupplier.status !== 'active';
                         return (
                           <tr key={item.id}>
                             <td className="py-2 px-3 font-medium text-slate-900">
@@ -290,13 +311,13 @@ export default function ConvertRequisitionModal({
                                 value={supplierMappings[item.id] ?? ''}
                                 onChange={(e) => handleMappingChange(item.id, e.target.value)}
                                 className={`w-full p-1.5 border rounded-lg text-xs ${
-                                  selected ? 'border-slate-300' : 'border-rose-300 bg-rose-50'
+                                  !selected || inactiveSelected ? 'border-rose-300 bg-rose-50' : 'border-slate-300'
                                 }`}
                               >
                                 <option value="">Select supplier…</option>
-                                {suppliers.map((supplier) => (
+                                {pickerSuppliers(suppliers, supplierMappings[item.id]).map((supplier) => (
                                   <option key={supplier.id} value={supplier.id}>
-                                    {supplier.name}
+                                    {supplier.name}{supplier.status && supplier.status !== 'active' ? ` (${supplier.status})` : ''}
                                   </option>
                                 ))}
                               </select>

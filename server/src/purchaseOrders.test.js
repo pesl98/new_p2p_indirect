@@ -418,6 +418,34 @@ describe('convert approved PR to purchase orders', () => {
     assert.equal(poCount.cnt, 0);
   });
 
+  test('fails closed when the resolved supplier is inactive', async () => {
+    const db = await createTestDb();
+    db.exec(`UPDATE suppliers SET status = 'inactive' WHERE id = 1`);
+    const { prId } = await insertApprovedPr(db, {
+      items: [
+        {
+          catalog_item_id: 1,
+          item_description: 'MacBook Pro',
+          category: 'IT Hardware',
+          quantity: 1,
+          unit_price: 349900,
+          total_price: 349900,
+          estimated_supplier_id: 1
+        }
+      ]
+    });
+
+    await assert.rejects(
+      async () => convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
+      (err) => err instanceof PurchaseOrderError && err.statusCode === 400 && /inactive/i.test(err.message)
+    );
+
+    const pr = db.prepare(`SELECT status FROM purchase_requisitions WHERE id = ?`).get(prId);
+    assert.equal(pr.status, 'approved');
+    const poCount = db.prepare(`SELECT COUNT(*) AS cnt FROM purchase_orders WHERE requisition_id = ?`).get(prId);
+    assert.equal(poCount.cnt, 0);
+  });
+
   test('does not invent a vendor from a leftover header-level supplier_id', async () => {
     const db = await createTestDb();
     const { prId } = await insertApprovedPr(db, {

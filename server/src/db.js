@@ -120,12 +120,26 @@ async function migrateLineTypesAndServiceEntrySheets(database) {
   }
 }
 
+/** Existing DBs created before catalog master-data maintenance need status. */
+async function migrateCatalogItemStatus(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('catalog_items') && !(await tableHasColumn(database, 'catalog_items', 'status'))) {
+    await maybe(database.exec(
+      `ALTER TABLE catalog_items ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`
+    ));
+  }
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
   await migrateApprovalRequestsWaitingStatus(database);
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);
+  await migrateCatalogItemStatus(database);
   return database;
 }
 
