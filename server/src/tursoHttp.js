@@ -127,11 +127,108 @@ function stripLeadingSqlComments(chunk) {
   return lines.slice(start).join('\n').trim();
 }
 
+/**
+ * Split a SQL script on statement-ending `;` only.
+ * Naive `String.split(';')` breaks CREATE TABLE when a `--` comment
+ * (or a string literal) contains a semicolon — Turso then reports
+ * `SQL string could not be parsed: unexpected end of input`.
+ */
 export function splitSqlScript(sql) {
-  return String(sql)
-    .split(';')
-    .map((part) => stripLeadingSqlComments(part))
-    .filter(Boolean);
+  const source = String(sql);
+  const statements = [];
+  let current = '';
+  let i = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (inLineComment) {
+      current += ch;
+      if (ch === '\n') inLineComment = false;
+      i += 1;
+      continue;
+    }
+
+    if (inBlockComment) {
+      current += ch;
+      if (ch === '*' && next === '/') {
+        current += next;
+        i += 2;
+        inBlockComment = false;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (inSingle) {
+      current += ch;
+      if (ch === "'" && next === "'") {
+        current += next;
+        i += 2;
+        continue;
+      }
+      if (ch === "'") inSingle = false;
+      i += 1;
+      continue;
+    }
+
+    if (inDouble) {
+      current += ch;
+      if (ch === '"' && next === '"') {
+        current += next;
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inDouble = false;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '-' && next === '-') {
+      current += ch + next;
+      inLineComment = true;
+      i += 2;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      current += ch + next;
+      inBlockComment = true;
+      i += 2;
+      continue;
+    }
+    if (ch === "'") {
+      current += ch;
+      inSingle = true;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      current += ch;
+      inDouble = true;
+      i += 1;
+      continue;
+    }
+    if (ch === ';') {
+      const stmt = stripLeadingSqlComments(current);
+      if (stmt) statements.push(stmt);
+      current = '';
+      i += 1;
+      continue;
+    }
+
+    current += ch;
+    i += 1;
+  }
+
+  const tail = stripLeadingSqlComments(current);
+  if (tail) statements.push(tail);
+  return statements;
 }
 
 function rowObjects(cols, rows) {

@@ -93,6 +93,95 @@ CREATE TABLE IF NOT EXISTS users (
     );
   });
 
+  test('splitSqlScript does not split on semicolon inside -- comments', () => {
+    // Exact invoices shape that produced:
+    // "SQL string could not be parsed: unexpected end of input at (11, 54)"
+    const sql = `CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_number TEXT NOT NULL,
+  po_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  invoice_date TEXT NOT NULL,
+  due_date TEXT NOT NULL,
+  subtotal INTEGER NOT NULL,
+  tax_amount INTEGER DEFAULT 0,
+  total_amount INTEGER NOT NULL,
+  -- NULL = pay billed total_amount. Set by short_pay; billed total is never rewritten.
+  payable_total_cents INTEGER,
+  status TEXT DEFAULT 'pending_match'
+);`;
+    const stmts = splitSqlScript(sql);
+    assert.equal(stmts.length, 1, 'comment semicolon must not start a second statement');
+    assert.match(stmts[0], /payable_total_cents INTEGER/);
+    assert.match(stmts[0], /Set by short_pay; billed total is never rewritten/);
+    assert.ok(
+      !stmts.some((stmt) => /^\s*billed total is never rewritten/i.test(stmt)),
+      'must not emit a leftover fragment after the comment semicolon'
+    );
+  });
+
+  test('splitSqlScript does not split on semicolon inside string literals', () => {
+    const stmts = splitSqlScript(
+      `INSERT INTO t (msg) VALUES ('hello; world');\nINSERT INTO t (msg) VALUES ('ok');`
+    );
+    assert.equal(stmts.length, 2);
+    assert.equal(stmts[0], `INSERT INTO t (msg) VALUES ('hello; world')`);
+    assert.equal(stmts[1], `INSERT INTO t (msg) VALUES ('ok')`);
+  });
+
+  test('splitSqlScript does not split on semicolon inside block comments', () => {
+    const stmts = splitSqlScript(
+      `/* note; still a comment */\nCREATE TABLE a (id INT);\nCREATE TABLE b (id INT);`
+    );
+    assert.equal(stmts.length, 2);
+    assert.match(stmts[0], /CREATE TABLE a \(id INT\)/);
+    assert.match(stmts[1], /CREATE TABLE b \(id INT\)/);
+  });
+
+  test('splitSqlScript(schema.sql) keeps invoices CREATE including payable_total_cents', () => {
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    const stmts = splitSqlScript(schema);
+    const invoices = stmts.find((stmt) => /CREATE TABLE IF NOT EXISTS invoices\b/i.test(stmt));
+    assert.ok(invoices, 'invoices CREATE must be present');
+    assert.match(invoices, /payable_total_cents INTEGER/);
+    assert.match(invoices, /UNIQUE\(supplier_id, invoice_number\)/);
+    assert.ok(
+      !stmts.some((stmt) => /^\s*billed total is never rewritten/i.test(stmt)),
+      'schema comment semicolon must not leak a truncated fragment'
+    );
+  });
+
+  test('splitSqlScript(schema.sql) keeps each CREATE TABLE as one complete statement', () => {
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    const stmts = splitSqlScript(schema);
+    const creates = stmts.filter((stmt) => /^\s*CREATE TABLE/i.test(stmt));
+    assert.ok(creates.length >= 18, `expected all schema tables, got ${creates.length}`);
+    for (const stmt of creates) {
+      assert.match(stmt, /\)\s*$/, `truncated CREATE TABLE: ${stmt.slice(0, 80)}`);
+    }
+    const dispositions = creates.find((stmt) =>
+      /CREATE TABLE IF NOT EXISTS invoice_exception_dispositions\b/i.test(stmt)
+    );
+    assert.ok(dispositions);
+    assert.match(dispositions, /'short_pay'/);
+    assert.match(dispositions, /billed_total_cents INTEGER/);
+  });
+
+  test('exec(schema.sql) sends invoices CREATE as a single pipeline statement', async () => {
+    const schema = fs.readFileSync(schemaPath, 'utf8');
+    const executed = [];
+    const fetchImpl = mockPipelineBySql((sql) => {
+      executed.push(sql);
+      return { cols: [], rows: [], affected_row_count: 0 };
+    });
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl });
+    await client.exec(schema);
+    const invoices = executed.find((sql) => /CREATE TABLE IF NOT EXISTS invoices\b/i.test(sql));
+    assert.ok(invoices);
+    assert.match(invoices, /payable_total_cents INTEGER/);
+    assert.ok(!executed.some((sql) => /^\s*billed total is never rewritten/i.test(sql)));
+  });
+
   test('execute maps named rows and lastInsertRowid', async () => {
     const payload = {
       results: [
