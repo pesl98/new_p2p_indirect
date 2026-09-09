@@ -27,16 +27,8 @@ async function tableHasColumn(database, table, column) {
   return (cols || []).some((c) => c.name === column);
 }
 
-/** Existing DBs created before sequential routing need CHECK to allow `waiting`. */
-async function migrateApprovalRequestsWaitingStatus(database) {
-  const row = await maybe(
-    database.prepare(
-      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approval_requests'`
-    ).get()
-  );
-  if (!row?.sql || row.sql.includes("'waiting'")) return;
-
-  await maybe(database.exec(`
+/** Table rebuild used when existing DBs lack `waiting` in approval_requests CHECK. */
+export const APPROVAL_REQUESTS_WAITING_MIGRATION_SQL = `
     CREATE TABLE approval_requests_migrated (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       requisition_id INTEGER NOT NULL,
@@ -55,7 +47,18 @@ async function migrateApprovalRequestsWaitingStatus(database) {
       FROM approval_requests;
     DROP TABLE approval_requests;
     ALTER TABLE approval_requests_migrated RENAME TO approval_requests;
-  `));
+  `;
+
+/** Existing DBs created before sequential routing need CHECK to allow `waiting`. */
+async function migrateApprovalRequestsWaitingStatus(database) {
+  const row = await maybe(
+    database.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approval_requests'`
+    ).get()
+  );
+  if (!row?.sql || row.sql.includes("'waiting'")) return;
+
+  await maybe(database.exec(APPROVAL_REQUESTS_WAITING_MIGRATION_SQL));
 }
 
 /** Existing DBs created before supplier+invoice uniqueness need a unique index. */
@@ -134,6 +137,34 @@ async function migrateCatalogItemStatus(database) {
 }
 
 /**
+ * Rebuild invoice_exception_dispositions when CHECK lacks `short_pay`.
+ * `billedSelect` is `billed_total_cents` if the old table already has that
+ * column, otherwise `NULL`.
+ */
+export function invoiceShortPayDispositionsMigrationSql(billedSelect = 'NULL') {
+  return `
+      CREATE TABLE invoice_exception_dispositions_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
+        reason TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        accepted_total_cents INTEGER,
+        accepted_match_status TEXT,
+        billed_total_cents INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+      );
+      INSERT INTO invoice_exception_dispositions_migrated
+        (id, invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, billed_total_cents, created_at)
+        SELECT id, invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, ${billedSelect}, created_at
+        FROM invoice_exception_dispositions;
+      DROP TABLE invoice_exception_dispositions;
+      ALTER TABLE invoice_exception_dispositions_migrated RENAME TO invoice_exception_dispositions;
+    `;
+}
+
+/**
  * Existing DBs need invoices.payable_total_cents (NULL = pay billed) and
  * invoice_exception_dispositions.short_pay + billed_total_cents.
  * CHECK cannot be ALTERed — rebuild the dispositions table when missing short_pay.
@@ -160,26 +191,7 @@ async function migrateInvoiceShortPay(database) {
 
   if (!hasShortPayCheck) {
     const billedSelect = hasBilledCol ? 'billed_total_cents' : 'NULL';
-    await maybe(database.exec(`
-      CREATE TABLE invoice_exception_dispositions_migrated (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_id INTEGER NOT NULL,
-        disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
-        reason TEXT NOT NULL,
-        actor_name TEXT NOT NULL,
-        accepted_total_cents INTEGER,
-        accepted_match_status TEXT,
-        billed_total_cents INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
-      );
-      INSERT INTO invoice_exception_dispositions_migrated
-        (id, invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, billed_total_cents, created_at)
-        SELECT id, invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, ${billedSelect}, created_at
-        FROM invoice_exception_dispositions;
-      DROP TABLE invoice_exception_dispositions;
-      ALTER TABLE invoice_exception_dispositions_migrated RENAME TO invoice_exception_dispositions;
-    `));
+    await maybe(database.exec(invoiceShortPayDispositionsMigrationSql(billedSelect)));
     return;
   }
 
