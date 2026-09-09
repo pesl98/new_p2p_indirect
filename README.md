@@ -15,10 +15,11 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
    - Cost center assignment, delivery requirements, and business justifications.
 
 2. **Multi-Tier Approval Routing**
-   - Role-based policy (`server/src/approvalPolicy.js`) resolves approvers by role and department — not hardcoded user IDs. Thresholds are integer cents (`APPROVAL_TIER2_CENTS` = \$1,000 / `APPROVAL_TIER3_CENTS` = \$10,000):
-     - **≤ \$1,000**: Department Head (`role=approver` in the requisition’s department)
+   - Role-based policy (`server/src/approvalPolicy.js`) resolves **step 1** from `departments.approver_user_id` (org-admin mapping), then falls back to `role=approver` in the requisition’s department. Later steps are still by role — not hardcoded user IDs. Thresholds are integer cents (`APPROVAL_TIER2_CENTS` = \$1,000 / `APPROVAL_TIER3_CENTS` = \$10,000):
+     - **≤ \$1,000**: Department Head (mapped user, else `role=approver` in the requisition’s department)
      - **> \$1,000 and ≤ \$10,000**: Department Head, then Strategic Sourcing (`role=procurement`)
      - **> \$10,000**: Department Head, then Procurement, then Finance Controller (`role=finance`) or CFO (`role=admin`) if no finance user exists
+   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. APIs are demo-open like supplier/catalog master-data (no JWT). Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
    - Steps are **sequential**, not parallel: only the current step is `pending`; later steps stay `waiting` until the previous step is approved. Waiting steps do not appear in the approver inbox. Rejecting a step skips remaining `waiting`/`pending` rows.
    - The decide API requires `approver_id` matching the current pending step. **Persona auth is client-only demo** (header switcher; no JWT/sessions).
    - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved — not when a PO is issued. Final approve **fails closed** if remaining budget (`total − committed − actual`, cents) is less than the PR total.
@@ -71,10 +72,13 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
 10. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
-     - **Bob Martinez** (Approver / Dept Head - Marketing Director)
+     - **Bob Martinez** (Approver / Dept Head - Marketing)
      - **Carol Zhang** (Procurement Officer - Strategic Sourcing)
      - **David Miller** (Finance & Accounts Payable Controller)
-     - **Elena Rostova** (Executive / CFO)
+     - **Elena Rostova** (Executive / CFO — Org Admin for department heads)
+     - **Priya Nair** (IT department head)
+     - **James Okonkwo** (Facilities department head)
+     - **Sofia Berg** (HR department head)
 
 ---
 
@@ -201,7 +205,7 @@ Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting
 Local default is SQLite (`better-sqlite3`). Production on Vercel is Turso via SQL-over-HTTP. Schema bootstrap (`CREATE TABLE IF NOT EXISTS` + existing migrations) runs on cold start for both.
 
 Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, match price variance, etc.) are stored as **integer cents**. The API returns cents; the client formats dollars for display. Quantities are whole units. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for lifecycle, match rules, sequential approvals, and receiving/budget controls.
-- `departments`: Cost centers & organizational units
+- `departments`: Cost centers & organizational units, plus nullable `approver_user_id` (step-1 department head). Maintain via Org Admin / `PUT /api/departments/:id/approver`.
 - `users`: Employees with roles and authorization limits
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures
 - `suppliers`: Approved vendor repository with payment terms, ratings, and `status` (`active` | `inactive` | `under_review`). Edit via `PATCH /api/suppliers/:id`; deactivate via status — never hard-delete.

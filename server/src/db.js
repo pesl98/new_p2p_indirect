@@ -202,6 +202,38 @@ async function migrateInvoiceShortPay(database) {
   }
 }
 
+/** Existing DBs created before org-admin dept heads need approver_user_id. */
+export const DEPARTMENT_APPROVER_COLUMN_SQL =
+  `ALTER TABLE departments ADD COLUMN approver_user_id INTEGER`;
+
+/** Backfill mapping from the legacy first role=approver in that department. */
+export const DEPARTMENT_APPROVER_BACKFILL_SQL = `
+  UPDATE departments
+  SET approver_user_id = (
+    SELECT u.id FROM users u
+    WHERE u.role = 'approver' AND u.department_id = departments.id
+    ORDER BY u.id ASC
+    LIMIT 1
+  )
+  WHERE approver_user_id IS NULL
+`;
+
+async function migrateDepartmentApprover(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (!tables.includes('departments')) return;
+
+  if (!(await tableHasColumn(database, 'departments', 'approver_user_id'))) {
+    await maybe(database.exec(DEPARTMENT_APPROVER_COLUMN_SQL));
+  }
+
+  if (tables.includes('users')) {
+    await maybe(database.exec(DEPARTMENT_APPROVER_BACKFILL_SQL));
+  }
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
@@ -210,6 +242,7 @@ export async function applySchema(database) {
   await migrateLineTypesAndServiceEntrySheets(database);
   await migrateCatalogItemStatus(database);
   await migrateInvoiceShortPay(database);
+  await migrateDepartmentApprover(database);
   return database;
 }
 

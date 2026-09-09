@@ -57,6 +57,17 @@ await db.transaction(async () => {
   await insertUser.run(3, 'Carol Zhang', 'carol.zhang@company.com', 'procurement', 3, 'Head of Strategic Sourcing', 5000000, 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=120&h=120&fit=crop&crop=faces');
   await insertUser.run(4, 'David Miller', 'david.miller@company.com', 'finance', 5, 'Accounts Payable & Financial Controller', 15000000, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=faces');
   await insertUser.run(5, 'Elena Rostova', 'elena.rostova@company.com', 'admin', 5, 'Chief Financial Officer (CFO)', 50000000, 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=120&h=120&fit=crop&crop=faces');
+  await insertUser.run(6, 'Priya Nair', 'priya.nair@company.com', 'approver', 2, 'VP of Information Technology', 1000000, 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=120&h=120&fit=crop&crop=faces');
+  await insertUser.run(7, 'James Okonkwo', 'james.okonkwo@company.com', 'approver', 3, 'Director of Facilities & Operations', 1000000, 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=120&h=120&fit=crop&crop=faces');
+  await insertUser.run(8, 'Sofia Berg', 'sofia.berg@company.com', 'approver', 4, 'VP of People & Talent', 1000000, 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=120&h=120&fit=crop&crop=faces');
+
+  // Map each cost center to its step-1 department head (org admin can change this).
+  const setDeptApprover = db.prepare(`UPDATE departments SET approver_user_id = ? WHERE id = ?`);
+  await setDeptApprover.run(2, 1); // MKT → Bob Martinez
+  await setDeptApprover.run(6, 2); // ITE → Priya Nair
+  await setDeptApprover.run(7, 3); // FAC → James Okonkwo
+  await setDeptApprover.run(8, 4); // HRP → Sofia Berg
+  await setDeptApprover.run(5, 5); // ADM → Elena Rostova (CFO). David remains the finance threshold step.
 
   // 3. Budgets (Fiscal Year 2026) — amounts in cents
   const insertBudget = db.prepare(`
@@ -186,8 +197,8 @@ await db.transaction(async () => {
   // PR-2026-003 is $8,500 — dept head + procurement; sequential: Bob pending, Carol waiting.
   await insertApproval.run(3, 2, 1, 'pending', null, null);
   await insertApproval.run(3, 3, 2, 'waiting', null, null);
-  // PR-2026-005 is $12,500 — dept head + procurement + finance; all approved.
-  await insertApproval.run(5, 2, 1, 'approved', 'Required for enterprise security posture.', '2026-08-25 09:10:00');
+  // PR-2026-005 is $12,500 — ITE dept head + procurement + finance; all approved.
+  await insertApproval.run(5, 6, 1, 'approved', 'Required for enterprise security posture.', '2026-08-25 09:10:00');
   await insertApproval.run(5, 3, 2, 'approved', 'Apex Advisory is the contracted security partner.', '2026-08-25 11:40:00');
   await insertApproval.run(5, 4, 3, 'approved', 'Budget committed against ITE FY26 security program.', '2026-08-25 15:05:00');
   // PR-2026-006 is $2,044 — dept head + procurement; both approved so Carol can convert the split.

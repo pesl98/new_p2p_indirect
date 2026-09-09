@@ -1,10 +1,13 @@
 -- Schema for Non-Production Procurement Application
 -- Money columns are INTEGER cents (USD minor units). Quantities are INTEGER whole units.
 
+-- Step-1 department head lives on departments.approver_user_id (nullable users.id).
+-- Not a SQLite FK because departments is created before users.
 CREATE TABLE IF NOT EXISTS departments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   code TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL
+  name TEXT NOT NULL,
+  approver_user_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS users (

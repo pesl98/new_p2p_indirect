@@ -19,7 +19,16 @@ async function jsonOk(response, fallbackMessage) {
 export const api = {
   // Users & Roles
   getUsers: () => fetch(`${API_BASE}/users`).then(r => r.json()),
-  getDepartments: () => fetch(`${API_BASE}/users/departments`).then(r => r.json()),
+  getDepartments: () => fetch(`${API_BASE}/departments`).then(r => r.json()),
+  getEligibleApprovers: () => fetch(`${API_BASE}/departments/eligible-approvers`).then(r => r.json()),
+  setDepartmentApprover: async (id, data) => {
+    const r = await fetch(`${API_BASE}/departments/${id}/approver`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to update department approver');
+  },
 
   // Dashboard & Analytics
   getHealth: () => fetch(`${API_BASE}/health`).then(r => r.json()),

@@ -16,6 +16,7 @@ import invoicesRouter from './routes/invoices.js';
 import invoiceExceptionsRouter from './routes/invoiceExceptions.js';
 import analyticsRouter from './routes/analytics.js';
 import documentTrailRouter from './routes/documentTrail.js';
+import departmentsRouter from './routes/departments.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
@@ -64,6 +65,7 @@ export function createApp(options = {}) {
   });
 
   app.use('/api/users', usersRouter);
+  app.use('/api/departments', departmentsRouter);
   app.use('/api/suppliers', suppliersRouter);
   app.use('/api/catalog', catalogRouter);
   app.use('/api/budgets', budgetsRouter);

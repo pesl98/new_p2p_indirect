@@ -128,6 +128,46 @@ describe('approval policy tiers', () => {
     });
     assert.deepEqual(steps.map((s) => s.approver_id), [20, 30, 40]);
   });
+
+  test('mapped approver_user_id wins over role=approver in the department', async () => {
+    const db = await createTestDb();
+    db.exec(`UPDATE departments SET approver_user_id = 4 WHERE id = 1`);
+    const steps = await buildApprovalSteps({ totalAmount: 50000, departmentId: 1, db });
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].approver_id, 4);
+    assert.equal(steps[0].role, 'finance');
+  });
+
+  test('mapping lets a department without role=approver still submit', async () => {
+    const db = await createTestDb({ includeApprover: false });
+    db.exec(`UPDATE departments SET approver_user_id = 5 WHERE id = 2`);
+    const steps = await buildApprovalSteps({ totalAmount: 50000, departmentId: 2, db });
+    assert.equal(steps[0].approver_id, 5);
+    assert.equal(steps[0].role, 'admin');
+  });
+
+  test('unmapped department with no role=approver fails closed', async () => {
+    const db = await createTestDb({ includeApprover: false });
+    await assert.rejects(
+      async () => buildApprovalSteps({ totalAmount: 50000, departmentId: 2, db }),
+      (err) => err instanceof ApprovalPolicyError
+        && err.statusCode === 400
+        && /Org Admin/.test(err.message)
+    );
+  });
+
+  test('three-tier chain is unchanged when mapping points at the dept head', async () => {
+    const db = await createTestDb();
+    db.exec(`UPDATE departments SET approver_user_id = 2 WHERE id = 1`);
+    const steps = await buildApprovalSteps({
+      totalAmount: APPROVAL_TIER3_CENTS + 1,
+      departmentId: 1,
+      db
+    });
+    assert.equal(steps.length, 3);
+    assert.deepEqual(steps.map((s) => s.approver_id), [2, 3, 4]);
+    assert.deepEqual(steps.map((s) => s.role), ['approver', 'procurement', 'finance']);
+  });
 });
 
 function insertPr(db, amount, departmentId = 1) {

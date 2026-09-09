@@ -29,11 +29,30 @@ async function firstUserByRole(db, role, departmentId = null) {
   ).get(role);
 }
 
+/**
+ * Step-1 department head: mapped departments.approver_user_id first,
+ * then legacy first user with role=approver in that department.
+ */
 async function resolveDepartmentApprover(db, departmentId) {
-  const approver = await firstUserByRole(db, 'approver', departmentId);
+  const deptId = Number(departmentId);
+  const dept = await db.prepare(
+    `SELECT id, code, name, approver_user_id FROM departments WHERE id = ?`
+  ).get(deptId);
+
+  if (dept?.approver_user_id != null) {
+    const mapped = await db.prepare(
+      `SELECT id, role, name, department_id FROM users WHERE id = ?`
+    ).get(dept.approver_user_id);
+    if (mapped) return mapped;
+    throw new ApprovalPolicyError(
+      `Cannot resolve department approver for department_id=${departmentId}: mapped user id=${dept.approver_user_id} not found`
+    );
+  }
+
+  const approver = await firstUserByRole(db, 'approver', deptId);
   if (!approver) {
     throw new ApprovalPolicyError(
-      `Cannot resolve department approver for department_id=${departmentId}`
+      `Cannot resolve department approver for department_id=${departmentId}. Assign a department head in Org Admin.`
     );
   }
   return approver;

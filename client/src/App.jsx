@@ -12,6 +12,7 @@ import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
 import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
+import AdminDepartmentsView from './views/AdminDepartmentsView';
 import { api } from './api';
 
 export default function App() {
@@ -46,6 +47,9 @@ export default function App() {
 
   const handleSelectUser = (user) => {
     setCurrentUser(user);
+    if (user?.role !== 'admin' && activeTab === 'org_admin') {
+      setActiveTab('dashboard');
+    }
   };
 
   const handleNavigate = (tab, focus = null) => {
@@ -70,6 +74,7 @@ export default function App() {
           onTabChange={setActiveTab}
           pendingApprovalsCount={analytics?.kpi?.pendingApprovals || 0}
           varianceInvoicesCount={analytics?.kpi?.invoiceVariances || 0}
+          currentUser={currentUser}
         />
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
@@ -150,6 +155,10 @@ export default function App() {
 
           {activeTab === 'catalog' && (
             <VendorsCatalogView />
+          )}
+
+          {activeTab === 'org_admin' && (
+            <AdminDepartmentsView currentUser={currentUser} />
           )}
         </main>
       </div>
