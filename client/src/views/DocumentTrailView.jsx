@@ -388,7 +388,14 @@ export default function DocumentTrailView({ onNavigate }) {
                               <p className="text-[11px] text-slate-500 mt-1">{event.details}</p>
                             )}
                             {event.amount_cents != null && (
-                              <div className="text-xs font-bold text-slate-800 mt-1">${formatMoney(event.amount_cents)}</div>
+                              <div className="text-xs font-bold text-slate-800 mt-1">
+                                ${formatMoney(event.amount_cents)}
+                                {event.payable_total_cents != null && event.kind === 'invoice' && (
+                                  <span className="ml-1 text-[11px] font-semibold text-amber-800">
+                                    → Pay ${formatMoney(event.payable_total_cents)}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                           {event.tab && (

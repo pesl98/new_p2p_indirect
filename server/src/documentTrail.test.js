@@ -363,4 +363,27 @@ describe('document trail — edge lookups', () => {
     assert.equal(exceptionEvent.tab, 'exception_workbench');
     assert.equal(exceptionEvent.amount_cents, 319600);
   });
+
+  test('short-pay audit appears on the trail and invoice payload includes payable cents', async () => {
+    const db = await createTestDb();
+    await seedStandalonePo(db);
+    await db.exec(`
+      INSERT INTO invoices
+        (id, invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, payable_total_cents, status, match_status, created_at)
+      VALUES
+        (21, 'INV-SP-1', 2, 1, '2026-09-05', '2026-10-05', 319600, 0, 319600, 149800, 'matched', 'total_variance', '2026-09-05 11:00:00');
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
+      VALUES
+        ('invoice', 21, 'EXCEPTION_SHORT_PAY', 'David Miller', 'billed 319600¢ → payable 149800¢; delta 169800¢', '2026-09-06 09:00:00');
+    `);
+
+    const trail = await getDocumentTrail(db, { po_number: 'PO-2026-002' });
+    const invoice = trail.purchase_orders[0].invoices[0];
+    assert.equal(invoice.payable_total_cents, 149800);
+    assert.equal(invoice.total_amount, 319600);
+    assert.equal(invoice.exception_events[0].action, 'EXCEPTION_SHORT_PAY');
+    const exceptionEvent = trail.timeline.find((event) => event.kind === 'exception');
+    assert.equal(exceptionEvent.title, 'Invoice short-paid');
+    assert.equal(exceptionEvent.amount_cents, 149800);
+  });
 });

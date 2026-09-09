@@ -1,4 +1,4 @@
-import { asCents, formatCents } from './money.js';
+import { asCents, formatCents, requireIntegerCents } from './money.js';
 
 /**
  * Invoice exception workbench — AP control point after dual match.
@@ -9,9 +9,10 @@ import { asCents, formatCents } from './money.js';
  * Soft warnings remain visible on the match matrix.
  *
  * Dispositions (required reason + actor name; integer cents):
- *   accept_variance  — clear the block (status → matched); record accepted total
+ *   accept_variance  — clear the block (status → matched); accepted_total_cents = billed
  *   reject_invoice   — permanently block approve/pay (status → rejected)
  *   return_to_buyer  — park with audit; stays variance_flagged and in the open queue
+ *   short_pay        — clear the block; rewrite payable_total_cents < billed (billed stays)
  */
 
 export const HARD_EXCEPTION_MATCH_STATUSES = Object.freeze([
@@ -20,19 +21,30 @@ export const HARD_EXCEPTION_MATCH_STATUSES = Object.freeze([
   'total_variance'
 ]);
 
-export const TERMINAL_DISPOSITIONS = Object.freeze(['accept_variance', 'reject_invoice']);
+export const TERMINAL_DISPOSITIONS = Object.freeze(['accept_variance', 'reject_invoice', 'short_pay']);
 
 export const DISPOSITIONS = Object.freeze([
   'accept_variance',
   'reject_invoice',
-  'return_to_buyer'
+  'return_to_buyer',
+  'short_pay'
 ]);
 
 const DISPOSITION_AUDIT = {
   accept_variance: 'EXCEPTION_ACCEPT_VARIANCE',
   reject_invoice: 'EXCEPTION_REJECT_INVOICE',
-  return_to_buyer: 'EXCEPTION_RETURN_TO_BUYER'
+  return_to_buyer: 'EXCEPTION_RETURN_TO_BUYER',
+  short_pay: 'EXCEPTION_SHORT_PAY'
 };
+
+/** Payable cents AP will approve/pay. NULL payable_total_cents means billed total. */
+export function invoicePayableCents(invoice) {
+  if (invoice == null) return 0;
+  if (invoice.payable_total_cents == null || invoice.payable_total_cents === '') {
+    return asCents(invoice.total_amount);
+  }
+  return asCents(invoice.payable_total_cents);
+}
 
 export class InvoiceExceptionError extends Error {
   constructor(message, statusCode = 400) {
@@ -108,7 +120,7 @@ export function assertCanMarkPaid(invoice) {
 export async function listInvoiceExceptionDispositions(db, invoiceId) {
   return await db.prepare(`
     SELECT id, invoice_id, disposition, reason, actor_name,
-           accepted_total_cents, accepted_match_status, created_at
+           accepted_total_cents, accepted_match_status, billed_total_cents, created_at
     FROM invoice_exception_dispositions
     WHERE invoice_id = ?
     ORDER BY id ASC
@@ -118,7 +130,7 @@ export async function listInvoiceExceptionDispositions(db, invoiceId) {
 export async function getLatestDisposition(db, invoiceId) {
   return await db.prepare(`
     SELECT id, invoice_id, disposition, reason, actor_name,
-           accepted_total_cents, accepted_match_status, created_at
+           accepted_total_cents, accepted_match_status, billed_total_cents, created_at
     FROM invoice_exception_dispositions
     WHERE invoice_id = ?
     ORDER BY id DESC
@@ -199,10 +211,23 @@ async function loadMatchContext(db, invoiceId, poId) {
   return { items, matchResults, receipts, serviceSheets, auditLogs };
 }
 
+function attachPayableFields(row) {
+  const billed = asCents(row.total_amount);
+  const payable = row.payable_total_cents == null || row.payable_total_cents === ''
+    ? null
+    : asCents(row.payable_total_cents);
+  return {
+    ...row,
+    billed_total_cents: billed,
+    effective_payable_cents: payable == null ? billed : payable,
+    has_short_pay: payable != null
+  };
+}
+
 function attachQueueMeta(row, latest) {
   const open = row.status === 'variance_flagged';
   return {
-    ...row,
+    ...attachPayableFields(row),
     exception: latest || null,
     queue_state: open ? 'open' : (latest ? 'resolved' : 'not_in_queue'),
     needs_disposition: open
@@ -240,7 +265,7 @@ export async function listInvoiceExceptions(db, { queue = 'open' } = {}) {
         WHEN ? = 'resolved' THEN EXISTS (
           SELECT 1 FROM invoice_exception_dispositions d
           WHERE d.invoice_id = inv.id
-            AND d.disposition IN ('accept_variance', 'reject_invoice')
+            AND d.disposition IN ('accept_variance', 'reject_invoice', 'short_pay')
         )
         ELSE (
           inv.status = 'variance_flagged'
@@ -292,7 +317,7 @@ export async function attachExceptionToInvoice(db, invoice) {
   const dispositions = await listInvoiceExceptionDispositions(db, invoice.id);
   const latest = dispositions.length ? dispositions[dispositions.length - 1] : null;
   return {
-    ...invoice,
+    ...attachPayableFields(invoice),
     exception: latest,
     exception_dispositions: dispositions,
     needs_disposition: invoice.status === 'variance_flagged'
@@ -356,22 +381,52 @@ export async function resolveInvoiceException(db, id, payload = {}) {
   const matchResults = await db.prepare(`
     SELECT * FROM match_results WHERE invoice_id = ?
   `).all(id);
-  const acceptedTotalCents = asCents(invoice.total_amount);
+  const billedTotalCents = asCents(invoice.total_amount);
   const acceptedMatchStatus = invoice.match_status;
+
+  let payableTotalCents = null;
+  if (disposition === 'short_pay') {
+    let parsedPayable;
+    try {
+      parsedPayable = requireIntegerCents(payload.payable_total_cents, 'payable_total_cents');
+    } catch (error) {
+      throw new InvoiceExceptionError(error.message, error.statusCode || 400);
+    }
+    if (parsedPayable < 0) {
+      throw new InvoiceExceptionError('payable_total_cents must be an integer ≥ 0.');
+    }
+    if (parsedPayable > billedTotalCents) {
+      throw new InvoiceExceptionError(
+        'payable_total_cents cannot exceed the billed invoice total. Short-pay cannot overpay.'
+      );
+    }
+    if (parsedPayable === billedTotalCents) {
+      throw new InvoiceExceptionError(
+        'payable_total_cents must be strictly less than the billed total. Use accept_variance to pay the billed amount.'
+      );
+    }
+    payableTotalCents = parsedPayable;
+  }
+
+  // accept_variance / reject / return record billed cents.
+  // short_pay stores payable on accepted_total_cents; billed stays on the invoice row
+  // and on billed_total_cents for audit.
+  const acceptedTotalCents = disposition === 'short_pay' ? payableTotalCents : billedTotalCents;
 
   const resolveTransaction = db.transaction(async () => {
     await db.prepare(`
       INSERT INTO invoice_exception_dispositions (
         invoice_id, disposition, reason, actor_name,
-        accepted_total_cents, accepted_match_status
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        accepted_total_cents, accepted_match_status, billed_total_cents
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       disposition,
       reason,
       actorName,
       acceptedTotalCents,
-      acceptedMatchStatus
+      acceptedMatchStatus,
+      billedTotalCents
     );
 
     let nextStatus = invoice.status;
@@ -381,37 +436,53 @@ export async function resolveInvoiceException(db, id, payload = {}) {
     } else if (disposition === 'reject_invoice') {
       nextStatus = 'rejected';
       await db.prepare(`UPDATE invoices SET status = ? WHERE id = ?`).run(nextStatus, id);
+    } else if (disposition === 'short_pay') {
+      nextStatus = 'matched';
+      await db.prepare(`
+        UPDATE invoices SET status = ?, payable_total_cents = ? WHERE id = ?
+      `).run(nextStatus, payableTotalCents, id);
     }
 
     const acceptedSummary = summarizeAcceptedVariances(
       matchResults,
-      acceptedTotalCents,
+      billedTotalCents,
       acceptedMatchStatus
     );
-    const details = disposition === 'accept_variance'
-      ? `${acceptedSummary}. Reason: ${reason}`
-      : `Disposition ${disposition} for ${invoice.invoice_number} (billed $${formatCents(acceptedTotalCents)}, match ${acceptedMatchStatus}). Reason: ${reason}`;
+    let details;
+    if (disposition === 'short_pay') {
+      const delta = billedTotalCents - payableTotalCents;
+      details = `Short pay ${invoice.invoice_number}: billed ${billedTotalCents}¢ ($${formatCents(billedTotalCents)}) → payable ${payableTotalCents}¢ ($${formatCents(payableTotalCents)}); delta ${delta}¢ ($${formatCents(delta)}). Match ${acceptedMatchStatus} unchanged. Reason: ${reason}`;
+    } else if (disposition === 'accept_variance') {
+      details = `${acceptedSummary}. Reason: ${reason}`;
+    } else {
+      details = `Disposition ${disposition} for ${invoice.invoice_number} (billed $${formatCents(billedTotalCents)}, match ${acceptedMatchStatus}). Reason: ${reason}`;
+    }
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, ?, ?, ?)
     `).run(id, DISPOSITION_AUDIT[disposition], actorName, details);
 
-    return { nextStatus, acceptedTotalCents, acceptedMatchStatus, details };
+    return { nextStatus, acceptedTotalCents, acceptedMatchStatus, billedTotalCents, payableTotalCents, details };
   });
 
   const outcome = await resolveTransaction();
   const detail = await getInvoiceExceptionDetail(db, id);
+  const message = disposition === 'accept_variance'
+    ? 'Variance accepted. Invoice may proceed to AP approve for payment.'
+    : disposition === 'reject_invoice'
+      ? 'Invoice rejected. Approve and pay are permanently blocked.'
+      : disposition === 'short_pay'
+        ? `Short pay recorded. Billed $${formatCents(outcome.billedTotalCents)} → Pay $${formatCents(outcome.payableTotalCents)}. Invoice may proceed to AP approve for the payable amount.`
+        : 'Invoice returned to buyer. Hard exception remains open until accepted or rejected.';
   return {
-    message: disposition === 'accept_variance'
-      ? 'Variance accepted. Invoice may proceed to AP approve for payment.'
-      : disposition === 'reject_invoice'
-        ? 'Invoice rejected. Approve and pay are permanently blocked.'
-        : 'Invoice returned to buyer. Hard exception remains open until accepted or rejected.',
+    message,
     disposition,
     invoice_status: outcome.nextStatus,
     accepted_total_cents: outcome.acceptedTotalCents,
     accepted_match_status: outcome.acceptedMatchStatus,
+    billed_total_cents: outcome.billedTotalCents,
+    payable_total_cents: outcome.payableTotalCents,
     invoice: detail
   };
 }

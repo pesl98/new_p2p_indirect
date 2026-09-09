@@ -204,6 +204,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   subtotal INTEGER NOT NULL,
   tax_amount INTEGER DEFAULT 0,
   total_amount INTEGER NOT NULL,
+  -- NULL = pay billed total_amount. Set by short_pay; billed total is never rewritten.
+  payable_total_cents INTEGER,
   status TEXT DEFAULT 'pending_match' CHECK (status IN ('pending_match', 'matched', 'variance_flagged', 'approved_for_payment', 'paid', 'rejected')),
   match_status TEXT DEFAULT 'pending' CHECK (match_status IN ('pending', 'perfect_match', 'tolerated_match', 'quantity_variance', 'price_variance', 'total_variance')),
   payment_reference TEXT,
@@ -248,11 +250,13 @@ CREATE TABLE IF NOT EXISTS match_results (
 CREATE TABLE IF NOT EXISTS invoice_exception_dispositions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL,
-  disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer')),
+  disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
   reason TEXT NOT NULL,
   actor_name TEXT NOT NULL,
+  -- For accept_variance: billed total. For short_pay: payable amount AP will pay.
   accepted_total_cents INTEGER,
   accepted_match_status TEXT,
+  billed_total_cents INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
 );

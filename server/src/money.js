@@ -45,6 +45,35 @@ export function asCents(value) {
   return Math.trunc(n);
 }
 
+/**
+ * Fail-closed parse of an already-cents API field.
+ * Rejects missing, boolean, float, and non-integer strings (HTTP 400).
+ */
+export function requireIntegerCents(value, field = 'amount') {
+  const err = (message) => {
+    const error = new Error(message);
+    error.statusCode = 400;
+    return error;
+  };
+  if (value === undefined || value === null || value === '') {
+    throw err(`${field} is required and must be an integer number of cents.`);
+  }
+  if (typeof value === 'boolean') {
+    throw err(`${field} must be an integer number of cents.`);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) {
+      throw err(`${field} must be an integer number of cents.`);
+    }
+    return value;
+  }
+  const text = String(value).trim();
+  if (!/^-?\d+$/.test(text)) {
+    throw err(`${field} must be an integer number of cents.`);
+  }
+  return Number(text);
+}
+
 /** Existing approval routing thresholds, expressed in cents ($1,000 / $10,000). */
 export const APPROVAL_TIER2_CENTS = 100_000;
 export const APPROVAL_TIER3_CENTS = 1_000_000;

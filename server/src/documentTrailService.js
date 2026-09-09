@@ -3,12 +3,15 @@
  * Does not invent events. Money fields stay integer cents. Timestamps are ISO-8601.
  */
 
+import { formatCents } from './money.js';
+
 const AP_AUDIT_ACTIONS = new Set(['APPROVED_FOR_PAYMENT', 'APPROVED_PAYMENT', 'PAID']);
 
 const EXCEPTION_AUDIT_ACTIONS = {
   EXCEPTION_ACCEPT_VARIANCE: 'Exception accepted',
   EXCEPTION_REJECT_INVOICE: 'Exception rejected',
-  EXCEPTION_RETURN_TO_BUYER: 'Returned to buyer'
+  EXCEPTION_RETURN_TO_BUYER: 'Returned to buyer',
+  EXCEPTION_SHORT_PAY: 'Invoice short-paid'
 };
 
 const KIND_ORDER = {
@@ -223,6 +226,7 @@ async function loadInvoiceRows(db, poId) {
       inv.subtotal,
       inv.tax_amount,
       inv.total_amount,
+      inv.payable_total_cents,
       inv.status,
       inv.match_status,
       inv.payment_reference,
@@ -245,6 +249,7 @@ async function loadInvoiceRows(db, poId) {
     subtotal: row.subtotal,
     tax_amount: row.tax_amount,
     total_amount: row.total_amount,
+    payable_total_cents: row.payable_total_cents ?? null,
     status: row.status,
     match_status: row.match_status,
     payment_reference: row.payment_reference,
@@ -552,8 +557,11 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
         title: 'Vendor invoice',
         status: invoice.status,
         at: invoice.created_at || toIsoTimestamp(invoice.invoice_date),
-        details: invoice.notes,
+        details: invoice.payable_total_cents != null
+          ? [invoice.notes, `Billed $${formatCents(invoice.total_amount)} → Pay $${formatCents(invoice.payable_total_cents)}`].filter(Boolean).join(' ')
+          : invoice.notes,
         amount_cents: invoice.total_amount,
+        payable_total_cents: invoice.payable_total_cents ?? null,
         match_status: invoice.match_status,
         po_id: po.id,
         po_number: po.po_number,
@@ -572,7 +580,10 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
           at: exception.created_at,
           actor_name: exception.actor_name,
           details: exception.details,
-          amount_cents: invoice.total_amount,
+          amount_cents: exception.action === 'EXCEPTION_SHORT_PAY' && invoice.payable_total_cents != null
+            ? invoice.payable_total_cents
+            : invoice.total_amount,
+          payable_total_cents: invoice.payable_total_cents ?? null,
           match_status: invoice.match_status,
           po_id: po.id,
           po_number: po.po_number,
@@ -594,7 +605,8 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
           at: ap.created_at,
           actor_name: ap.actor_name,
           details: ap.details,
-          amount_cents: invoice.total_amount,
+          amount_cents: invoice.payable_total_cents != null ? invoice.payable_total_cents : invoice.total_amount,
+          payable_total_cents: invoice.payable_total_cents ?? null,
           match_status: invoice.match_status,
           po_id: po.id,
           po_number: po.po_number,

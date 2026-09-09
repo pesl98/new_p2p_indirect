@@ -8,10 +8,11 @@ import {
   XCircle,
   X,
   RotateCcw,
-  Eye
+  Eye,
+  Banknote
 } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney } from '../money';
+import { formatMoney, toCents } from '../money';
 import { lineTypeLabel } from '../lineType';
 
 const DISPOSITIONS = [
@@ -19,6 +20,11 @@ const DISPOSITIONS = [
     id: 'accept_variance',
     label: 'Accept variance',
     hint: 'Clear the block. Invoice can proceed to Approve for Payment at the billed cents.'
+  },
+  {
+    id: 'short_pay',
+    label: 'Short pay',
+    hint: 'Clear the block and pay less than billed. Billed total stays on the invoice for audit.'
   },
   {
     id: 'reject_invoice',
@@ -90,6 +96,16 @@ function dispositionLabel(value) {
   return String(value || '').replace(/_/g, ' ');
 }
 
+function billedPayBadge(inv) {
+  if (inv?.payable_total_cents == null) return null;
+  return (
+    <span className="bg-amber-100 text-amber-900 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center">
+      <Banknote className="w-3 h-3 mr-1" />
+      Billed ${formatMoney(inv.total_amount)} → Pay ${formatMoney(inv.payable_total_cents)}
+    </span>
+  );
+}
+
 export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onNavigate, focusId }) {
   const [queue, setQueue] = useState('open');
   const [invoices, setInvoices] = useState([]);
@@ -97,6 +113,7 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
   const [selected, setSelected] = useState(null);
   const [disposition, setDisposition] = useState('accept_variance');
   const [reason, setReason] = useState('');
+  const [payableDollars, setPayableDollars] = useState('');
   const [processing, setProcessing] = useState(false);
 
   const loadQueue = async (nextQueue = queue) => {
@@ -121,6 +138,7 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
       setSelected(detail);
       setDisposition('accept_variance');
       setReason('');
+      setPayableDollars('');
     } catch (err) {
       alert(err.message);
     }
@@ -136,15 +154,30 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
       alert('A disposition reason is required.');
       return;
     }
+    const payload = {
+      disposition,
+      reason: reason.trim(),
+      actor_name: currentUser?.name || 'Finance Specialist'
+    };
+    if (disposition === 'short_pay') {
+      const payableCents = toCents(payableDollars);
+      if (!Number.isInteger(payableCents) || payableCents < 0 || payableCents >= selected.total_amount) {
+        alert('Payable must be ≥ $0.00 and strictly less than the billed total.');
+        return;
+      }
+      if (!window.confirm(
+        `Short-pay billed $${formatMoney(selected.total_amount)} at payable $${formatMoney(payableCents)}? Billed total stays on the invoice.`
+      )) {
+        return;
+      }
+      payload.payable_total_cents = payableCents;
+    }
     setProcessing(true);
     try {
-      const result = await api.resolveInvoiceException(selected.id, {
-        disposition,
-        reason: reason.trim(),
-        actor_name: currentUser?.name || 'Finance Specialist'
-      });
+      const result = await api.resolveInvoiceException(selected.id, payload);
       setSelected(result.invoice);
       setReason('');
+      setPayableDollars('');
       await loadQueue(queue);
       if (onDataChanged) onDataChanged();
     } catch (err) {
@@ -211,7 +244,14 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">{inv.invoice_number}</td>
                     <td className="py-3 px-4 font-medium text-slate-900">{inv.supplier_name}</td>
                     <td className="py-3 px-4 font-mono text-indigo-700 font-semibold">{inv.po_number}</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">${formatMoney(inv.total_amount)}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900">
+                      <div>${formatMoney(inv.total_amount)}</div>
+                      {inv.payable_total_cents != null && (
+                        <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
+                          Pay ${formatMoney(inv.payable_total_cents)}
+                        </div>
+                      )}
+                    </td>
                     <td className="py-3 px-4">{matchBadge(inv.match_status)}</td>
                     <td className="py-3 px-4">{statusBadge(inv.status)}</td>
                     <td className="py-3 px-4 text-slate-600 capitalize">
@@ -243,6 +283,7 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                   <h3 className="text-lg font-mono font-bold text-slate-900">{selected.invoice_number}</h3>
                   {matchBadge(selected.match_status)}
                   {statusBadge(selected.status)}
+                  {billedPayBadge(selected)}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Vendor: <strong>{selected.supplier_name}</strong> • {selected.po_number}
@@ -327,9 +368,20 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">Amounts (integer cents)</div>
                   <div className="text-[11px] text-slate-600">PO ${formatMoney(selected.po_total_amount)} · Billed ${formatMoney(selected.total_amount)}</div>
+                  {selected.payable_total_cents != null && (
+                    <div className="text-[11px] font-semibold text-amber-900 mt-1">
+                      Payable ${formatMoney(selected.payable_total_cents)} (billed total unchanged)
+                    </div>
+                  )}
                   {selected.exception?.accepted_total_cents != null && (
                     <div className="text-[11px] text-slate-600 mt-1">
-                      Last accepted total ${formatMoney(selected.exception.accepted_total_cents)} ({selected.exception.accepted_match_status})
+                      Last {selected.exception.disposition === 'short_pay' ? 'payable' : 'accepted'} total ${formatMoney(selected.exception.accepted_total_cents)}
+                      {selected.exception.billed_total_cents != null
+                        ? ` · billed ${formatMoney(selected.exception.billed_total_cents)}`
+                        : ''}
+                      {selected.exception.accepted_match_status
+                        ? ` (${selected.exception.accepted_match_status})`
+                        : ''}
                     </div>
                   )}
                 </div>
@@ -346,7 +398,12 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                           <span className="text-slate-400">{row.created_at}</span>
                         </div>
                         <div className="text-slate-600 mt-1">{row.reason}</div>
-                        <div className="text-slate-500 mt-1">{row.actor_name} · accepted ${formatMoney(row.accepted_total_cents)}</div>
+                        <div className="text-slate-500 mt-1">
+                          {row.actor_name}
+                          {row.disposition === 'short_pay'
+                            ? ` · billed $${formatMoney(row.billed_total_cents ?? selected.total_amount)} → pay $${formatMoney(row.accepted_total_cents)}`
+                            : ` · accepted $${formatMoney(row.accepted_total_cents)}`}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -374,7 +431,7 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                     <span>Take disposition</span>
                     <span className="font-normal text-slate-500">as {currentUser?.name || 'current persona'}</span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {DISPOSITIONS.map((option) => (
                       <label
                         key={option.id}
@@ -393,13 +450,38 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                       </label>
                     ))}
                   </div>
+                  {disposition === 'short_pay' && (
+                    <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
+                      <div className="text-[11px] text-slate-600">
+                        Billed total <strong className="text-slate-900">${formatMoney(selected.total_amount)}</strong>
+                        {' · '}Match {selected.match_status?.replace(/_/g, ' ')} (not rematched)
+                      </div>
+                      <label className="block text-slate-700 font-bold text-[11px]">
+                        Payable amount (dollars) — must be ≥ 0 and less than billed
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={payableDollars}
+                        onChange={(e) => setPayableDollars(e.target.value)}
+                        placeholder="e.g. 1498.00 for 2 × $749 PO/GRN"
+                        className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"
+                      />
+                      {payableDollars !== '' && (
+                        <div className="text-[11px] text-amber-900 font-semibold">
+                          Billed ${formatMoney(selected.total_amount)} → Pay ${formatMoney(toCents(payableDollars))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="block text-slate-700 font-bold text-[11px] mb-1">Reason (required)</label>
                     <textarea
                       value={reason}
                       onChange={(e) => setReason(e.target.value)}
                       rows={3}
-                      placeholder="Why is AP accepting, rejecting, or returning this invoice?"
+                      placeholder="Why is AP accepting, short-paying, rejecting, or returning this invoice?"
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                     />
                   </div>
@@ -428,8 +510,8 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                     onClick={handleResolve}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5"
                   >
-                    {disposition === 'return_to_buyer' ? <RotateCcw className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-                    <span>Record disposition</span>
+                    {disposition === 'return_to_buyer' ? <RotateCcw className="w-4 h-4" /> : disposition === 'short_pay' ? <Banknote className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                    <span>{disposition === 'short_pay' ? 'Confirm short pay' : 'Record disposition'}</span>
                   </button>
                 )}
               </div>

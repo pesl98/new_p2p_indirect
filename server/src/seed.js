@@ -127,7 +127,8 @@ await db.transaction(async () => {
   //   PR-2026-001 — complete goods path: PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid
   //   PR-2026-005 — complete service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched)
   //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
-  // Exception workbench: INV-TSG-11029 is open (David resolves); INV-FCJ-7701 is already accept_variance.
+  // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay);
+  // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × $749.00 = $1,498.00.
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -386,7 +387,7 @@ await db.transaction(async () => {
     'variance_flagged',
     'total_variance',
     null,
-    'Discrepancy detected: Invoiced unit price $799.00 exceeds PO price $749.00 by $50.00/unit. Also only 2 of 4 units have been received.'
+    'Discrepancy detected: Invoiced unit price $799.00 exceeds PO price $749.00 by $50.00/unit. Also only 2 of 4 units have been received. Open for Exception Workbench — Short pay e.g. $1,498.00 (2 received × $749.00 PO price).'
   );
   await insertInvoiceItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 4, 79900, 319600);
   await insertMatch.run(2, 2, 2, 4, 2, 4, 74900, 79900, 2, 5000, 'fail', 'Quantity variance: Cumulative invoiced 4 (prior 0 + this claim 4) exceeds 2 physically received on GRN. Price discrepancy: Billed at $799.00 vs authorized PO price $749.00 (+6.68%).');

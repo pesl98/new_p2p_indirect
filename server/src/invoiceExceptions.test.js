@@ -412,3 +412,235 @@ describe('invoice exception dispositions', () => {
     assert.equal(attached.exception.accepted_total_cents, 4 * 79900);
   });
 });
+
+async function createFlaggedInvoiceOnBudget(db, {
+  qty = 4,
+  received = 2,
+  ordered = 4,
+  poPrice = 74900,
+  billedPrice = 79900,
+  invoiceNumber = 'INV-SP-1',
+  committed = 299600
+} = {}) {
+  await db.prepare(`
+    INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount)
+    VALUES (?, 1, 1, 'converted_to_po', ?)
+  `).run(`PR-${invoiceNumber}`, ordered * poPrice);
+  const pr = await db.prepare(`SELECT id FROM purchase_requisitions WHERE pr_number = ?`).get(`PR-${invoiceNumber}`);
+  await db.prepare(`
+    INSERT INTO purchase_orders (po_number, requisition_id, supplier_id, created_by, status, total_amount, issue_date)
+    VALUES (?, ?, 1, 1, 'partially_received', ?, '2026-09-01')
+  `).run(`PO-${invoiceNumber}`, pr.id, ordered * poPrice);
+  const po = await db.prepare(`SELECT id FROM purchase_orders WHERE po_number = ?`).get(`PO-${invoiceNumber}`);
+  await db.prepare(`
+    INSERT INTO po_items (po_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type)
+    VALUES (?, 'Test Monitor', 'IT Hardware', ?, ?, ?, ?, 0, 0, 'goods')
+  `).run(po.id, ordered, poPrice, ordered * poPrice, received);
+  const item = await db.prepare(`SELECT id FROM po_items WHERE po_id = ?`).get(po.id);
+  await db.prepare(`
+    UPDATE budgets SET committed_amount = ? WHERE department_id = 1 AND fiscal_year = 2026
+  `).run(committed);
+  return await createVendorInvoice(db, invoicePayload({
+    qty,
+    unitPriceCents: billedPrice,
+    invoiceNumber,
+    poId: po.id,
+    itemId: item.id
+  }));
+}
+
+describe('invoice exception short_pay', () => {
+  test('short_pay rejects payable >= billed, negative, float, missing reason, and non-flagged invoices', async () => {
+    const db = await createTestDb();
+    const flagged = await createFlaggedInvoice(db, {
+      invoiceNumber: 'INV-SP-VAL', poId: 1, itemId: 1, poNumber: 'PO-SP-VAL'
+    });
+    const billedCents = 4 * 79900;
+
+    await insertPoLine(db, { ordered: 1, received: 1, unitPriceCents: 5000, poId: 2, itemId: 2, poNumber: 'PO-OK' });
+    const perfect = await createVendorInvoice(db, invoicePayload({
+      qty: 1, unitPriceCents: 5000, invoiceNumber: 'INV-OK-SP', poId: 2, itemId: 2
+    }));
+
+    await assert.rejects(
+      () => resolveInvoiceException(db, flagged.invoiceId, {
+        disposition: 'short_pay',
+        reason: 'Pay billed',
+        actor_name: 'David Miller',
+        payable_total_cents: billedCents
+      }),
+      (err) => err.statusCode === 400 && /accept_variance/.test(err.message)
+    );
+    await assert.rejects(
+      () => resolveInvoiceException(db, flagged.invoiceId, {
+        disposition: 'short_pay',
+        reason: 'Overpay',
+        actor_name: 'David Miller',
+        payable_total_cents: billedCents + 1
+      }),
+      (err) => err.statusCode === 400 && /cannot exceed/.test(err.message)
+    );
+    await assert.rejects(
+      () => resolveInvoiceException(db, flagged.invoiceId, {
+        disposition: 'short_pay',
+        reason: 'Negative',
+        actor_name: 'David Miller',
+        payable_total_cents: -1
+      }),
+      (err) => err.statusCode === 400 && /≥ 0|>= 0/.test(err.message)
+    );
+    await assert.rejects(
+      () => resolveInvoiceException(db, flagged.invoiceId, {
+        disposition: 'short_pay',
+        reason: 'Float',
+        actor_name: 'David Miller',
+        payable_total_cents: 149800.5
+      }),
+      (err) => err.statusCode === 400 && /integer number of cents/.test(err.message)
+    );
+    await assert.rejects(
+      () => resolveInvoiceException(db, flagged.invoiceId, {
+        disposition: 'short_pay',
+        actor_name: 'David Miller',
+        payable_total_cents: 149800
+      }),
+      (err) => err.statusCode === 400 && /reason is required/.test(err.message)
+    );
+    await assert.rejects(
+      () => resolveInvoiceException(db, flagged.invoiceId, {
+        disposition: 'short_pay',
+        reason: 'Missing payable',
+        actor_name: 'David Miller'
+      }),
+      (err) => err.statusCode === 400 && /payable_total_cents/.test(err.message)
+    );
+    await assert.rejects(
+      () => resolveInvoiceException(db, perfect.invoiceId, {
+        disposition: 'short_pay',
+        reason: 'should not work',
+        actor_name: 'David Miller',
+        payable_total_cents: 100
+      }),
+      (err) => err.statusCode === 400 && /variance-flagged/.test(err.message)
+    );
+  });
+
+  test('short_pay clears the block, keeps billed total, writes audit cents, and unlocks approve', async () => {
+    const db = await createTestDb();
+    const created = await createFlaggedInvoice(db, { billedPrice: 79900, qty: 4 });
+    const billedCents = 4 * 79900;
+    const payableCents = 2 * 74900;
+
+    const resolved = await resolveInvoiceException(db, created.invoiceId, {
+      disposition: 'short_pay',
+      reason: 'Pay received qty at PO price only.',
+      actor_name: 'David Miller',
+      payable_total_cents: payableCents
+    });
+
+    assert.equal(resolved.disposition, 'short_pay');
+    assert.equal(resolved.invoice_status, 'matched');
+    assert.equal(resolved.accepted_total_cents, payableCents);
+    assert.equal(resolved.billed_total_cents, billedCents);
+    assert.equal(resolved.payable_total_cents, payableCents);
+    assert.equal(resolved.accepted_match_status, 'total_variance');
+
+    const invoice = await db.prepare(`
+      SELECT status, match_status, total_amount, payable_total_cents FROM invoices WHERE id = ?
+    `).get(created.invoiceId);
+    assert.equal(invoice.status, 'matched');
+    assert.equal(invoice.match_status, 'total_variance');
+    assert.equal(invoice.total_amount, billedCents);
+    assert.equal(invoice.payable_total_cents, payableCents);
+
+    const disposition = await db.prepare(`
+      SELECT * FROM invoice_exception_dispositions WHERE invoice_id = ?
+    `).get(created.invoiceId);
+    assert.equal(disposition.disposition, 'short_pay');
+    assert.equal(disposition.accepted_total_cents, payableCents);
+    assert.equal(disposition.billed_total_cents, billedCents);
+
+    const audit = await db.prepare(`
+      SELECT * FROM audit_logs WHERE entity_type = 'invoice' AND entity_id = ? AND action = 'EXCEPTION_SHORT_PAY'
+    `).get(created.invoiceId);
+    assert.ok(audit);
+    assert.equal(audit.actor_name, 'David Miller');
+    assert.ok(audit.details.includes(`${billedCents}¢`));
+    assert.ok(audit.details.includes(`${payableCents}¢`));
+    assert.ok(audit.details.includes(`${billedCents - payableCents}¢`));
+
+    const approve = await approveInvoicePayment(db, created.invoiceId, {
+      approver_name: 'David Miller'
+    });
+    assert.match(approve.message, /Billed \$3196\.00 → Pay \$1498\.00/);
+    const after = await db.prepare(`SELECT status FROM invoices WHERE id = ?`).get(created.invoiceId);
+    assert.equal(after.status, 'approved_for_payment');
+  });
+
+  test('approve and mark-paid budget movement uses payable cents, not billed', async () => {
+    const db = await createTestDb();
+    const billedCents = 4 * 79900;
+    const payableCents = 2 * 74900;
+    const committed = 299600;
+    const created = await createFlaggedInvoiceOnBudget(db, { committed });
+
+    await resolveInvoiceException(db, created.invoiceId, {
+      disposition: 'short_pay',
+      reason: 'Short-pay unreceived units and price overage.',
+      actor_name: 'Elena Rostova',
+      payable_total_cents: payableCents
+    });
+
+    const invoice = await db.prepare(`SELECT total_amount, payable_total_cents FROM invoices WHERE id = ?`).get(created.invoiceId);
+    assert.equal(invoice.total_amount, billedCents);
+    assert.equal(invoice.payable_total_cents, payableCents);
+
+    await approveInvoicePayment(db, created.invoiceId, { approver_name: 'David Miller' });
+    const afterApprove = await db.prepare(`
+      SELECT committed_amount, actual_spent FROM budgets WHERE department_id = 1 AND fiscal_year = 2026
+    `).get();
+    assert.equal(afterApprove.actual_spent, payableCents);
+    assert.equal(afterApprove.committed_amount, committed - payableCents);
+
+    const paid = await markInvoicePaid(db, created.invoiceId, { payer_name: 'David Miller' });
+    assert.equal(paid.payable_total_cents, payableCents);
+    assert.equal(paid.billed_total_cents, billedCents);
+    const afterPay = await db.prepare(`
+      SELECT status, total_amount, payable_total_cents FROM invoices WHERE id = ?
+    `).get(created.invoiceId);
+    assert.equal(afterPay.status, 'paid');
+    assert.equal(afterPay.total_amount, billedCents);
+    assert.equal(afterPay.payable_total_cents, payableCents);
+
+    const budgetAfterPay = await db.prepare(`
+      SELECT committed_amount, actual_spent FROM budgets WHERE department_id = 1 AND fiscal_year = 2026
+    `).get();
+    assert.equal(budgetAfterPay.actual_spent, payableCents);
+  });
+
+  test('short_pay is terminal and listed on the resolved queue', async () => {
+    const db = await createTestDb();
+    const created = await createFlaggedInvoice(db);
+
+    await resolveInvoiceException(db, created.invoiceId, {
+      disposition: 'short_pay',
+      reason: 'Pay GRN quantity at PO price.',
+      actor_name: 'David Miller',
+      payable_total_cents: 100
+    });
+
+    await assert.rejects(
+      () => resolveInvoiceException(db, created.invoiceId, {
+        disposition: 'accept_variance',
+        reason: 'changed my mind',
+        actor_name: 'David Miller'
+      }),
+      (err) => err.statusCode === 400 && /terminal disposition|already progressed|variance-flagged/.test(err.message)
+    );
+
+    const resolved = await listInvoiceExceptions(db, { queue: 'resolved' });
+    assert.ok(resolved.some((row) => row.id === created.invoiceId));
+    const open = await listInvoiceExceptions(db, { queue: 'open' });
+    assert.ok(!open.some((row) => row.id === created.invoiceId));
+  });
+});

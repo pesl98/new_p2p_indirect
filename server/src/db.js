@@ -133,6 +133,63 @@ async function migrateCatalogItemStatus(database) {
   }
 }
 
+/**
+ * Existing DBs need invoices.payable_total_cents (NULL = pay billed) and
+ * invoice_exception_dispositions.short_pay + billed_total_cents.
+ * CHECK cannot be ALTERed — rebuild the dispositions table when missing short_pay.
+ */
+async function migrateInvoiceShortPay(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('invoices') && !(await tableHasColumn(database, 'invoices', 'payable_total_cents'))) {
+    await maybe(database.exec(`ALTER TABLE invoices ADD COLUMN payable_total_cents INTEGER`));
+  }
+
+  if (!tables.includes('invoice_exception_dispositions')) return;
+
+  const table = await maybe(
+    database.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'invoice_exception_dispositions'`
+    ).get()
+  );
+  const sql = table?.sql || '';
+  const hasShortPayCheck = sql.includes("'short_pay'");
+  const hasBilledCol = await tableHasColumn(database, 'invoice_exception_dispositions', 'billed_total_cents');
+
+  if (!hasShortPayCheck) {
+    const billedSelect = hasBilledCol ? 'billed_total_cents' : 'NULL';
+    await maybe(database.exec(`
+      CREATE TABLE invoice_exception_dispositions_migrated (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
+        reason TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        accepted_total_cents INTEGER,
+        accepted_match_status TEXT,
+        billed_total_cents INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+      );
+      INSERT INTO invoice_exception_dispositions_migrated
+        (id, invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, billed_total_cents, created_at)
+        SELECT id, invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, ${billedSelect}, created_at
+        FROM invoice_exception_dispositions;
+      DROP TABLE invoice_exception_dispositions;
+      ALTER TABLE invoice_exception_dispositions_migrated RENAME TO invoice_exception_dispositions;
+    `));
+    return;
+  }
+
+  if (!hasBilledCol) {
+    await maybe(database.exec(
+      `ALTER TABLE invoice_exception_dispositions ADD COLUMN billed_total_cents INTEGER`
+    ));
+  }
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
@@ -140,6 +197,7 @@ export async function applySchema(database) {
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);
   await migrateCatalogItemStatus(database);
+  await migrateInvoiceShortPay(database);
   return database;
 }
 

@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asCents, formatCents, fromCents, lineTotalCents, toCents, toQty } from './money.js';
+import { asCents, formatCents, fromCents, lineTotalCents, requireIntegerCents, toCents, toQty } from './money.js';
 import { priceToleranceCents } from './match.js';
 
 describe('money helpers', () => {
@@ -21,6 +21,15 @@ describe('money helpers', () => {
     assert.equal(lineTotalCents(4, 74900), 299600);
     assert.equal(toQty(2.9), 2);
     assert.equal(asCents(79900.7), 79900);
+  });
+
+  test('requireIntegerCents rejects floats, booleans, and missing values', () => {
+    assert.equal(requireIntegerCents(149800, 'payable_total_cents'), 149800);
+    assert.equal(requireIntegerCents('149800', 'payable_total_cents'), 149800);
+    assert.throws(() => requireIntegerCents(149800.5, 'payable_total_cents'), /integer number of cents/);
+    assert.throws(() => requireIntegerCents('1498.00', 'payable_total_cents'), /integer number of cents/);
+    assert.throws(() => requireIntegerCents(undefined, 'payable_total_cents'), /required/);
+    assert.throws(() => requireIntegerCents(true, 'payable_total_cents'), /integer number of cents/);
   });
 
   test('price tolerance is 1% of PO unit price in cents, rounded to nearest cent', () => {
