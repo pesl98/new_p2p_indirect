@@ -31,6 +31,8 @@ describe('Turso/SQLite schema migrations', () => {
     }
     const invoicesCols = raw.prepare(`PRAGMA table_info(invoices)`).all().map((col) => col.name);
     assert.ok(invoicesCols.includes('payable_total_cents'));
+    const deptCols = raw.prepare(`PRAGMA table_info(departments)`).all().map((col) => col.name);
+    assert.ok(deptCols.includes('approver_user_id'));
   });
 
   test('approval waiting rebuild SQL splits into four complete statements', () => {
@@ -199,5 +201,46 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(kept.disposition, 'return_to_buyer');
     assert.equal(kept.reason, 'qty mismatch');
     assert.equal(kept.billed_total_cents, null);
+
+    assert.ok(columnNames(db, 'departments').includes('approver_user_id'));
+  });
+
+  test('applySchema backfills departments.approver_user_id from role=approver', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+
+    db.exec(`
+      CREATE TABLE departments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL
+      );
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        role TEXT NOT NULL,
+        department_id INTEGER
+      );
+      INSERT INTO departments (id, code, name) VALUES
+        (1, 'MKT', 'Marketing'),
+        (2, 'ITE', 'IT');
+      INSERT INTO users (id, name, email, role, department_id) VALUES
+        (1, 'Alice', 'a@example.com', 'requester', 1),
+        (2, 'Bob', 'b@example.com', 'approver', 1);
+    `);
+
+    await applySchema(db);
+
+    assert.ok(columnNames(db, 'departments').includes('approver_user_id'));
+    assert.equal(
+      db.prepare(`SELECT approver_user_id FROM departments WHERE id = 1`).get().approver_user_id,
+      2
+    );
+    assert.equal(
+      db.prepare(`SELECT approver_user_id FROM departments WHERE id = 2`).get().approver_user_id,
+      null
+    );
   });
 });

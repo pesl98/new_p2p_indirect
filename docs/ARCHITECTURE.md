@@ -39,11 +39,11 @@ Approval thresholds (`server/src/money.js`):
 
 ## Sequential approvals
 
-Policy lives in `server/src/approvalPolicy.js` and is resolved by **role + department**, not hardcoded user ids:
+Policy lives in `server/src/approvalPolicy.js`. Step 1 is the **mapped department head** (`departments.approver_user_id`); if that column is NULL, the engine falls back to the first user with `role=approver` in the PR’s department. Later steps are still resolved by role, not hardcoded user ids:
 
 | PR total | Chain |
 | --- | --- |
-| ≤ $1,000 | Department Head (`role=approver` in the PR’s department) |
+| ≤ $1,000 | Department head (`departments.approver_user_id`, else `role=approver` in the PR’s department) |
 | > $1,000 and ≤ $10,000 | Dept Head, then Strategic Sourcing (`role=procurement`) |
 | > $10,000 | Dept Head, then Procurement, then Finance (`role=finance`) or CFO (`role=admin`) if no finance user exists |
 
@@ -136,6 +136,32 @@ Referential policy (fail-closed on new assignment, allow deactivate):
 Unique `suppliers.code` / `catalog_items.sku` conflicts return **409**. Existing DBs without `catalog_items.status` get `ALTER TABLE … ADD COLUMN status TEXT NOT NULL DEFAULT 'active'` in `db.js` (Turso/SQLite). Master-data field edits are not written to `audit_logs` (that table is for P2P lifecycle events, not vendor/catalog CRUD).
 
 The Vendors & Catalog UI (Carol / procurement persona; same client-only demo auth as the rest of the app) has edit modals and Deactivate / Reactivate with confirm.
+
+## Department heads (org admin)
+
+Step-1 approval is an **org mapping**, not “whoever happens to have `role=approver` in that department.”
+
+`departments.approver_user_id` is a nullable integer pointing at `users.id`. It is **not** a SQLite FOREIGN KEY: `departments` is created before `users` (`users.department_id` references `departments`). The admin API checks that the user exists. Existing DBs get `ALTER TABLE departments ADD COLUMN approver_user_id INTEGER` plus a one-time backfill from the first `role=approver` user in that department (`server/src/db.js`, Turso/SQLite).
+
+Resolution in `resolveDepartmentApprover`:
+
+1. If `approver_user_id` is set, use that user (any role).
+2. Else the first `users` row with `role=approver` AND `department_id` matching the PR (legacy).
+3. Else HTTP 400: assign a head in Org Admin.
+
+Procurement and finance threshold steps are unchanged.
+
+| Resource | Method |
+| --- | --- |
+| List departments + current head | `GET /api/departments` (also `GET /api/users/departments`) |
+| Eligible picker users | `GET /api/departments/eligible-approvers` (`role` in approver / admin / finance / procurement) |
+| Set or clear mapping | `PUT /api/departments/:id/approver` or `PATCH /api/departments/:id` with `{ approver_user_id, actor_name? }` |
+
+`approver_user_id: null` clears the mapping (legacy role lookup). Any existing user id is accepted, including requesters; the picker lists approval-capable roles. Same as supplier/catalog master-data: **no JWT / `actor_role` gate** — APIs are demo-open. The UI is shown only for the Elena (`role=admin`) persona.
+
+Assignment changes write `audit_logs` (`entity_type=department`, `APPROVER_ASSIGNED` / `APPROVER_CLEARED`). Existing approval chains on submitted PRs are not rewritten.
+
+Seed maps every cost center: Marketing → Bob Martinez, IT → Priya Nair, Facilities → James Okonkwo, HR → Sofia Berg, Finance & Admin → Elena Rostova (David remains the finance threshold step so ADM PRs over $10k do not assign Elena twice).
 
 ## Receiving (GRN) over-receipt
 
@@ -265,11 +291,11 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
+Tests cover money/match, sequential approvals, department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 
-- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary.
+- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` is still demo-open like catalog PATCH.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
 - There is no buyer inbox for `return_to_buyer` — it is an AP audit/park disposition only. Short-pay rewrites header payable cents only (no line-level debit memo or supplier portal credit).

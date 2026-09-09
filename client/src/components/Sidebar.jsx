@@ -11,7 +11,8 @@ import {
   Landmark, 
   Store,
   GitBranch,
-  ShieldAlert
+  ShieldAlert,
+  UserCog
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -20,7 +21,7 @@ function dbModeLabel(mode) {
   return 'Database connected';
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount }) {
+export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, currentUser }) {
   const [dbMode, setDbMode] = useState(null);
 
   useEffect(() => {
@@ -108,6 +109,15 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
     },
   ];
 
+  const adminItems = currentUser?.role === 'admin'
+    ? [{
+        id: 'org_admin',
+        label: 'Department Approvers',
+        icon: UserCog,
+        desc: 'Assign step-1 department heads'
+      }]
+    : [];
+
   return (
     <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 min-h-[calc(100vh-4rem)] border-r border-slate-800">
       {/* Workflow Navigation */}
@@ -144,6 +154,36 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           })}
         </nav>
       </div>
+
+      {adminItems.length > 0 && (
+        <div className="px-4 pb-2">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">
+            Administration
+          </div>
+          <nav className="space-y-1">
+            {adminItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onTabChange(item.id)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${
+                    isActive
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/80'
+                  }`}
+                >
+                  <div className="flex items-center space-x-3 truncate">
+                    <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      )}
 
       {/* Lifecycle Flow Indicator Card */}
       <div className="mt-auto p-4 border-t border-slate-800/80">
