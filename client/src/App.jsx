@@ -9,6 +9,7 @@ import GoodsReceiptView from './views/GoodsReceiptView';
 import ServiceEntrySheetsView from './views/ServiceEntrySheetsView';
 import InvoicesMatchingView from './views/InvoicesMatchingView';
 import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
+import BuyerInboxView from './views/BuyerInboxView';
 import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
@@ -21,6 +22,7 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+  const [buyerInboxCount, setBuyerInboxCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const fetchCoreData = async () => {
@@ -45,9 +47,28 @@ export default function App() {
     fetchCoreData();
   }, []);
 
+  useEffect(() => {
+    if (currentUser?.role !== 'requester' || !currentUser?.id) {
+      setBuyerInboxCount(0);
+      return;
+    }
+    let cancelled = false;
+    api.getBuyerInbox({ requester_id: currentUser.id })
+      .then((rows) => {
+        if (!cancelled) setBuyerInboxCount(Array.isArray(rows) ? rows.length : 0);
+      })
+      .catch(() => {
+        if (!cancelled) setBuyerInboxCount(0);
+      });
+    return () => { cancelled = true; };
+  }, [currentUser, analytics]);
+
   const handleSelectUser = (user) => {
     setCurrentUser(user);
     if (user?.role !== 'admin' && activeTab === 'org_admin') {
+      setActiveTab('dashboard');
+    }
+    if (user?.role !== 'requester' && activeTab === 'buyer_inbox') {
       setActiveTab('dashboard');
     }
   };
@@ -74,6 +95,7 @@ export default function App() {
           onTabChange={setActiveTab}
           pendingApprovalsCount={analytics?.kpi?.pendingApprovals || 0}
           varianceInvoicesCount={analytics?.kpi?.invoiceVariances || 0}
+          buyerInboxCount={buyerInboxCount}
           currentUser={currentUser}
         />
 
@@ -87,7 +109,7 @@ export default function App() {
           )}
 
           {activeTab === 'document_trail' && (
-            <DocumentTrailView onNavigate={handleNavigate} />
+            <DocumentTrailView onNavigate={handleNavigate} lookupQ={navFocus?.q} />
           )}
 
           {activeTab === 'requisitions' && (
@@ -142,6 +164,15 @@ export default function App() {
 
           {activeTab === 'exception_workbench' && (
             <ExceptionWorkbenchView
+              currentUser={currentUser}
+              onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
+              focusId={navFocus?.focusId}
+            />
+          )}
+
+          {activeTab === 'buyer_inbox' && (
+            <BuyerInboxView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
               onNavigate={handleNavigate}

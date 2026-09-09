@@ -386,4 +386,30 @@ describe('document trail — edge lookups', () => {
     assert.equal(exceptionEvent.title, 'Invoice short-paid');
     assert.equal(exceptionEvent.amount_cents, 149800);
   });
+
+  test('buyer-response audit appears on the invoice timeline', async () => {
+    const db = await createTestDb();
+    await seedStandalonePo(db);
+    await db.exec(`
+      INSERT INTO invoices
+        (id, invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, created_at)
+      VALUES
+        (22, 'INV-BR-1', 2, 1, '2026-09-05', '2026-10-05', 29700, 0, 29700, 'variance_flagged', 'quantity_variance', '2026-09-05 11:00:00');
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
+      VALUES
+        ('invoice', 22, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Need buyer confirmation', '2026-09-06 09:00:00'),
+        ('invoice', 22, 'EXCEPTION_BUYER_RESPONDED', 'Alice Chen', 'Third unit arrived. Ready for AP.', '2026-09-06 14:00:00');
+    `);
+
+    const trail = await getDocumentTrail(db, { po_number: 'PO-2026-002' });
+    const invoice = trail.purchase_orders[0].invoices[0];
+    assert.deepEqual(
+      invoice.exception_events.map((row) => row.action),
+      ['EXCEPTION_RETURN_TO_BUYER', 'EXCEPTION_BUYER_RESPONDED']
+    );
+    const buyerEvent = trail.timeline.find((event) => event.title === 'Buyer responded');
+    assert.ok(buyerEvent);
+    assert.equal(buyerEvent.tab, 'buyer_inbox');
+    assert.equal(buyerEvent.actor_name, 'Alice Chen');
+  });
 });

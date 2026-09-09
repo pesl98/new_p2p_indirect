@@ -34,7 +34,7 @@ const DISPOSITIONS = [
   {
     id: 'return_to_buyer',
     label: 'Return to buyer',
-    hint: 'Park with an audit note. Hard exception stays open until accepted or rejected.'
+    hint: 'Park with an audit note. Appears in the requester Buyer Inbox until they respond. Hard exception stays open.'
   }
 ];
 
@@ -93,6 +93,7 @@ function statusBadge(status) {
 }
 
 function dispositionLabel(value) {
+  if (value === 'buyer_response') return 'buyer response';
   return String(value || '').replace(/_/g, ' ');
 }
 
@@ -387,6 +388,17 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                 </div>
               </div>
 
+              {selected.exception?.disposition === 'buyer_response' && selected.status === 'variance_flagged' && (
+                <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 text-sky-950">
+                  <div className="font-bold flex items-center space-x-1.5 text-xs">
+                    <ClipboardList className="w-4 h-4 text-sky-700" />
+                    <span>Buyer responded — ready for AP disposition</span>
+                  </div>
+                  <p className="mt-2 text-[11px] leading-relaxed">{selected.exception.reason}</p>
+                  <p className="mt-1 text-[10px] text-sky-800">{selected.exception.actor_name}</p>
+                </div>
+              )}
+
               {selected.exception_dispositions?.length > 0 && (
                 <div>
                   <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2">Prior dispositions</h4>
@@ -402,7 +414,9 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                           {row.actor_name}
                           {row.disposition === 'short_pay'
                             ? ` · billed $${formatMoney(row.billed_total_cents ?? selected.total_amount)} → pay $${formatMoney(row.accepted_total_cents)}`
-                            : ` · accepted $${formatMoney(row.accepted_total_cents)}`}
+                            : row.disposition === 'buyer_response' || row.disposition === 'return_to_buyer'
+                              ? ''
+                              : ` · accepted $${formatMoney(row.accepted_total_cents)}`}
                         </div>
                       </div>
                     ))}

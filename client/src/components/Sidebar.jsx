@@ -12,6 +12,7 @@ import {
   Store,
   GitBranch,
   ShieldAlert,
+  Inbox,
   UserCog
 } from 'lucide-react';
 
@@ -21,7 +22,7 @@ function dbModeLabel(mode) {
   return 'Database connected';
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, currentUser }) {
+export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, currentUser }) {
   const [dbMode, setDbMode] = useState(null);
 
   useEffect(() => {
@@ -89,6 +90,16 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       badgeColor: 'bg-rose-500 text-white',
       desc: 'AP triage for dual-match failures'
     },
+    ...(currentUser?.role === 'requester'
+      ? [{
+          id: 'buyer_inbox',
+          label: 'Buyer Inbox',
+          icon: Inbox,
+          badge: buyerInboxCount > 0 ? buyerInboxCount : null,
+          badgeColor: 'bg-amber-500 text-white',
+          desc: 'Invoices AP returned to the requester'
+        }]
+      : []),
     {
       id: 'document_trail',
       label: 'Document trail',

@@ -11,7 +11,7 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
         → Convert to PO(s) (one issued PO per resolved supplier)
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice → dual match
-        → Exception workbench (hard failures only; optional short-pay) → AP approve → Mark paid
+        → Exception workbench (hard failures only; optional return_to_buyer → Buyer Inbox → AP disposition; optional short-pay) → AP approve → Mark paid
 ```
 
 | Stage | What happens |
@@ -23,7 +23,7 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 | Goods receipt | Goods lines only. Increments `po_items.quantity_received`. Over-receipt is blocked unless `allow_over_receipt: true`. Numbered `GRN-YYYY-NNN`. Service lines are rejected (use SES). |
 | Service entry sheet | Service lines only. Draft → submitted → accepted/rejected. Accept increments `po_items.quantity_accepted`. Over-acceptance is blocked unless `allow_over_acceptance: true`. Numbered `SES-YYYY-NNN`. |
 | Invoice | Unique per `(supplier_id, invoice_number)`. Dual match: goods 3-way vs GRN; services SES-backed vs accepted SES. |
-| Exception workbench | Hard match failures (`variance_flagged`) require a structured AP disposition before approve/pay. `short_pay` is an optional AP disposition that rewrites payable below billed. |
+| Exception workbench | Hard match failures (`variance_flagged`) require a structured AP disposition before approve/pay. `return_to_buyer` parks the invoice in the requester **Buyer Inbox**. `short_pay` is an optional AP disposition that rewrites payable below billed. |
 | AP approve | Relieves committed, increases `actual_spent` by **payable** cents (`payable_total_cents` when set, else billed `total_amount`). Refuses unresolved hard exceptions and rejected invoices. |
 
 ## Money (integer cents)
@@ -226,7 +226,7 @@ Structured dispositions (`POST /api/invoice-exceptions/:id/resolve`) require `re
 | `accept_variance` | `matched` (block cleared). `match_status` stays the engine result. Records `accepted_total_cents` = billed invoice total and `accepted_match_status`. | Approve may proceed at the billed total. No second override path. |
 | `short_pay` | `matched` (block cleared). `match_status` stays the engine result (not a rematch). Requires `payable_total_cents` (integer ≥ 0 and **strictly less than** billed `total_amount`). Equal billed → use `accept_variance`; greater than billed is never allowed. Sets `invoices.payable_total_cents`; **does not** rewrite `invoices.total_amount`. Disposition stores `accepted_total_cents` = payable and `billed_total_cents` = billed. Audit `EXCEPTION_SHORT_PAY` records billed ¢, payable ¢, and delta (billed − payable). | Approve may proceed. Budget movement and mark-paid use **payable** cents. UI shows “Billed $X → Pay $Y”. |
 | `reject_invoice` | `rejected` (terminal). | Approve and mark-paid refuse. |
-| `return_to_buyer` | Stays `variance_flagged`. Audit/park only. | Still blocked. May later accept, short-pay, or reject. Not listed under `resolved`. |
+| `return_to_buyer` | Stays `variance_flagged`. Parks the invoice in the requester **Buyer Inbox**. Audit `EXCEPTION_RETURN_TO_BUYER`. | Still blocked. Buyer may respond; AP may later accept, short-pay, or reject. Not listed under `resolved`. |
 
 `approveInvoicePayment` / `markInvoicePaid` fail closed:
 
@@ -236,9 +236,23 @@ Structured dispositions (`POST /api/invoice-exceptions/:id/resolve`) require `re
 
 The previous free-text `override_reason` on approve is a note only and does **not** unlock a hard exception.
 
-Detail (`GET /api/invoice-exceptions/:id` and `GET /api/invoices/:id`) includes `match_results`, GRN/SES receipt basis already used by match, prior dispositions, and `payable_total_cents` when a short-pay was recorded (`NULL` means pay billed). Document trail timeline includes exception audit actions (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`) when present — it does not invent them.
+### Buyer Inbox
 
-Demo: **INV-TSG-11029** (`PO-2026-002`, total variance) is open for David/Elena — short-pay practice at e.g. $1,498.00 (2 GRN × $749 PO). **INV-FCJ-7701** is an already-accepted price variance (`accepted_total_cents` = 29800). **INV-WED-9042** / PR-2026-001 remains the paid happy path.
+Coupa/Ariba-style requester exception queue for invoices AP parked with `return_to_buyer`. It is **not** a free-form override on Approve for Payment.
+
+**Open queue (`GET /api/invoice-exceptions/buyer-inbox`):** invoices with status `variance_flagged` whose **latest** disposition is `return_to_buyer`. After the buyer responds, latest becomes `buyer_response` and the row leaves this queue (it stays on the AP open workbench).
+
+Persona scoping is the same client-only demo pattern as approvals (`approver_id`) and requisitions (`requester_id`). When `requester_id` is passed, the list is limited to invoices whose linked PR `requester_id` matches **or** whose PR `department_id` matches that user’s department. `department_id` alone scopes to that cost center. Unscoped (no ids) returns the full park queue — the API is demo-open; the UI passes Alice’s id. Invoices whose PO has no PR do not appear in a scoped list.
+
+**Buyer respond (`POST /api/invoice-exceptions/:id/buyer-respond`)** requires `reason` and `actor_name`. Fail-closed unless the invoice is currently `variance_flagged` **and** latest disposition is `return_to_buyer`. Writes `buyer_response` on `invoice_exception_dispositions` (billed cents recorded; invoice status unchanged) and `audit_logs` action `EXCEPTION_BUYER_RESPONDED`. AP can then accept / short-pay / reject as usual.
+
+The Exception Workbench detail shows the buyer note in disposition history (and a “ready for AP” banner when latest is `buyer_response`). Sidebar **Buyer Inbox** is visible for requester personas (Alice).
+
+Demo: **INV-TSG-22041** (`PO-2026-006` / **PR-2026-007**, Alice, quantity variance, billed $297.00) is seeded already returned to buyer. **INV-TSG-11029** stays the open short-pay practice invoice (no return). Walkthrough: Alice Buyer Inbox → respond on INV-TSG-22041 → David Exception Workbench sees the note and accept / short-pay / reject. To practice the AP return itself: David can Return to buyer on any other open hard exception (do not use INV-TSG-11029 if you still need it for short-pay).
+
+Detail (`GET /api/invoice-exceptions/:id` and `GET /api/invoices/:id`) includes `match_results`, GRN/SES receipt basis already used by match, prior dispositions (including `buyer_response`), and `payable_total_cents` when a short-pay was recorded (`NULL` means pay billed). Document trail timeline includes exception audit actions (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`, `EXCEPTION_BUYER_RESPONDED`) when present — it does not invent them.
+
+Demo: **INV-TSG-11029** (`PO-2026-002`, total variance) is open for David/Elena — short-pay practice at e.g. $1,498.00 (2 GRN × $749 PO). **INV-TSG-22041** is the buyer-inbox park. **INV-FCJ-7701** is an already-accepted price variance (`accepted_total_cents` = 29800). **INV-WED-9042** / PR-2026-001 remains the paid happy path.
 
 How to test short-pay: resolve INV-TSG-11029 (or a test invoice) with `short_pay` and `payable_total_cents` strictly below billed. Invoice `total_amount` stays the billed claim; `payable_total_cents` is set. Approve posts **payable** to `actual_spent` (and relieves committed by the same payable cents) when the invoice has a linked PR/department. Mark-paid uses the same payable amount.
 
@@ -262,7 +276,7 @@ Response includes:
 - GRNs and SES rows (or `not_started` / `not_applicable` on the branch)
 - Invoices with `match_status`
 - AP approve / paid rows taken only from invoice `audit_logs` (`APPROVED_PAYMENT`, `APPROVED_FOR_PAYMENT`, `PAID`)
-- Exception dispositions, when present, from the same invoice `audit_logs` (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`)
+- Exception dispositions, when present, from the same invoice `audit_logs` (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`, `EXCEPTION_BUYER_RESPONDED`)
 
 The Document trail sidebar screen opens this payload as a stage strip + vertical timeline, with click-through to the existing PR / PO / GRN / SES / invoice tabs.
 
@@ -291,14 +305,14 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; audit rows; integer cents).
+Tests cover money/match, sequential approvals, department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 
 - **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` is still demo-open like catalog PATCH.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
-- There is no buyer inbox for `return_to_buyer` — it is an AP audit/park disposition only. Short-pay rewrites header payable cents only (no line-level debit memo or supplier portal credit).
+- Short-pay rewrites header payable cents only (no line-level debit memo or supplier portal credit). Buyer Inbox is the requester queue for `return_to_buyer`; it does not unlock Approve for Payment.
 - `tolerated_match` invoices are not hard-queued; AP can still approve them from Invoices & Matching without a workbench disposition.
 
 ## Local vs Vercel / Turso

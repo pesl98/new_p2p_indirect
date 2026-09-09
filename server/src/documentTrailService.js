@@ -11,7 +11,8 @@ const EXCEPTION_AUDIT_ACTIONS = {
   EXCEPTION_ACCEPT_VARIANCE: 'Exception accepted',
   EXCEPTION_REJECT_INVOICE: 'Exception rejected',
   EXCEPTION_RETURN_TO_BUYER: 'Returned to buyer',
-  EXCEPTION_SHORT_PAY: 'Invoice short-paid'
+  EXCEPTION_SHORT_PAY: 'Invoice short-paid',
+  EXCEPTION_BUYER_RESPONDED: 'Buyer responded'
 };
 
 const KIND_ORDER = {
@@ -589,7 +590,7 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
           po_number: po.po_number,
           supplier_name: invoice.supplier_name,
           source: 'audit',
-          tab: 'exception_workbench'
+          tab: exception.action === 'EXCEPTION_BUYER_RESPONDED' ? 'buyer_inbox' : 'exception_workbench'
         }));
       }
 
