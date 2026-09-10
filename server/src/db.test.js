@@ -51,6 +51,7 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(stmts.length, 4);
     assert.match(stmts[0], /CREATE TABLE invoice_exception_dispositions_migrated/i);
     assert.match(stmts[0], /'short_pay'/);
+    assert.match(stmts[0], /'buyer_response'/);
     assert.match(stmts[0], /\)\s*$/);
     assert.match(stmts[1], /^INSERT INTO invoice_exception_dispositions_migrated/i);
     assert.match(stmts[1], /NULL/);
@@ -194,6 +195,7 @@ describe('Turso/SQLite schema migrations', () => {
 
     const dispositionSql = tableSql(db, 'invoice_exception_dispositions');
     assert.match(dispositionSql, /'short_pay'/);
+    assert.match(dispositionSql, /'buyer_response'/);
     assert.ok(columnNames(db, 'invoice_exception_dispositions').includes('billed_total_cents'));
     const kept = db.prepare(
       `SELECT disposition, reason, billed_total_cents FROM invoice_exception_dispositions WHERE invoice_id = 1`
@@ -203,6 +205,55 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(kept.billed_total_cents, null);
 
     assert.ok(columnNames(db, 'departments').includes('approver_user_id'));
+  });
+
+  test('applySchema rebuilds dispositions CHECK to add buyer_response on short_pay-era tables', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+
+    db.exec(`
+      CREATE TABLE invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_number TEXT NOT NULL,
+        po_id INTEGER NOT NULL,
+        supplier_id INTEGER NOT NULL,
+        invoice_date TEXT NOT NULL,
+        due_date TEXT NOT NULL,
+        subtotal INTEGER NOT NULL,
+        tax_amount INTEGER DEFAULT 0,
+        total_amount INTEGER NOT NULL,
+        payable_total_cents INTEGER,
+        status TEXT DEFAULT 'pending_match',
+        match_status TEXT DEFAULT 'pending'
+      );
+      CREATE TABLE invoice_exception_dispositions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
+        reason TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        accepted_total_cents INTEGER,
+        accepted_match_status TEXT,
+        billed_total_cents INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO invoices (id, invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, total_amount)
+        VALUES (1, 'INV-OLD-2', 1, 1, '2026-09-04', '2026-10-04', 199, 199);
+      INSERT INTO invoice_exception_dispositions (invoice_id, disposition, reason, actor_name, billed_total_cents)
+        VALUES (1, 'return_to_buyer', 'qty mismatch', 'David Miller', 199);
+    `);
+
+    await applySchema(db);
+
+    const dispositionSql = tableSql(db, 'invoice_exception_dispositions');
+    assert.match(dispositionSql, /'buyer_response'/);
+    assert.match(dispositionSql, /'short_pay'/);
+    const kept = db.prepare(
+      `SELECT disposition, billed_total_cents FROM invoice_exception_dispositions WHERE invoice_id = 1`
+    ).get();
+    assert.equal(kept.disposition, 'return_to_buyer');
+    assert.equal(kept.billed_total_cents, 199);
   });
 
   test('applySchema backfills departments.approver_user_id from role=approver', async () => {

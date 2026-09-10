@@ -5,20 +5,26 @@ import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from './i
 import { priceToleranceCents } from './match.js';
 import {
   listInvoiceExceptions,
+  listBuyerInbox,
   getInvoiceExceptionDetail,
   resolveInvoiceException,
-  attachExceptionToInvoice
+  respondBuyerInbox,
+  attachExceptionToInvoice,
+  BUYER_RESPONSE_DISPOSITION,
+  BUYER_RESPONSE_AUDIT
 } from './invoiceExceptionsService.js';
 
 async function createTestDb() {
   const db = await createMemoryDatabase();
   await db.exec(`
-    INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
-    INSERT INTO users (id, name, email, role, department_id, approval_limit)
-      VALUES (1, 'David Miller', 'david@example.com', 'finance', 1, 15000000);
+    INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing'), (2, 'ITE', 'IT');
+    INSERT INTO users (id, name, email, role, department_id, approval_limit) VALUES
+      (1, 'David Miller', 'david@example.com', 'finance', 1, 15000000),
+      (2, 'Alice Chen', 'alice@example.com', 'requester', 1, 0),
+      (3, 'Priya Nair', 'priya@example.com', 'requester', 2, 0);
     INSERT INTO suppliers (id, name, code) VALUES (1, 'Vendor Co', 'SUP-1');
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-      VALUES (1, 2026, 50000000, 0, 0);
+      VALUES (1, 2026, 50000000, 0, 0), (2, 2026, 32000000, 0, 0);
   `);
   return db;
 }
@@ -642,5 +648,269 @@ describe('invoice exception short_pay', () => {
     assert.ok(resolved.some((row) => row.id === created.invoiceId));
     const open = await listInvoiceExceptions(db, { queue: 'open' });
     assert.ok(!open.some((row) => row.id === created.invoiceId));
+  });
+});
+
+async function createFlaggedInvoiceForRequester(db, {
+  requesterId = 2,
+  departmentId = 1,
+  qty = 4,
+  received = 2,
+  ordered = 4,
+  poPrice = 74900,
+  billedPrice = 79900,
+  invoiceNumber = 'INV-BUYER-1'
+} = {}) {
+  await db.prepare(`
+    INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount)
+    VALUES (?, ?, ?, 'converted_to_po', ?)
+  `).run(`PR-${invoiceNumber}`, requesterId, departmentId, ordered * poPrice);
+  const pr = await db.prepare(`SELECT id FROM purchase_requisitions WHERE pr_number = ?`).get(`PR-${invoiceNumber}`);
+  await db.prepare(`
+    INSERT INTO purchase_orders (po_number, requisition_id, supplier_id, created_by, status, total_amount, issue_date)
+    VALUES (?, ?, 1, 1, 'partially_received', ?, '2026-09-01')
+  `).run(`PO-${invoiceNumber}`, pr.id, ordered * poPrice);
+  const po = await db.prepare(`SELECT id FROM purchase_orders WHERE po_number = ?`).get(`PO-${invoiceNumber}`);
+  await db.prepare(`
+    INSERT INTO po_items (po_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type)
+    VALUES (?, 'Test Monitor', 'IT Hardware', ?, ?, ?, ?, 0, 0, 'goods')
+  `).run(po.id, ordered, poPrice, ordered * poPrice, received);
+  const item = await db.prepare(`SELECT id FROM po_items WHERE po_id = ?`).get(po.id);
+  return await createVendorInvoice(db, invoicePayload({
+    qty,
+    unitPriceCents: billedPrice,
+    invoiceNumber,
+    poId: po.id,
+    itemId: item.id
+  }));
+}
+
+describe('buyer inbox for return_to_buyer', () => {
+  test('queue lists only return_to_buyer parks; flagged-without-return and terminal stay out', async () => {
+    const db = await createTestDb();
+    const parked = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-PARK' });
+    const flaggedOnly = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-OPEN' });
+    const accepted = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-ACC' });
+
+    await resolveInvoiceException(db, parked.invoiceId, {
+      disposition: 'return_to_buyer',
+      reason: 'Confirm remaining units with the requester.',
+      actor_name: 'David Miller'
+    });
+    await resolveInvoiceException(db, accepted.invoiceId, {
+      disposition: 'accept_variance',
+      reason: 'Pay billed amount.',
+      actor_name: 'David Miller'
+    });
+
+    const inbox = await listBuyerInbox(db);
+    const ids = inbox.map((row) => row.id);
+    assert.ok(ids.includes(parked.invoiceId));
+    assert.ok(!ids.includes(flaggedOnly.invoiceId));
+    assert.ok(!ids.includes(accepted.invoiceId));
+    assert.equal(inbox[0].status, 'variance_flagged');
+    assert.equal(inbox[0].exception.disposition, 'return_to_buyer');
+    assert.match(inbox[0].exception.reason, /Confirm remaining units/);
+  });
+
+  test('buyer respond requires reason and actor_name; wrong status is 400', async () => {
+    const db = await createTestDb();
+    const parked = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-RESP' });
+    await resolveInvoiceException(db, parked.invoiceId, {
+      disposition: 'return_to_buyer',
+      reason: 'Need buyer confirmation.',
+      actor_name: 'David Miller'
+    });
+
+    const flaggedOnly = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-NO-RET' });
+
+    await assert.rejects(
+      () => respondBuyerInbox(db, parked.invoiceId, {
+        actor_name: 'Alice Chen'
+      }),
+      (err) => err.statusCode === 400 && /reason is required/.test(err.message)
+    );
+    await assert.rejects(
+      () => respondBuyerInbox(db, parked.invoiceId, {
+        reason: '   ',
+        actor_name: 'Alice Chen'
+      }),
+      (err) => err.statusCode === 400 && /reason is required/.test(err.message)
+    );
+    await assert.rejects(
+      () => respondBuyerInbox(db, parked.invoiceId, {
+        reason: 'Third unit arrived off-system.'
+      }),
+      (err) => err.statusCode === 400 && /actor_name is required/.test(err.message)
+    );
+    await assert.rejects(
+      () => respondBuyerInbox(db, flaggedOnly.invoiceId, {
+        reason: 'Should not work — never returned.',
+        actor_name: 'Alice Chen'
+      }),
+      (err) => err.statusCode === 400 && /not currently parked as return_to_buyer/.test(err.message)
+    );
+  });
+
+  test('buyer respond writes buyer_response + EXCEPTION_BUYER_RESPONDED and stays variance_flagged', async () => {
+    const db = await createTestDb();
+    const parked = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-NOTE' });
+    await resolveInvoiceException(db, parked.invoiceId, {
+      disposition: 'return_to_buyer',
+      reason: 'Was the third monitor received off-system?',
+      actor_name: 'David Miller'
+    });
+
+    const result = await respondBuyerInbox(db, parked.invoiceId, {
+      reason: 'Yes — remaining units arrived via desk drop. Ready for AP.',
+      actor_name: 'Alice Chen'
+    });
+
+    assert.equal(result.disposition, BUYER_RESPONSE_DISPOSITION);
+    assert.equal(result.invoice_status, 'variance_flagged');
+    assert.equal(result.invoice.status, 'variance_flagged');
+    assert.equal(result.invoice.exception.disposition, BUYER_RESPONSE_DISPOSITION);
+    assert.match(result.invoice.exception.reason, /desk drop/);
+
+    const invoice = await db.prepare(`SELECT status FROM invoices WHERE id = ?`).get(parked.invoiceId);
+    assert.equal(invoice.status, 'variance_flagged');
+
+    const history = await db.prepare(`
+      SELECT disposition, reason, actor_name FROM invoice_exception_dispositions
+      WHERE invoice_id = ? ORDER BY id
+    `).all(parked.invoiceId);
+    assert.deepEqual(history.map((row) => row.disposition), ['return_to_buyer', 'buyer_response']);
+    assert.equal(history[1].actor_name, 'Alice Chen');
+
+    const audit = await db.prepare(`
+      SELECT * FROM audit_logs
+      WHERE entity_type = 'invoice' AND entity_id = ? AND action = ?
+    `).get(parked.invoiceId, BUYER_RESPONSE_AUDIT);
+    assert.ok(audit);
+    assert.equal(audit.actor_name, 'Alice Chen');
+    assert.ok(audit.details.includes('Ready for AP'));
+    assert.ok(audit.details.includes('desk drop'));
+
+    const after = await listBuyerInbox(db);
+    assert.ok(!after.some((row) => row.id === parked.invoiceId), 'responded invoice leaves the buyer inbox');
+
+    await assert.rejects(
+      () => respondBuyerInbox(db, parked.invoiceId, {
+        reason: 'Second note.',
+        actor_name: 'Alice Chen'
+      }),
+      (err) => err.statusCode === 400 && /not currently parked as return_to_buyer/.test(err.message)
+    );
+  });
+
+  test('AP can accept, short-pay, or reject after a buyer response', async () => {
+    const db = await createTestDb();
+    const acceptInv = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-BA' });
+    const shortInv = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-BS' });
+    const rejectInv = await createFlaggedInvoiceForRequester(db, { invoiceNumber: 'INV-BR' });
+
+    for (const created of [acceptInv, shortInv, rejectInv]) {
+      await resolveInvoiceException(db, created.invoiceId, {
+        disposition: 'return_to_buyer',
+        reason: 'Need requester note.',
+        actor_name: 'David Miller'
+      });
+      await respondBuyerInbox(db, created.invoiceId, {
+        reason: 'Confirmed receiving. Ready for AP.',
+        actor_name: 'Alice Chen'
+      });
+    }
+
+    const accepted = await resolveInvoiceException(db, acceptInv.invoiceId, {
+      disposition: 'accept_variance',
+      reason: 'Buyer confirmed remaining units; pay billed.',
+      actor_name: 'David Miller'
+    });
+    assert.equal(accepted.invoice_status, 'matched');
+
+    const payableCents = 2 * 74900;
+    const shorted = await resolveInvoiceException(db, shortInv.invoiceId, {
+      disposition: 'short_pay',
+      reason: 'Pay received qty at PO price after buyer note.',
+      actor_name: 'David Miller',
+      payable_total_cents: payableCents
+    });
+    assert.equal(shorted.invoice_status, 'matched');
+    assert.equal(shorted.payable_total_cents, payableCents);
+
+    const rejected = await resolveInvoiceException(db, rejectInv.invoiceId, {
+      disposition: 'reject_invoice',
+      reason: 'Buyer could not confirm; reject.',
+      actor_name: 'David Miller'
+    });
+    assert.equal(rejected.invoice_status, 'rejected');
+
+    const open = await listInvoiceExceptions(db, { queue: 'open' });
+    assert.ok(!open.some((row) => [acceptInv.invoiceId, shortInv.invoiceId, rejectInv.invoiceId].includes(row.id)));
+  });
+
+  test('requester_id scopes to linked PR requester and/or their department', async () => {
+    const db = await createTestDb();
+    const aliceInv = await createFlaggedInvoiceForRequester(db, {
+      invoiceNumber: 'INV-ALICE',
+      requesterId: 2,
+      departmentId: 1
+    });
+    const priyaInv = await createFlaggedInvoiceForRequester(db, {
+      invoiceNumber: 'INV-PRIYA',
+      requesterId: 3,
+      departmentId: 2
+    });
+    const orphan = await createFlaggedInvoice(db, {
+      invoiceNumber: 'INV-ORPH',
+      poId: 90,
+      itemId: 90,
+      poNumber: 'PO-ORPH'
+    });
+
+    for (const created of [aliceInv, priyaInv, orphan]) {
+      await resolveInvoiceException(db, created.invoiceId, {
+        disposition: 'return_to_buyer',
+        reason: 'Parked for buyer.',
+        actor_name: 'David Miller'
+      });
+    }
+
+    const unscoped = await listBuyerInbox(db);
+    assert.equal(unscoped.length, 3);
+
+    const aliceQueue = await listBuyerInbox(db, { requester_id: 2 });
+    const aliceIds = aliceQueue.map((row) => row.id);
+    assert.ok(aliceIds.includes(aliceInv.invoiceId));
+    assert.ok(!aliceIds.includes(priyaInv.invoiceId));
+    assert.ok(!aliceIds.includes(orphan.invoiceId));
+
+    const priyaQueue = await listBuyerInbox(db, { requester_id: 3 });
+    const priyaIds = priyaQueue.map((row) => row.id);
+    assert.ok(priyaIds.includes(priyaInv.invoiceId));
+    assert.ok(!priyaIds.includes(aliceInv.invoiceId));
+
+    const mktDept = await listBuyerInbox(db, { department_id: 1 });
+    assert.ok(mktDept.some((row) => row.id === aliceInv.invoiceId));
+    assert.ok(!mktDept.some((row) => row.id === priyaInv.invoiceId));
+
+    const unknownUser = await listBuyerInbox(db, { requester_id: 99 });
+    assert.deepEqual(unknownUser, []);
+  });
+
+  test('matched invoice cannot take a buyer response (fail closed)', async () => {
+    const db = await createTestDb();
+    await insertPoLine(db, { ordered: 1, received: 1, unitPriceCents: 5000 });
+    const perfect = await createVendorInvoice(db, invoicePayload({
+      qty: 1, unitPriceCents: 5000, invoiceNumber: 'INV-OK-B'
+    }));
+
+    await assert.rejects(
+      () => respondBuyerInbox(db, perfect.invoiceId, {
+        reason: 'should not work',
+        actor_name: 'Alice Chen'
+      }),
+      (err) => err.statusCode === 400 && /variance-flagged/.test(err.message)
+    );
   });
 });

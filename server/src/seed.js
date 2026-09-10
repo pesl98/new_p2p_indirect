@@ -74,7 +74,7 @@ await db.transaction(async () => {
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
     VALUES (?, ?, ?, ?, ?)
   `);
-  await insertBudget.run(1, 2026, 15000000, 1752400, 2435000); // MKT $150,000 / $17,524 committed (includes approved multi-supplier PR-2026-006) / $24,350
+  await insertBudget.run(1, 2026, 15000000, 1782100, 2435000); // MKT $150,000 / $17,821 committed (PR-2026-006 + buyer-inbox PR-2026-007) / $24,350
   await insertBudget.run(2, 2026, 32000000, 6070000, 8910000); // ITE + $12,500 committed for SOC 2 SES PO
   await insertBudget.run(3, 2026, 9500000, 1230000, 1845000);  // FAC
   await insertBudget.run(4, 2026, 6000000, 450000, 1120000);   // HRP
@@ -138,8 +138,9 @@ await db.transaction(async () => {
   //   PR-2026-001 — complete goods path: PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid
   //   PR-2026-005 — complete service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched)
   //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
-  // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay);
+  // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay).
   // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × $749.00 = $1,498.00.
+  // Buyer inbox: INV-TSG-22041 is parked return_to_buyer on Alice's PR-2026-007.
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -174,6 +175,10 @@ await db.transaction(async () => {
   await insertPRItem.run(6, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 1, 74900, 74900, 1);
   await insertPRItem.run(6, 9, 'Herman Miller Aeron Ergonomic Chair (Size B)', 'Office Supplies', 1, 129500, 129500, 3);
 
+  // Buyer inbox demo: Alice's converted PR → PO → partial GRN → qty-variance invoice returned to buyer.
+  await insertPR.run(7, 'PR-2026-007', 1, 1, 'converted_to_po', 29700, 'Replacement mice for marketing studio editors after Q3 hardware failures.', '2026-09-18', 'Medium', '-4 days');
+  await insertPRItem.run(7, 3, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 3, 9900, 29700, 1);
+
   await db.exec(`
     UPDATE requisition_items
     SET line_type = 'service'
@@ -204,6 +209,8 @@ await db.transaction(async () => {
   // PR-2026-006 is $2,044 — dept head + procurement; both approved so Carol can convert the split.
   await insertApproval.run(6, 2, 1, 'approved', 'Approved studio refresh. Split sourcing is expected.', '2026-09-03 09:40:00');
   await insertApproval.run(6, 3, 2, 'approved', 'TechSupply for the monitor; WorkSpace for the Aeron — convert will issue two POs.', '2026-09-03 11:15:00');
+  // PR-2026-007 is $297 — department head only.
+  await insertApproval.run(7, 2, 1, 'approved', 'Approved replacement mice against marketing studio kit budget.', '2026-09-04 10:05:00');
 
   // 8. Purchase Orders
   const insertPO = db.prepare(`
@@ -297,6 +304,23 @@ await db.transaction(async () => {
   );
   await insertPOItem.run(5, 5, null, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO', 2, 14500, 29000, 2, 2);
 
+  await insertPO.run(
+    6,
+    'PO-2026-006',
+    7,
+    1,
+    3,
+    'partially_received',
+    29700,
+    '2026-09-04',
+    '2026-09-12',
+    'Net 30',
+    'Acme Corp HQ - Marketing Studio, 450 Tech Blvd, Austin, TX 78701',
+    'Replacement mice for studio editors. Partial delivery expected.'
+  );
+  // Claimed invoiced qty recorded for audit even though match failed (3 billed vs 2 received).
+  await insertPOItem.run(6, 6, 11, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 3, 9900, 29700, 2, 3);
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -315,6 +339,9 @@ await db.transaction(async () => {
 
   await insertGRN.run(3, 'GRN-2026-003', 5, 3, '2026-09-04', 'GSO-4411982', 'DN-FCJ-1904', 'Both sanitizer stands received and staged in the facilities closet.');
   await insertGRNItem.run(3, 5, 2, 'good', 'Units assembled; no damage.');
+
+  await insertGRN.run(4, 'GRN-2026-004', 6, 3, '2026-09-06', 'UPS-1Z22041001', 'DN-TSG-2204', 'Partial delivery: 2 of 3 mice received; one remains on backorder.');
+  await insertGRNItem.run(4, 6, 2, 'good', 'Serials logged; packaging intact.');
 
   await db.exec(`
     UPDATE po_items
@@ -442,10 +469,29 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(4, 5, 'Commercial Touchless Sanitizer & Dispenser Stand', 2, 14900, 29800);
   await insertMatch.run(4, 5, 5, 2, 2, 2, 14500, 14900, 0, 400, 'fail', 'Price discrepancy: Billed at $149.00 vs authorized PO price $145.00 (+2.76%).');
 
+  // Buyer inbox demo: billed 3 mice at PO price; only 2 received → quantity_variance, parked return_to_buyer.
+  await insertInvoice.run(
+    5,
+    'INV-TSG-22041',
+    6,
+    1,
+    '2026-09-07',
+    '2026-10-07',
+    29700,
+    0,
+    29700,
+    'variance_flagged',
+    'quantity_variance',
+    null,
+    'Quantity variance: vendor billed 3 mice; GRN-2026-004 received 2. Parked return_to_buyer for Alice (PR-2026-007). INV-TSG-11029 remains the short-pay practice invoice.'
+  );
+  await insertInvoiceItem.run(5, 6, 'Logitech MX Master 3S Wireless Mouse', 3, 9900, 29700);
+  await insertMatch.run(5, 6, 6, 3, 2, 3, 9900, 9900, 1, 0, 'fail', 'Quantity variance: Cumulative invoiced 3 (prior 0 + this claim 3) exceeds 2 physically received on GRN.');
+
   const insertDisposition = db.prepare(`
     INSERT INTO invoice_exception_dispositions (
-      invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, billed_total_cents, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   await insertDisposition.run(
     4,
@@ -454,7 +500,18 @@ await db.transaction(async () => {
     'David Miller',
     29800,
     'price_variance',
+    29800,
     '2026-09-06 09:30:00'
+  );
+  await insertDisposition.run(
+    5,
+    'return_to_buyer',
+    'Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.',
+    'David Miller',
+    29700,
+    'quantity_variance',
+    29700,
+    '2026-09-08 09:15:00'
   );
 
   // 11. Audit Logs
@@ -481,6 +538,13 @@ await db.transaction(async () => {
   await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '0 days');
   await insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
   await insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
+  await insertAudit.run('requisition', 7, 'CREATED', 'Alice Chen', 'Requisition created for 3 Logitech MX Master 3S mice', '-4 days');
+  await insertAudit.run('requisition', 7, 'SUBMITTED', 'Alice Chen', 'Submitted PR-2026-007 for department-head approval', '-4 days');
+  await insertAudit.run('requisition', 7, 'APPROVED', 'Bob Martinez', 'Approved PR-2026-007 for $297.00', '-4 days');
+  await insertAudit.run('purchase_order', 6, 'ISSUED', 'Carol Zhang', 'PO-2026-006 issued to TechSupply Global', '-3 days');
+  await insertAudit.run('goods_receipt', 4, 'RECEIVED', 'Carol Zhang', 'GRN-2026-004 confirmed 2 of 3 mice received; one on backorder', '-1 days');
+  await insertAudit.run('invoice', 5, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged quantity variance (3 billed vs 2 received)', '-1 days');
+  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '0 days');
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).
@@ -505,6 +569,13 @@ await db.transaction(async () => {
     UPDATE invoices SET created_at = '2026-09-05 11:00:00' WHERE id = 4;
     UPDATE audit_logs SET created_at = '2026-09-06 09:30:00'
       WHERE entity_type = 'invoice' AND entity_id = 4 AND action = 'EXCEPTION_ACCEPT_VARIANCE';
+
+    UPDATE purchase_requisitions SET created_at = '2026-09-03 16:00:00' WHERE id = 7;
+    UPDATE purchase_orders SET created_at = '2026-09-04 11:00:00' WHERE id = 6;
+    UPDATE goods_receipts SET created_at = '2026-09-06 13:00:00' WHERE id = 4;
+    UPDATE invoices SET created_at = '2026-09-07 10:30:00' WHERE id = 5;
+    UPDATE audit_logs SET created_at = '2026-09-08 09:15:00'
+      WHERE entity_type = 'invoice' AND entity_id = 5 AND action = 'EXCEPTION_RETURN_TO_BUYER';
   `);
 
 });

@@ -11,8 +11,9 @@ import { asCents, formatCents, requireIntegerCents } from './money.js';
  * Dispositions (required reason + actor name; integer cents):
  *   accept_variance  — clear the block (status → matched); accepted_total_cents = billed
  *   reject_invoice   — permanently block approve/pay (status → rejected)
- *   return_to_buyer  — park with audit; stays variance_flagged and in the open queue
+ *   return_to_buyer  — park with audit; stays variance_flagged; appears in the buyer inbox
  *   short_pay        — clear the block; rewrite payable_total_cents < billed (billed stays)
+ *   buyer_response   — requester note back to AP; stays variance_flagged; leaves the buyer inbox
  */
 
 export const HARD_EXCEPTION_MATCH_STATUSES = Object.freeze([
@@ -29,6 +30,9 @@ export const DISPOSITIONS = Object.freeze([
   'return_to_buyer',
   'short_pay'
 ]);
+
+export const BUYER_RESPONSE_DISPOSITION = 'buyer_response';
+export const BUYER_RESPONSE_AUDIT = 'EXCEPTION_BUYER_RESPONDED';
 
 const DISPOSITION_AUDIT = {
   accept_variance: 'EXCEPTION_ACCEPT_VARIANCE',
@@ -152,12 +156,15 @@ async function loadInvoiceHeader(db, id) {
       s.payment_terms as supplier_terms,
       d.id as department_id,
       d.name as department_name,
-      pr.pr_number
+      pr.pr_number,
+      pr.requester_id,
+      req.name as requester_name
     FROM invoices inv
     JOIN purchase_orders po ON inv.po_id = po.id
     JOIN suppliers s ON inv.supplier_id = s.id
     LEFT JOIN purchase_requisitions pr ON po.requisition_id = pr.id
     LEFT JOIN departments d ON pr.department_id = d.id
+    LEFT JOIN users req ON pr.requester_id = req.id
     WHERE inv.id = ?
   `).get(id);
 }
@@ -474,7 +481,7 @@ export async function resolveInvoiceException(db, id, payload = {}) {
       ? 'Invoice rejected. Approve and pay are permanently blocked.'
       : disposition === 'short_pay'
         ? `Short pay recorded. Billed $${formatCents(outcome.billedTotalCents)} → Pay $${formatCents(outcome.payableTotalCents)}. Invoice may proceed to AP approve for the payable amount.`
-        : 'Invoice returned to buyer. Hard exception remains open until accepted or rejected.';
+        : 'Invoice returned to buyer. It appears in the requester Buyer Inbox until they respond; the hard exception stays open.';
   return {
     message,
     disposition,
@@ -483,6 +490,179 @@ export async function resolveInvoiceException(db, id, payload = {}) {
     accepted_match_status: outcome.acceptedMatchStatus,
     billed_total_cents: outcome.billedTotalCents,
     payable_total_cents: outcome.payableTotalCents,
+    invoice: detail
+  };
+}
+
+function parseOptionalId(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InvoiceExceptionError('requester_id / department_id must be a positive integer.');
+  }
+  return parsed;
+}
+
+/**
+ * Buyer inbox: invoices whose latest disposition is `return_to_buyer`
+ * and status is still `variance_flagged`.
+ *
+ * When requester_id is passed (client-only demo persona), scope to invoices
+ * whose linked PR requester matches or whose PR department matches that
+ * user's department. department_id alone scopes to that cost center.
+ * Unscoped (no ids) returns the full park queue — same demo-open pattern
+ * as the rest of the API.
+ */
+export async function listBuyerInbox(db, { requester_id, department_id } = {}) {
+  const requesterId = parseOptionalId(requester_id);
+  const departmentId = parseOptionalId(department_id);
+
+  let scopeRequesterId = null;
+  let scopeDepartmentId = departmentId;
+
+  if (requesterId) {
+    const user = await db.prepare(`
+      SELECT id, department_id FROM users WHERE id = ?
+    `).get(requesterId);
+    if (!user) {
+      return [];
+    }
+    scopeRequesterId = requesterId;
+    if (scopeDepartmentId == null) {
+      scopeDepartmentId = user.department_id == null ? null : Number(user.department_id);
+    }
+  }
+
+  const params = [];
+  let scopeSql = '';
+  if (scopeRequesterId != null && scopeDepartmentId != null) {
+    scopeSql = 'AND (pr.requester_id = ? OR pr.department_id = ?)';
+    params.push(scopeRequesterId, scopeDepartmentId);
+  } else if (scopeRequesterId != null) {
+    scopeSql = 'AND pr.requester_id = ?';
+    params.push(scopeRequesterId);
+  } else if (scopeDepartmentId != null) {
+    scopeSql = 'AND pr.department_id = ?';
+    params.push(scopeDepartmentId);
+  }
+
+  const rows = await db.prepare(`
+    SELECT
+      inv.*,
+      po.po_number,
+      po.total_amount as po_total_amount,
+      po.requisition_id,
+      s.name as supplier_name,
+      s.code as supplier_code,
+      pr.pr_number,
+      pr.requester_id,
+      pr.department_id,
+      req.name as requester_name,
+      d.id as department_id,
+      d.name as department_name,
+      latest.id as exception_id,
+      latest.disposition as exception_disposition,
+      latest.reason as exception_reason,
+      latest.actor_name as exception_actor_name,
+      latest.accepted_total_cents as exception_accepted_total_cents,
+      latest.accepted_match_status as exception_accepted_match_status,
+      latest.billed_total_cents as exception_billed_total_cents,
+      latest.created_at as exception_created_at,
+      (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = inv.id) as items_count,
+      (SELECT COUNT(*) FROM match_results WHERE invoice_id = inv.id AND status = 'fail') as fail_variances_count
+    FROM invoices inv
+    JOIN purchase_orders po ON inv.po_id = po.id
+    JOIN suppliers s ON inv.supplier_id = s.id
+    LEFT JOIN purchase_requisitions pr ON po.requisition_id = pr.id
+    LEFT JOIN users req ON pr.requester_id = req.id
+    LEFT JOIN departments d ON pr.department_id = d.id
+    JOIN invoice_exception_dispositions latest ON latest.id = (
+      SELECT d2.id FROM invoice_exception_dispositions d2
+      WHERE d2.invoice_id = inv.id
+      ORDER BY d2.id DESC
+      LIMIT 1
+    )
+    WHERE inv.status = 'variance_flagged'
+      AND latest.disposition = 'return_to_buyer'
+      ${scopeSql}
+    ORDER BY inv.id DESC
+  `).all(...params);
+
+  return rows.map((row) => {
+    const latest = {
+      id: row.exception_id,
+      invoice_id: row.id,
+      disposition: row.exception_disposition,
+      reason: row.exception_reason,
+      actor_name: row.exception_actor_name,
+      accepted_total_cents: row.exception_accepted_total_cents,
+      accepted_match_status: row.exception_accepted_match_status,
+      billed_total_cents: row.exception_billed_total_cents,
+      created_at: row.exception_created_at
+    };
+    return attachQueueMeta(row, latest);
+  });
+}
+
+export async function respondBuyerInbox(db, id, payload = {}) {
+  const reason = requireText(payload.reason, 'reason');
+  const actorName = requireText(payload.actor_name, 'actor_name');
+
+  const invoice = await loadInvoiceHeader(db, id);
+  if (!invoice) {
+    throw new InvoiceExceptionError('Invoice not found.', 404);
+  }
+
+  if (invoice.status !== 'variance_flagged') {
+    throw new InvoiceExceptionError(
+      'Only variance-flagged invoices parked as return_to_buyer can receive a buyer response.'
+    );
+  }
+
+  const latest = await getLatestDisposition(db, id);
+  if (!latest || latest.disposition !== 'return_to_buyer') {
+    throw new InvoiceExceptionError(
+      'Invoice is not currently parked as return_to_buyer.'
+    );
+  }
+
+  const billedTotalCents = asCents(invoice.total_amount);
+  const acceptedMatchStatus = invoice.match_status;
+
+  const respondTransaction = db.transaction(async () => {
+    await db.prepare(`
+      INSERT INTO invoice_exception_dispositions (
+        invoice_id, disposition, reason, actor_name,
+        accepted_total_cents, accepted_match_status, billed_total_cents
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      BUYER_RESPONSE_DISPOSITION,
+      reason,
+      actorName,
+      billedTotalCents,
+      acceptedMatchStatus,
+      billedTotalCents
+    );
+
+    const details = `Buyer response for ${invoice.invoice_number} (billed $${formatCents(billedTotalCents)}, match ${acceptedMatchStatus}). Ready for AP. Reason: ${reason}`;
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+      VALUES ('invoice', ?, ?, ?, ?)
+    `).run(id, BUYER_RESPONSE_AUDIT, actorName, details);
+
+    return { billedTotalCents, acceptedMatchStatus, details };
+  });
+
+  await respondTransaction();
+  const detail = await getInvoiceExceptionDetail(db, id);
+  return {
+    message: 'Buyer response recorded. Invoice stays variance-flagged for AP accept, short-pay, or reject.',
+    disposition: BUYER_RESPONSE_DISPOSITION,
+    invoice_status: invoice.status,
+    billed_total_cents: billedTotalCents,
+    accepted_match_status: acceptedMatchStatus,
     invoice: detail
   };
 }

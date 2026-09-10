@@ -137,16 +137,16 @@ async function migrateCatalogItemStatus(database) {
 }
 
 /**
- * Rebuild invoice_exception_dispositions when CHECK lacks `short_pay`.
- * `billedSelect` is `billed_total_cents` if the old table already has that
- * column, otherwise `NULL`.
+ * Rebuild invoice_exception_dispositions when CHECK lacks `short_pay`
+ * or `buyer_response`. `billedSelect` is `billed_total_cents` if the old
+ * table already has that column, otherwise `NULL`.
  */
 export function invoiceShortPayDispositionsMigrationSql(billedSelect = 'NULL') {
   return `
       CREATE TABLE invoice_exception_dispositions_migrated (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER NOT NULL,
-        disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
+        disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay', 'buyer_response')),
         reason TEXT NOT NULL,
         actor_name TEXT NOT NULL,
         accepted_total_cents INTEGER,
@@ -166,8 +166,8 @@ export function invoiceShortPayDispositionsMigrationSql(billedSelect = 'NULL') {
 
 /**
  * Existing DBs need invoices.payable_total_cents (NULL = pay billed) and
- * invoice_exception_dispositions.short_pay + billed_total_cents.
- * CHECK cannot be ALTERed — rebuild the dispositions table when missing short_pay.
+ * invoice_exception_dispositions CHECK values (short_pay, buyer_response)
+ * plus billed_total_cents. CHECK cannot be ALTERed — rebuild when missing.
  */
 async function migrateInvoiceShortPay(database) {
   const tables = (await maybe(
@@ -187,9 +187,10 @@ async function migrateInvoiceShortPay(database) {
   );
   const sql = table?.sql || '';
   const hasShortPayCheck = sql.includes("'short_pay'");
+  const hasBuyerResponseCheck = sql.includes("'buyer_response'");
   const hasBilledCol = await tableHasColumn(database, 'invoice_exception_dispositions', 'billed_total_cents');
 
-  if (!hasShortPayCheck) {
+  if (!hasShortPayCheck || !hasBuyerResponseCheck) {
     const billedSelect = hasBilledCol ? 'billed_total_cents' : 'NULL';
     await maybe(database.exec(invoiceShortPayDispositionsMigrationSql(billedSelect)));
     return;

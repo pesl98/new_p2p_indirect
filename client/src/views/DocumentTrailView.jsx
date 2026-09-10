@@ -110,7 +110,7 @@ function eventIcon(kind) {
   }
 }
 
-export default function DocumentTrailView({ onNavigate }) {
+export default function DocumentTrailView({ onNavigate, lookupQ }) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState({ requisitions: [], purchase_orders: [], invoices: [] });
   const [trail, setTrail] = useState(null);
@@ -125,11 +125,6 @@ export default function DocumentTrailView({ onNavigate }) {
       console.error(err);
     }
   };
-
-  useEffect(() => {
-    loadSuggestions('');
-    loadTrail({ q: 'PR-2026-001' });
-  }, []);
 
   const loadTrail = async (params) => {
     setLoading(true);
@@ -149,6 +144,11 @@ export default function DocumentTrailView({ onNavigate }) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadSuggestions('');
+    loadTrail({ q: lookupQ || 'PR-2026-001' });
+  }, [lookupQ]);
 
   const handleSearch = (event) => {
     event.preventDefault();

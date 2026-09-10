@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS match_results (
 CREATE TABLE IF NOT EXISTS invoice_exception_dispositions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL,
-  disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay')),
+  disposition TEXT NOT NULL CHECK (disposition IN ('accept_variance', 'reject_invoice', 'return_to_buyer', 'short_pay', 'buyer_response')),
   reason TEXT NOT NULL,
   actor_name TEXT NOT NULL,
   -- For accept_variance: billed total. For short_pay: payable amount AP will pay.

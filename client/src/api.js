@@ -266,6 +266,22 @@ export const api = {
     });
     return jsonOk(r, 'Failed to resolve invoice exception');
   },
+  getBuyerInbox: ({ requester_id, department_id } = {}) => {
+    const params = new URLSearchParams();
+    if (requester_id) params.append('requester_id', requester_id);
+    if (department_id) params.append('department_id', department_id);
+    return fetch(`${API_BASE}/invoice-exceptions/buyer-inbox?${params.toString()}`).then((r) =>
+      jsonOk(r, 'Failed to load buyer inbox')
+    );
+  },
+  respondBuyerInbox: async (id, data) => {
+    const r = await fetch(`${API_BASE}/invoice-exceptions/${id}/buyer-respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to record buyer response');
+  },
 
   // Document trail (PR → approvals → PO(s) → GRN/SES → invoice → AP)
   searchDocumentTrail: (q = '') => {
