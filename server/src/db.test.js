@@ -6,6 +6,7 @@ import { SqliteAdapter } from './sqliteAdapter.js';
 import {
   applySchema,
   APPROVAL_REQUESTS_WAITING_MIGRATION_SQL,
+  APPROVAL_DELEGATIONS_TABLE_SQL,
   invoiceShortPayDispositionsMigrationSql,
   schemaPath
 } from './db.js';
@@ -33,6 +34,19 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(invoicesCols.includes('payable_total_cents'));
     const deptCols = raw.prepare(`PRAGMA table_info(departments)`).all().map((col) => col.name);
     assert.ok(deptCols.includes('approver_user_id'));
+    const delegationCols = raw.prepare(`PRAGMA table_info(approval_delegations)`).all().map((col) => col.name);
+    assert.ok(delegationCols.includes('delegator_user_id'));
+    assert.ok(delegationCols.includes('delegate_user_id'));
+    assert.ok(delegationCols.includes('starts_at'));
+    assert.ok(delegationCols.includes('active'));
+  });
+
+  test('approval_delegations CREATE TABLE is a single Turso-split statement', () => {
+    const stmts = splitSqlScript(APPROVAL_DELEGATIONS_TABLE_SQL);
+    assert.equal(stmts.length, 1);
+    assert.match(stmts[0], /CREATE TABLE IF NOT EXISTS approval_delegations/i);
+    assert.match(stmts[0], /delegator_user_id/);
+    assert.match(stmts[0], /CHECK \(active IN \(0, 1\)\)/);
   });
 
   test('approval waiting rebuild SQL splits into four complete statements', () => {
@@ -205,6 +219,8 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(kept.billed_total_cents, null);
 
     assert.ok(columnNames(db, 'departments').includes('approver_user_id'));
+    assert.ok(columnNames(db, 'approval_delegations').includes('delegator_user_id'));
+    assert.ok(columnNames(db, 'approval_delegations').includes('revoked_at'));
   });
 
   test('applySchema rebuilds dispositions CHECK to add buyer_response on short_pay-era tables', async () => {

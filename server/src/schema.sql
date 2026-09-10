@@ -107,6 +107,29 @@ CREATE TABLE IF NOT EXISTS approval_requests (
   FOREIGN KEY (approver_id) REFERENCES users(id)
 );
 
+-- Out-of-office substitute approver. Resolve at list/decide time
+-- do not rewrite approval_requests.approver_id when a delegation is created.
+-- Soft-revoke via active=0. starts_at / ends_at are ISO timestamps (NULL = open).
+CREATE TABLE IF NOT EXISTS approval_delegations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  delegator_user_id INTEGER NOT NULL,
+  delegate_user_id INTEGER NOT NULL,
+  starts_at TEXT,
+  ends_at TEXT,
+  active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+  reason TEXT,
+  created_by_user_id INTEGER,
+  created_by_name TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  revoked_at DATETIME,
+  revoked_by_user_id INTEGER,
+  revoked_by_name TEXT,
+  FOREIGN KEY (delegator_user_id) REFERENCES users(id),
+  FOREIGN KEY (delegate_user_id) REFERENCES users(id),
+  FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+  FOREIGN KEY (revoked_by_user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS purchase_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   po_number TEXT UNIQUE NOT NULL,

@@ -139,6 +139,34 @@ export const api = {
     return jsonOk(r, 'Failed to record approval decision');
   },
 
+  getDelegations: ({ user_id, delegator_user_id, delegate_user_id, active } = {}) => {
+    const params = new URLSearchParams();
+    if (user_id) params.append('user_id', user_id);
+    if (delegator_user_id) params.append('delegator_user_id', delegator_user_id);
+    if (delegate_user_id) params.append('delegate_user_id', delegate_user_id);
+    if (active !== undefined && active !== null && active !== '') params.append('active', active);
+    const qs = params.toString();
+    return fetch(`${API_BASE}/approval-delegations${qs ? `?${qs}` : ''}`).then((r) =>
+      jsonOk(r, 'Failed to load delegations')
+    );
+  },
+  createDelegation: async (data) => {
+    const r = await fetch(`${API_BASE}/approval-delegations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to create delegation');
+  },
+  revokeDelegation: async (id, data = {}) => {
+    const r = await fetch(`${API_BASE}/approval-delegations/${id}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to revoke delegation');
+  },
+
   // Purchase Orders
   getPurchaseOrders: (status = '') => {
     const params = new URLSearchParams();

@@ -14,6 +14,7 @@ import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
 import AdminDepartmentsView from './views/AdminDepartmentsView';
+import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
 import { api } from './api';
 
 export default function App() {
@@ -71,6 +72,9 @@ export default function App() {
     if (user?.role !== 'requester' && activeTab === 'buyer_inbox') {
       setActiveTab('dashboard');
     }
+    if (!DELEGATION_ROLES.includes(user?.role) && activeTab === 'delegations') {
+      setActiveTab('dashboard');
+    }
   };
 
   const handleNavigate = (tab, focus = null) => {
@@ -126,6 +130,10 @@ export default function App() {
               onNavigate={handleNavigate}
               onDataChanged={fetchCoreData}
             />
+          )}
+
+          {activeTab === 'delegations' && (
+            <DelegationsView currentUser={currentUser} />
           )}
 
           {activeTab === 'purchase_orders' && (

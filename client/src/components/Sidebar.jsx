@@ -13,7 +13,8 @@ import {
   GitBranch,
   ShieldAlert,
   Inbox,
-  UserCog
+  UserCog,
+  UserCheck
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -56,6 +57,14 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       badgeColor: 'bg-amber-500 text-white',
       desc: 'Multi-tier financial authorization'
     },
+    ...(['approver', 'procurement', 'finance', 'admin'].includes(currentUser?.role)
+      ? [{
+          id: 'delegations',
+          label: 'Delegations',
+          icon: UserCheck,
+          desc: 'Out-of-office substitute approvers'
+        }]
+      : []),
     {
       id: 'purchase_orders',
       label: 'Purchase Orders (PO)',
