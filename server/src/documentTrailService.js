@@ -15,15 +15,20 @@ const EXCEPTION_AUDIT_ACTIONS = {
   EXCEPTION_BUYER_RESPONDED: 'Buyer responded'
 };
 
+const CHANGE_ORDER_AUDIT_ACTIONS = {
+  CHANGE_ORDER_APPLIED: 'Change order applied'
+};
+
 const KIND_ORDER = {
   requisition: 1,
   approval: 2,
   purchase_order: 3,
-  goods_receipt: 4,
-  service_entry_sheet: 5,
-  invoice: 6,
-  exception: 7,
-  ap_event: 8
+  change_order: 4,
+  goods_receipt: 5,
+  service_entry_sheet: 6,
+  invoice: 7,
+  exception: 8,
+  ap_event: 9
 };
 
 export class DocumentTrailError extends Error {
@@ -59,6 +64,7 @@ function tabForKind(kind) {
     case 'approval':
       return 'requisitions';
     case 'purchase_order':
+    case 'change_order':
       return 'purchase_orders';
     case 'goods_receipt':
       return 'goods_receipt';
@@ -334,6 +340,26 @@ async function loadServiceEntrySheets(db, poId) {
   }));
 }
 
+async function loadChangeOrderEvents(db, poId) {
+  const rows = await db.prepare(`
+    SELECT id, entity_type, entity_id, action, actor_name, details, created_at
+    FROM audit_logs
+    WHERE entity_type = 'purchase_order' AND entity_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(poId);
+  return rows
+    .filter((row) => Object.prototype.hasOwnProperty.call(CHANGE_ORDER_AUDIT_ACTIONS, row.action))
+    .map((row) => ({
+      id: row.id,
+      po_id: poId,
+      action: row.action,
+      title: CHANGE_ORDER_AUDIT_ACTIONS[row.action],
+      actor_name: row.actor_name,
+      details: row.details,
+      created_at: toIsoTimestamp(row.created_at)
+    }));
+}
+
 async function loadPoLineSummary(db, poId) {
   return await db.prepare(`
     SELECT
@@ -351,6 +377,7 @@ async function loadPurchaseOrderBranches(db, poRows) {
     const goodsReceipts = await loadGoodsReceipts(db, po.id);
     const serviceEntrySheets = await loadServiceEntrySheets(db, po.id);
     const invoices = await loadInvoiceRows(db, po.id);
+    const changeOrderEvents = await loadChangeOrderEvents(db, po.id);
     return {
       id: po.id,
       po_number: po.po_number,
@@ -368,6 +395,9 @@ async function loadPurchaseOrderBranches(db, poRows) {
       created_by_name: po.created_by_name,
       goods_line_count: lines?.goods_line_count || 0,
       service_line_count: lines?.service_line_count || 0,
+      revision: po.revision ?? 0,
+      change_order_count: po.change_order_count ?? 0,
+      change_order_events: changeOrderEvents,
       goods_receipts: goodsReceipts,
       service_entry_sheets: serviceEntrySheets,
       invoices,
@@ -511,6 +541,27 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
       po_number: po.po_number,
       supplier_name: po.supplier_name
     }));
+
+    for (const changeOrder of po.change_order_events || []) {
+      events.push(timelineEvent({
+        id: `change_order:${changeOrder.id}`,
+        kind: 'change_order',
+        entity_type: 'purchase_order',
+        entity_id: po.id,
+        number: po.po_number,
+        title: changeOrder.title,
+        status: 'applied',
+        at: changeOrder.created_at,
+        actor_name: changeOrder.actor_name,
+        details: changeOrder.details,
+        amount_cents: po.total_amount,
+        po_id: po.id,
+        po_number: po.po_number,
+        supplier_name: po.supplier_name,
+        source: 'audit',
+        tab: 'purchase_orders'
+      }));
+    }
 
     for (const grn of po.goods_receipts) {
       events.push(timelineEvent({

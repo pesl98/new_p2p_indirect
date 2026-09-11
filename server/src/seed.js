@@ -13,6 +13,8 @@ const allTables = [
   'service_entry_sheets',
   'goods_receipt_items',
   'goods_receipts',
+  'po_change_order_items',
+  'po_change_orders',
   'po_items',
   'purchase_orders',
   'approval_requests',
@@ -77,7 +79,7 @@ await db.transaction(async () => {
   `);
   await insertBudget.run(1, 2026, 15000000, 1782100, 2435000); // MKT $150,000 / $17,821 committed (PR-2026-006 + buyer-inbox PR-2026-007) / $24,350
   await insertBudget.run(2, 2026, 32000000, 6070000, 8910000); // ITE + $12,500 committed for SOC 2 SES PO
-  await insertBudget.run(3, 2026, 9500000, 1230000, 1845000);  // FAC
+  await insertBudget.run(3, 2026, 9500000, 1485000, 1845000);  // FAC + $2,670 PR-2026-008 minus $120 CO-2026-001 volume discount
   await insertBudget.run(4, 2026, 6000000, 450000, 1120000);   // HRP
   await insertBudget.run(5, 2026, 5000000, 320000, 890000);    // ADM
 
@@ -142,6 +144,8 @@ await db.transaction(async () => {
   // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay).
   // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × $749.00 = $1,498.00.
   // Buyer inbox: INV-TSG-22041 is parked return_to_buyer on Alice's PR-2026-007.
+  // Change orders: PR-2026-008 / PO-2026-007 has applied CO-2026-001 (volume discount).
+  // Live walkthrough: amend issued PO-2026-004 (Figma seats, no SES yet).
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -181,6 +185,11 @@ await db.transaction(async () => {
   await insertPR.run(7, 'PR-2026-007', 1, 1, 'converted_to_po', 29700, 'Replacement mice for marketing studio editors after Q3 hardware failures.', '2026-09-18', 'Medium', '-4 days');
   await insertPRItem.run(7, 3, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 3, 9900, 29700, 1);
 
+  // Change-order history demo: Facilities issued PO with room after a price revision.
+  // Do not use PR-2026-001 / INV-WED-9042, INV-TSG-*, or Bob→Priya delegation seeds.
+  await insertPR.run(8, 'PR-2026-008', 7, 3, 'converted_to_po', 267000, 'Lobby and boardroom HEPA filtration for Q4 visitor season. Issued as PO-2026-007; vendor later confirmed a volume discount via change order.', '2026-10-20', 'Medium', '-6 days');
+  await insertPRItem.run(8, 14, 'Blueair Pro XL Commercial HEPA Air Purifier', 'Facilities & MRO', 3, 89000, 267000, 4);
+
   await db.exec(`
     UPDATE requisition_items
     SET line_type = 'service'
@@ -214,6 +223,9 @@ await db.transaction(async () => {
   await insertApproval.run(6, 3, 2, 'approved', 'TechSupply for the monitor; WorkSpace for the Aeron — convert will issue two POs.', '2026-09-03 11:15:00');
   // PR-2026-007 is $297 — department head only.
   await insertApproval.run(7, 2, 1, 'approved', 'Approved replacement mice against marketing studio kit budget.', '2026-09-04 10:05:00');
+  // PR-2026-008 is $2,670 — Facilities head + procurement.
+  await insertApproval.run(8, 7, 1, 'approved', 'Approved filtration refresh against FAC FY26 MRO.', '2026-09-02 09:20:00');
+  await insertApproval.run(8, 3, 2, 'approved', 'FacilityCare contract pricing; issue PO-2026-007.', '2026-09-02 11:05:00');
 
   // 7b. Approval delegation (OOO): Bob → Priya, covering now. Stored
   // approval_requests.approver_id on PR-2026-003 stays Bob; Priya sees it at list/decide time.
@@ -343,6 +355,53 @@ await db.transaction(async () => {
   );
   // Claimed invoiced qty recorded for audit even though match failed (3 billed vs 2 received).
   await insertPOItem.run(6, 6, 11, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 3, 9900, 29700, 2, 3);
+
+  // Change-order history: issued FAC PO, then applied volume-discount revision.
+  // Live walkthrough uses PO-2026-004 (issued Figma seats, no SES/invoice).
+  await insertPO.run(
+    7,
+    'PO-2026-007',
+    8,
+    4,
+    3,
+    'issued',
+    255000,
+    '2026-09-03',
+    '2026-10-20',
+    'Net 30',
+    'Acme Corp HQ - Facilities Closet, 450 Tech Blvd, Austin, TX 78701',
+    'Lobby / boardroom HEPA units. Unit price revised on CO-2026-001 after vendor volume discount.'
+  );
+  await insertPOItem.run(7, 7, 12, 'Blueair Pro XL Commercial HEPA Air Purifier', 'Facilities & MRO', 3, 85000, 255000, 0, 0);
+  await db.exec(`
+    UPDATE purchase_orders SET revision = 1, change_order_count = 1 WHERE id = 7
+  `);
+
+  const insertChangeOrder = db.prepare(`
+    INSERT INTO po_change_orders (
+      id, po_id, co_number, revision, status, reason, actor_name, notes,
+      before_total_cents, after_total_cents, created_at, applied_at
+    ) VALUES (?, ?, ?, ?, 'applied', ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertChangeOrderItem = db.prepare(`
+    INSERT INTO po_change_order_items (
+      change_order_id, po_item_id, old_quantity, new_quantity, old_unit_price, new_unit_price, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  await insertChangeOrder.run(
+    1,
+    7,
+    'CO-2026-001',
+    1,
+    'Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged.',
+    'Carol Zhang',
+    'Delivery window unchanged. Update the printed PO before the supplier ship date.',
+    267000,
+    255000,
+    '2026-09-04 10:15:00',
+    '2026-09-04 10:15:00'
+  );
+  await insertChangeOrderItem.run(1, 7, 3, 3, 89000, 85000, 'Volume discount on 3 units');
 
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
@@ -576,6 +635,17 @@ await db.transaction(async () => {
     'Bob Martinez (id=2) → Priya Nair (id=6). Active OOO window covering PR-2026-003.',
     '0 days'
   );
+  await insertAudit.run('requisition', 8, 'CREATED', 'James Okonkwo', 'Requisition created for 3 Blueair Pro XL HEPA purifiers', '-6 days');
+  await insertAudit.run('requisition', 8, 'APPROVED', 'Carol Zhang', 'Final approval and FAC budget commit for PR-2026-008 ($2,670.00)', '-6 days');
+  await insertAudit.run('purchase_order', 7, 'ISSUED', 'Carol Zhang', 'PO-2026-007 issued to FacilityCare & Janitorial Pro', '-5 days');
+  await insertAudit.run(
+    'purchase_order',
+    7,
+    'CHANGE_ORDER_APPLIED',
+    'Carol Zhang',
+    'CO-2026-001 (rev 1) applied to PO-2026-007: $2,670.00 → $2,550.00 (delta -$120.00). Reason: Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged. Lines: Blueair Pro XL Commercial HEPA Air Purifier (unit $890.00→$850.00). Budget committed released by $120.00.',
+    '-4 days'
+  );
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).
@@ -607,6 +677,12 @@ await db.transaction(async () => {
     UPDATE invoices SET created_at = '2026-09-07 10:30:00' WHERE id = 5;
     UPDATE audit_logs SET created_at = '2026-09-08 09:15:00'
       WHERE entity_type = 'invoice' AND entity_id = 5 AND action = 'EXCEPTION_RETURN_TO_BUYER';
+
+    UPDATE purchase_requisitions SET created_at = '2026-09-01 09:00:00' WHERE id = 8;
+    UPDATE purchase_orders SET created_at = '2026-09-03 11:00:00' WHERE id = 7;
+    UPDATE po_change_orders SET created_at = '2026-09-04 10:15:00', applied_at = '2026-09-04 10:15:00' WHERE id = 1;
+    UPDATE audit_logs SET created_at = '2026-09-04 10:15:00'
+      WHERE entity_type = 'purchase_order' AND entity_id = 7 AND action = 'CHANGE_ORDER_APPLIED';
   `);
 
 });

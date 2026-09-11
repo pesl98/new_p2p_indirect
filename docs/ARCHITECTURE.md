@@ -9,6 +9,7 @@ This document describes the control model implemented in code. The header person
 ```
 Draft PR → Submit → Sequential approvals → (budget commit on final approve)
         → Convert to PO(s) (one issued PO per resolved supplier)
+        → Optional PO change order / revision (qty, unit price, delivery notes)
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice → dual match
         → Exception workbench (hard failures only; optional return_to_buyer → Buyer Inbox → AP disposition; optional short-pay) → AP approve → Mark paid
@@ -20,6 +21,7 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 | Approval | Role-based chain; only the current `pending` step can decide. Later steps stay `waiting`. |
 | Budget commit | On **final PR approve** only: `budgets.committed_amount += PR total`. Not on PO issue. |
 | Purchase order | Copy of approved PR lines, including `line_type`. Numbered `PO-YYYY-NNN`. Multi-supplier PRs issue **one PO per resolved supplier**. |
+| Change order | Formal revision of an issued / partially received / received PO. Numbered `CO-YYYY-NNN` (MAX-suffix). Apply-on-confirm. Qty cannot drop below received (goods), accepted (services), or invoiced. Recalculates line and PO totals in integer cents. Linked-PR POs move `budgets.committed_amount` by the delta (floor 0); `actual_spent` is untouched. |
 | Goods receipt | Goods lines only. Increments `po_items.quantity_received`. Over-receipt is blocked unless `allow_over_receipt: true`. Numbered `GRN-YYYY-NNN`. Service lines are rejected (use SES). |
 | Service entry sheet | Service lines only. Draft → submitted → accepted/rejected. Accept increments `po_items.quantity_accepted`. Over-acceptance is blocked unless `allow_over_acceptance: true`. Numbered `SES-YYYY-NNN`. |
 | Invoice | Unique per `(supplier_id, invoice_number)`. Dual match: goods 3-way vs GRN; services SES-backed vs accepted SES. |
@@ -122,7 +124,42 @@ Enforced **only on the final approval step**, immediately before commit:
 
 When AP approves an invoice for payment, committed is reduced (floored at 0) and `actual_spent` increases by the **payable** amount (`invoices.payable_total_cents` when set by short-pay; otherwise billed `total_amount`).
 
+A **PO change order** that changes the PO total also moves `committed_amount` by that integer-cent delta when the PO is linked to a PR/department (increase commits more; decrease releases, floored at 0). Change orders never write `actual_spent`.
+
 Demo fiscal year is hardcoded to **2026**.
+
+## PO change orders / revisions
+
+World-class P2P does not silently edit an issued PO. ProcureFlow’s change order is a numbered revision (`po_change_orders` + `po_change_order_items`) applied in one transaction.
+
+`POST /api/purchase-orders/:id/change-orders` (`server/src/changeOrdersService.js`) — create + apply (status `applied`). Demo-open like the rest of the API (no JWT).
+
+| Field | Role |
+| --- | --- |
+| `co_number` | `CO-YYYY-NNN` via existing MAX-suffix numbering (`docNumbers.js` kind `co`) |
+| `revision` | 1-based per PO; header `purchase_orders.revision` / `change_order_count` bump on apply |
+| `reason` / `actor_name` | Required. Persona name; still client-only demo auth |
+| `lines` | Existing `po_item_id` only. Optional new `quantity` (whole units) and/or `unit_price` (integer cents). Omitted fields stay unchanged. Adding catalog lines is out of scope. |
+| `delivery_notes` | Optional. Replaces `purchase_orders.notes` when sent |
+| `confirm_increase` | Required (`true`) when the **net PO total increases by more than** `CHANGE_ORDER_INCREASE_CONFIRM_CENTS` (= `APPROVAL_TIER2_CENTS` = $1,000). This is an explicit confirm flag, not a second approval chain. |
+
+Fail-closed (HTTP 400):
+
+- PO status not in `issued` / `acknowledged` / `partially_received` / `received` (closed, cancelled, and draft cannot be amended)
+- Missing `reason` or `actor_name`
+- Empty change set (no qty/price delta and no delivery-notes change)
+- New qty below goods `quantity_received`, service `quantity_accepted`, or `quantity_invoiced`
+- Non-integer qty or non-integer-cent `unit_price`
+- Unknown `po_item_id` (cannot add new lines)
+- Net increase above the $1,000 confirm threshold without `confirm_increase: true`
+
+Apply (one transaction): rewrite listed `po_items` qty/price and line totals (`qty * unit_price` integer cents), recompute PO `total_amount`, refresh fulfillment status, move department `committed_amount` by the delta when `requisition_id` links a department, write `audit_logs` action `CHANGE_ORDER_APPLIED` on `entity_type=purchase_order`.
+
+`GET /api/purchase-orders/:id/change-orders` returns history. PO detail includes `change_orders`.
+
+UI: Purchase Orders detail **Change order** (Carol / procurement primary; any demo persona can submit). Modal shows received/accepted/invoiced floors, editable qty and dollar unit price (converted with `toCents`), required reason, before/after totals.
+
+Demo seed: **PR-2026-008 → PO-2026-007** has applied **CO-2026-001** (Blueair 3 × $890.00 → 3 × $850.00; FAC committed released $120.00). Live walkthrough: amend issued **PO-2026-004** (2 Figma seats, no SES/invoice). Do not amend PO-2026-001 / INV-WED-9042, PO-2026-002 / INV-TSG-11029, or PO-2026-006 / INV-TSG-22041.
 
 ## Line type (goods vs service)
 
@@ -283,7 +320,7 @@ How to test short-pay: resolve INV-TSG-11029 (or a test invoice) with `short_pay
 
 ## Document numbers
 
-`PR-` / `PO-` / `GRN-` / `SES-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, and `ses_number` are UNIQUE.
+`PR-` / `PO-` / `GRN-` / `SES-` / `CO-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, and `co_number` are UNIQUE.
 
 Invoice numbers are unique per supplier: `UNIQUE(supplier_id, invoice_number)`. The same number from two vendors is allowed.
 
@@ -302,10 +339,11 @@ Response includes:
 - Invoices with `match_status`
 - AP approve / paid rows taken only from invoice `audit_logs` (`APPROVED_PAYMENT`, `APPROVED_FOR_PAYMENT`, `PAID`)
 - Exception dispositions, when present, from the same invoice `audit_logs` (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`, `EXCEPTION_BUYER_RESPONDED`)
+- PO change orders, when present, from purchase-order `audit_logs` (`CHANGE_ORDER_APPLIED`) — the trail does not invent a revision if no audit row exists
 
 The Document trail sidebar screen opens this payload as a stage strip + vertical timeline, with click-through to the existing PR / PO / GRN / SES / invoice tabs.
 
-Demo: open **PR-2026-001** for the completed goods chain. Convert **PR-2026-006** to see two PO branches.
+Demo: open **PR-2026-001** for the completed goods chain. Convert **PR-2026-006** to see two PO branches. Open **PR-2026-008** / **PO-2026-007** for a PO with an applied change order on the timeline.
 
 ## How to run, seed, and test
 
@@ -330,7 +368,7 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents).
+Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events, change-order audit when present), PO change orders (qty/price apply in integer cents; reject reduce below received/accepted/invoiced; budget committed delta floored at 0 and actual_spent untouched; empty/invalid payloads; closed PO rejected; increase confirm threshold; `CHANGE_ORDER_APPLIED` audit; GET/POST HTTP; document trail surfaces the event only when the audit row exists), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 
@@ -340,6 +378,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Fiscal year 2026 is fixed in queries.
 - Short-pay rewrites header payable cents only (no line-level debit memo or supplier portal credit). Buyer Inbox is the requester queue for `return_to_buyer`; it does not unlock Approve for Payment.
 - `tolerated_match` invoices are not hard-queued; AP can still approve them from Invoices & Matching without a workbench disposition.
+- Change orders amend **existing PO lines only** (no new catalog lines, no supplier swap, no blanket/contract PO). Apply-on-confirm — there is no second sequential approval chain. Increases above $1,000 require `confirm_increase: true` only. A change-order increase does not re-run the remaining-budget fail-closed check used on final PR approve.
 
 ## Local vs Vercel / Turso
 

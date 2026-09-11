@@ -23,6 +23,7 @@ describe('document numbering', () => {
     assert.equal(await nextDocumentNumber(db, 'po', 2026), 'PO-2026-001');
     assert.equal(await nextDocumentNumber(db, 'grn', 2026), 'GRN-2026-001');
     assert.equal(await nextDocumentNumber(db, 'ses', 2026), 'SES-2026-001');
+    assert.equal(await nextDocumentNumber(db, 'co', 2026), 'CO-2026-001');
   });
 
   test('MAX suffix skips gaps so COUNT(*)+1 cannot collide', async () => {

@@ -8,6 +8,8 @@ import {
   APPROVAL_REQUESTS_WAITING_MIGRATION_SQL,
   APPROVAL_DELEGATIONS_TABLE_SQL,
   invoiceShortPayDispositionsMigrationSql,
+  PO_CHANGE_ORDERS_TABLE_SQL,
+  PO_CHANGE_ORDER_ITEMS_TABLE_SQL,
   schemaPath
 } from './db.js';
 import { splitSqlScript } from './tursoHttp.js';
@@ -39,6 +41,23 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(delegationCols.includes('delegate_user_id'));
     assert.ok(delegationCols.includes('starts_at'));
     assert.ok(delegationCols.includes('active'));
+    const poCols = raw.prepare(`PRAGMA table_info(purchase_orders)`).all().map((col) => col.name);
+    assert.ok(poCols.includes('revision'));
+    assert.ok(poCols.includes('change_order_count'));
+    const coCols = raw.prepare(`PRAGMA table_info(po_change_orders)`).all().map((col) => col.name);
+    assert.ok(coCols.includes('co_number'));
+    assert.ok(coCols.includes('before_total_cents'));
+    assert.ok(raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'po_change_order_items'`).get());
+  });
+
+  test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {
+    const header = splitSqlScript(PO_CHANGE_ORDERS_TABLE_SQL);
+    assert.equal(header.length, 1);
+    assert.match(header[0], /CREATE TABLE IF NOT EXISTS po_change_orders/i);
+    assert.match(header[0], /UNIQUE\(po_id, revision\)/);
+    const items = splitSqlScript(PO_CHANGE_ORDER_ITEMS_TABLE_SQL);
+    assert.equal(items.length, 1);
+    assert.match(items[0], /CREATE TABLE IF NOT EXISTS po_change_order_items/i);
   });
 
   test('approval_delegations CREATE TABLE is a single Turso-split statement', () => {
@@ -221,6 +240,11 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(columnNames(db, 'departments').includes('approver_user_id'));
     assert.ok(columnNames(db, 'approval_delegations').includes('delegator_user_id'));
     assert.ok(columnNames(db, 'approval_delegations').includes('revoked_at'));
+    assert.ok(columnNames(db, 'purchase_orders').includes('revision'));
+    assert.ok(columnNames(db, 'purchase_orders').includes('change_order_count'));
+    assert.equal(db.prepare(`SELECT revision FROM purchase_orders WHERE id = 1`).get().revision, 0);
+    assert.ok(columnNames(db, 'po_change_orders').includes('co_number'));
+    assert.ok(columnNames(db, 'po_change_order_items').includes('po_item_id'));
   });
 
   test('applySchema rebuilds dispositions CHECK to add buyer_response on short_pay-era tables', async () => {

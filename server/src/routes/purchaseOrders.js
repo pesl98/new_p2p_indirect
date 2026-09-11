@@ -1,5 +1,9 @@
 import express from 'express';
 import { convertRequisitionToPurchaseOrders } from '../purchaseOrdersService.js';
+import {
+  applyPurchaseOrderChangeOrder,
+  listPurchaseOrderChangeOrders
+} from '../changeOrdersService.js';
 
 const router = express.Router();
 
@@ -115,12 +119,15 @@ router.get('/:id', async (req, res) => {
       ORDER BY inv.invoice_date DESC
     `).all(id);
 
+    const changeOrders = (await listPurchaseOrderChangeOrders(db, id)).change_orders;
+
     res.json({
       ...po,
       items,
       receipts,
       service_entry_sheets: serviceSheets,
-      invoices
+      invoices,
+      change_orders: changeOrders
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -143,6 +150,33 @@ router.post('/from-requisition', async (req, res) => {
   } catch (error) {
     const status = error.statusCode || 500;
     if (status >= 500) console.error('Error generating PO:', error);
+    res.status(status).json({ error: error.message });
+  }
+});
+
+// Change-order history for a PO (applied revisions)
+router.get('/:id/change-orders', async (req, res) => {
+  try {
+    const payload = await listPurchaseOrderChangeOrders(req.db, req.params.id);
+    res.json(payload);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    if (status >= 500) console.error('Error listing change orders:', error);
+    res.status(status).json({ error: error.message });
+  }
+});
+
+// Create + apply a change order in one step (demo-open, like the rest of the API)
+router.post('/:id/change-orders', async (req, res) => {
+  try {
+    const result = await applyPurchaseOrderChangeOrder(req.db, req.params.id, req.body);
+    res.status(201).json({
+      ...result,
+      message: `Change order ${result.change_order.co_number} applied`
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    if (status >= 500) console.error('Error applying change order:', error);
     res.status(status).json({ error: error.message });
   }
 });
