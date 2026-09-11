@@ -543,12 +543,13 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
     }));
 
     for (const changeOrder of po.change_order_events || []) {
+      const coNumber = String(changeOrder.details || '').match(/CO-\d{4}-\d+/)?.[0] || po.po_number;
       events.push(timelineEvent({
         id: `change_order:${changeOrder.id}`,
         kind: 'change_order',
         entity_type: 'purchase_order',
         entity_id: po.id,
-        number: po.po_number,
+        number: coNumber,
         title: changeOrder.title,
         status: 'applied',
         at: changeOrder.created_at,

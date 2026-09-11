@@ -379,6 +379,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
     const events = after.timeline.filter((event) => event.kind === 'change_order');
     assert.equal(events.length, 1);
     assert.equal(events[0].title, 'Change order applied');
+    assert.equal(events[0].number, 'CO-2026-001');
     assert.equal(events[0].source, 'audit');
     assert.equal(events[0].actor_name, 'Carol Zhang');
     assert.equal(after.purchase_orders[0].change_order_events[0].action, CHANGE_ORDER_AUDIT_ACTION);
