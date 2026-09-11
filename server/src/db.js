@@ -235,6 +235,36 @@ async function migrateDepartmentApprover(database) {
   }
 }
 
+/**
+ * Existing DBs created before OOO substitute approvers need approval_delegations.
+ * CREATE TABLE IF NOT EXISTS matches catalog/SES table bootstrap in schema.sql.
+ */
+export const APPROVAL_DELEGATIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS approval_delegations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    delegator_user_id INTEGER NOT NULL,
+    delegate_user_id INTEGER NOT NULL,
+    starts_at TEXT,
+    ends_at TEXT,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    reason TEXT,
+    created_by_user_id INTEGER,
+    created_by_name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    revoked_at DATETIME,
+    revoked_by_user_id INTEGER,
+    revoked_by_name TEXT,
+    FOREIGN KEY (delegator_user_id) REFERENCES users(id),
+    FOREIGN KEY (delegate_user_id) REFERENCES users(id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+    FOREIGN KEY (revoked_by_user_id) REFERENCES users(id)
+  )
+`;
+
+async function migrateApprovalDelegations(database) {
+  await maybe(database.exec(APPROVAL_DELEGATIONS_TABLE_SQL));
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
@@ -244,6 +274,7 @@ export async function applySchema(database) {
   await migrateCatalogItemStatus(database);
   await migrateInvoiceShortPay(database);
   await migrateDepartmentApprover(database);
+  await migrateApprovalDelegations(database);
   return database;
 }
 

@@ -50,11 +50,36 @@ Policy lives in `server/src/approvalPolicy.js`. Step 1 is the **mapped departmen
 Steps are sequential, not parallel:
 
 - Step 1 is inserted `pending`; later steps are `waiting`.
-- `POST /api/approvals/:id/decide` requires `approver_id` matching the current pending row (403 otherwise). Waiting steps cannot be decided (400).
+- `POST /api/approvals/:id/decide` requires `approver_id` matching the current pending row **or an active delegate covering now** for that mapped approver (403 otherwise). Waiting steps cannot be decided (400). Stored `approval_requests.approver_id` is not rewritten when a delegation is created.
 - Approving a non-final step promotes the next `waiting` row to `pending`.
 - Rejecting a step sets remaining `waiting`/`pending` rows to `skipped` and the PR to `rejected`. No budget movement.
 
-Waiting steps do not appear in the approver inbox (list defaults to `status=pending`).
+Waiting steps do not appear in the approver inbox (list defaults to `status=pending`). When the current pending step’s mapped approver has an **active** delegation covering now, the **delegate** also sees that row (and may decide it).
+
+## Approval delegation (out-of-office)
+
+World-class P2P does not stall a sequential chain when the mapped department head is away. ProcureFlow’s substitute approver is an **active window** on `approval_delegations`, resolved at list/decide time.
+
+| Field | Role |
+| --- | --- |
+| `delegator_user_id` | Mapped / step owner whose inbox is covered |
+| `delegate_user_id` | Substitute who may see and decide the current pending step |
+| `starts_at` / `ends_at` | Optional ISO timestamps (NULL = open). Date-only `YYYY-MM-DD` is stored as start/end of that UTC day. |
+| `active` | `1` while live; soft-revoke sets `0` + `revoked_at` (no hard delete) |
+| `reason` | Optional coverage note |
+
+Resolution (`server/src/delegationsService.js`, used by `listApprovalInbox` / `decideApprovalStep`):
+
+1. Direct only — no transitive chains (Priya’s own delegate does not inherit Bob’s items).
+2. Covering now: `active = 1` AND (`starts_at` IS NULL OR `starts_at` ≤ now) AND (`ends_at` IS NULL OR `ends_at` ≥ now).
+3. Inbox: pending steps assigned to the viewer **or** pending steps whose `approver_id` has a covering delegation to the viewer. Waiting steps stay hidden.
+4. Decide: mapped `approver_id` **or** that covering delegate. Sequential promotion/skip is unchanged.
+
+Fail-closed: cannot delegate to self; both users must exist; revoke only when active. APIs are demo-open like department-head mapping (no JWT). The UI shows **Delegations** for approval-capable personas + Elena; a user creates/revokes as themselves; Elena can manage any pair.
+
+Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED` on `entity_type=approval_delegation`. A decide by a delegate appends `Delegated from {name} (id=…, delegation_id=…)` to the existing `STEP_APPROVED` / `APPROVED` / `REJECTED` requisition audit row.
+
+Seed: **Bob Martinez → Priya Nair**, active window covering now. **PR-2026-003** stays pending on Bob so Priya’s inbox demonstrates the loop.
 
 ## Multi-supplier PO split
 
@@ -305,11 +330,12 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents).
+Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events), and the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents).
 
 ## Known demo limits (out of scope)
 
-- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` is still demo-open like catalog PATCH.
+- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` and `POST /api/approval-delegations` are still demo-open like catalog PATCH.
+- Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
 - Short-pay rewrites header payable cents only (no line-level debit memo or supplier portal credit). Buyer Inbox is the requester queue for `return_to_buyer`; it does not unlock Approve for Payment.

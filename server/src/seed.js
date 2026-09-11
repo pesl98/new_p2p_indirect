@@ -16,6 +16,7 @@ const allTables = [
   'po_items',
   'purchase_orders',
   'approval_requests',
+  'approval_delegations',
   'requisition_items',
   'purchase_requisitions',
   'catalog_items',
@@ -157,6 +158,7 @@ await db.transaction(async () => {
   await insertPRItem.run(2, 1, 'Apple MacBook Pro 16" (M3 Max / 36GB / 1TB)', 'IT Hardware', 1, 349900, 349900, 1);
   await insertPRItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 'IT Hardware', 1, 74900, 74900, 1);
 
+  // Pending Marketing PR for Bob; Priya sees it via the seeded OOO delegation.
   await insertPR.run(3, 'PR-2026-003', 1, 1, 'pending_approval', 850000, 'External expert audit of our primary customer onboarding flow to lift conversion.', '2026-10-01', 'Medium', '-1 days');
   await insertPRItem.run(3, 16, 'Enterprise UX Audit & Design System Sprint', 'Consulting & Professional Services', 1, 850000, 850000, 5);
 
@@ -200,6 +202,7 @@ await db.transaction(async () => {
   await insertApproval.run(2, 2, 1, 'approved', 'Approved hardware upgrade for brand lead.', '2026-09-01 10:15:00');
   await insertApproval.run(2, 3, 2, 'approved', 'Procurement verified against vendor standard contract discount.', '2026-09-01 16:40:00');
   // PR-2026-003 is $8,500 — dept head + procurement; sequential: Bob pending, Carol waiting.
+  // Seeded Bob → Priya delegation covers this pending step (OOO walkthrough).
   await insertApproval.run(3, 2, 1, 'pending', null, null);
   await insertApproval.run(3, 3, 2, 'waiting', null, null);
   // PR-2026-005 is $12,500 — ITE dept head + procurement + finance; all approved.
@@ -211,6 +214,26 @@ await db.transaction(async () => {
   await insertApproval.run(6, 3, 2, 'approved', 'TechSupply for the monitor; WorkSpace for the Aeron — convert will issue two POs.', '2026-09-03 11:15:00');
   // PR-2026-007 is $297 — department head only.
   await insertApproval.run(7, 2, 1, 'approved', 'Approved replacement mice against marketing studio kit budget.', '2026-09-04 10:05:00');
+
+  // 7b. Approval delegation (OOO): Bob → Priya, covering now. Stored
+  // approval_requests.approver_id on PR-2026-003 stays Bob; Priya sees it at list/decide time.
+  const insertDelegation = db.prepare(`
+    INSERT INTO approval_delegations (
+      delegator_user_id, delegate_user_id, starts_at, ends_at, active, reason,
+      created_by_user_id, created_by_name
+    ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+  `);
+  const delegationStarts = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const delegationEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  await insertDelegation.run(
+    2,
+    6,
+    delegationStarts,
+    delegationEnds,
+    'Out of office — Q3 offsite. Priya covers Marketing step-1 approvals including PR-2026-003.',
+    2,
+    'Bob Martinez'
+  );
 
   // 8. Purchase Orders
   const insertPO = db.prepare(`
@@ -545,6 +568,14 @@ await db.transaction(async () => {
   await insertAudit.run('goods_receipt', 4, 'RECEIVED', 'Carol Zhang', 'GRN-2026-004 confirmed 2 of 3 mice received; one on backorder', '-1 days');
   await insertAudit.run('invoice', 5, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged quantity variance (3 billed vs 2 received)', '-1 days');
   await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '0 days');
+  await insertAudit.run(
+    'approval_delegation',
+    1,
+    'DELEGATION_CREATED',
+    'Bob Martinez',
+    'Bob Martinez (id=2) → Priya Nair (id=6). Active OOO window covering PR-2026-003.',
+    '0 days'
+  );
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).

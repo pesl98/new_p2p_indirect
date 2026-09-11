@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -21,7 +21,8 @@ Control model (integer cents, sequential approvals, dual invoice match, invoice 
      - **> \$10,000**: Department Head, then Procurement, then Finance Controller (`role=finance`) or CFO (`role=admin`) if no finance user exists
    - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. APIs are demo-open like supplier/catalog master-data (no JWT). Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
    - Steps are **sequential**, not parallel: only the current step is `pending`; later steps stay `waiting` until the previous step is approved. Waiting steps do not appear in the approver inbox. Rejecting a step skips remaining `waiting`/`pending` rows.
-   - The decide API requires `approver_id` matching the current pending step. **Persona auth is client-only demo** (header switcher; no JWT/sessions).
+   - The decide API requires `approver_id` matching the current pending step **or an active delegate** covering now for that mapped approver. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. **Persona auth is client-only demo** (header switcher; no JWT/sessions).
+   - **Approval delegation (OOO):** an approver (or Elena as org admin) assigns a temporary substitute (`approval_delegations`: window, reason, soft-revoke). The delegate sees the current pending step in their inbox (badge “Delegated from …”) and may decide it. Waiting steps stay waiting. Cannot delegate to self; expired/inactive windows are ignored. Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED`, plus delegated_from on decide.
    - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved — not when a PO is issued. Final approve **fails closed** if remaining budget (`total − committed − actual`, cents) is less than the PR total.
 
 3. **Purchase Orders (PO) Management**
@@ -121,6 +122,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 **Buyer inbox walkthrough:** Switch to **Alice Chen** → sidebar **Buyer Inbox** → open **INV-TSG-22041** (PO-2026-006 / PR-2026-007; 3 mice billed vs 2 received). AP’s return reason is on the row. **Respond** with a required note (e.g. third unit arrived off-system / ready for AP) and **Send to AP**. Invoice stays `variance_flagged` and leaves Alice’s inbox. Switch to **David Miller** → Exception Workbench → INV-TSG-22041 still open with Alice’s buyer response in history → Accept variance, Short pay, or Reject. To practice the AP return itself: David can **Return to buyer** on a different open hard exception — leave **INV-TSG-11029** for short-pay practice.
 
+**Approval delegation walkthrough:** Seed maps **Bob Martinez → Priya Nair** with an active OOO window. Switch to **Priya Nair** → Approvals Inbox → **PR-2026-003** shows “Delegated from Bob Martinez”. Approve as delegate; the step’s stored approver stays Bob; Carol’s waiting procurement step is unchanged (promoted to pending after step 1). Audit on the PR notes `Delegated from Bob Martinez`. To create/revoke: switch to **Bob** → sidebar **Delegations** → pick Priya, optional window, reason. **Elena** can manage any pair from the same screen. Revoke is a soft inactivate — history remains.
+
 ---
 
 ## ☁️ Deploy: Vercel + Turso
@@ -214,7 +217,8 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `suppliers`: Approved vendor repository with payment terms, ratings, and `status` (`active` | `inactive` | `under_review`). Edit via `PATCH /api/suppliers/:id`; deactivate via status — never hard-delete.
 - `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service, `status` active|inactive). Edit via `PATCH /api/catalog/:id`. Requisition browse defaults to active items.
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items
-- `approval_requests`: Multi-tier approval routing steps
+- `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
+- `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
 - `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`)
 - `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)

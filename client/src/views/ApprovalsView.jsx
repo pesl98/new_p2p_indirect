@@ -115,7 +115,8 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
         ) : (
           approvals.map((item) => {
             const hasExceededBudget = item.available_budget !== null && item.total_amount > item.available_budget;
-            const canAct = Number(currentUser?.id) === Number(item.approver_id);
+            const canAct = Number(currentUser?.id) === Number(item.approver_id)
+              || Number(item.via_delegation) === 1;
             return (
               <div 
                 key={item.approval_id} 
@@ -134,6 +135,11 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                         {item.priority} Priority
                       </span>
                       <span className="text-xs text-slate-400">Tier {item.step_order} Authorization</span>
+                      {(item.via_delegation || item.delegated_from_name) && (
+                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-violet-100 text-violet-800">
+                          Delegated from {item.delegated_from_name || 'mapped approver'}
+                        </span>
+                      )}
                     </div>
 
                     <div className="text-xs text-slate-800">
@@ -213,6 +219,9 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
               {decisionType === 'approved'
                 ? `Authorizing $${formatMoney(activeDecisionModal.total_amount)} from ${activeDecisionModal.department_name} budget.`
                 : 'Please document why this procurement request cannot be approved.'}
+              {Number(activeDecisionModal.via_delegation) === 1 && activeDecisionModal.delegated_from_name
+                ? ` Acting as delegate for ${activeDecisionModal.delegated_from_name}.`
+                : ''}
             </p>
 
             <div className="space-y-3 text-xs">
