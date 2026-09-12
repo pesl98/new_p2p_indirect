@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, GRN/SES receiving, multi-supplier PO split, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -31,6 +31,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - **Convert UI (per-line supplier remap):** from an approved PR, Carol (or any demo persona) opens **Convert to PO** on Requisitions or **Convert Approved PR** on Purchase Orders. The modal lists each line with its resolved default vendor and a supplier picker. Confirm posts `POST /api/purchase-orders/from-requisition` with `supplier_mappings` and shows the issued PO list (N POs when split). Remapping a line can change the split; leaving a line unassigned fails closed with a clear error. Seed demo: convert **PR-2026-006** (TechSupply + WorkSpace) and optionally remap a line before issue.
    - Printable & exportable corporate Purchase Order layout complete with vendor address, payment terms, delivery instructions, and signature block.
    - Real-time fulfillment tracking with partial delivery indicators.
+   - **Change orders / revisions:** Carol (or any demo persona) amends an issued or partially received/received PO from the PO detail **Change order** action. Numbered `CO-YYYY-NNN` (MAX-suffix), revision per PO. Apply-on-confirm updates existing line qty / unit price (integer cents) and optional delivery notes. Fail-closed if the new qty would drop below already received (goods), accepted (services), or invoiced. Recalculates line and PO totals in cents. When the PO is linked to a PR/department, `budgets.committed_amount` moves by the delta (increase commits more; decrease releases, floored at 0) — `actual_spent` is never touched. Net increases above **$1,000** (`CHANGE_ORDER_INCREASE_CONFIRM_CENTS` = `APPROVAL_TIER2_CENTS`) require an explicit `confirm_increase` flag, not a second approval chain. Adding brand-new catalog lines is out of scope. Seed: **PO-2026-007** / **CO-2026-001** already applied; **PO-2026-004** is open for the live walkthrough.
 
 4. **Goods Receipts (GRN)**
    - Receiving inspection wizard against **goods** PO lines (IT hardware, office, facilities).
@@ -69,7 +70,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 9. **Document trail (P2P lifecycle overview)**
    - One screen for a buying journey: PR header, sequential approvals, linked PO(s) (multi-supplier split as branches), GRN and/or SES, invoice `match_status`, and AP approve/paid events.
    - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
-   - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** (optionally remapping a line in the convert UI) to see two PO branches — or one, if both lines are issued to the same vendor.
+   - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** (optionally remapping a line in the convert UI) to see two PO branches — or one, if both lines are issued to the same vendor. **PR-2026-008** / **PO-2026-007** includes applied change order **CO-2026-001**.
 
 10. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
@@ -123,6 +124,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 **Buyer inbox walkthrough:** Switch to **Alice Chen** → sidebar **Buyer Inbox** → open **INV-TSG-22041** (PO-2026-006 / PR-2026-007; 3 mice billed vs 2 received). AP’s return reason is on the row. **Respond** with a required note (e.g. third unit arrived off-system / ready for AP) and **Send to AP**. Invoice stays `variance_flagged` and leaves Alice’s inbox. Switch to **David Miller** → Exception Workbench → INV-TSG-22041 still open with Alice’s buyer response in history → Accept variance, Short pay, or Reject. To practice the AP return itself: David can **Return to buyer** on a different open hard exception — leave **INV-TSG-11029** for short-pay practice.
 
 **Approval delegation walkthrough:** Seed maps **Bob Martinez → Priya Nair** with an active OOO window. Switch to **Priya Nair** → Approvals Inbox → **PR-2026-003** shows “Delegated from Bob Martinez”. Approve as delegate; the step’s stored approver stays Bob; Carol’s waiting procurement step is unchanged (promoted to pending after step 1). Audit on the PR notes `Delegated from Bob Martinez`. To create/revoke: switch to **Bob** → sidebar **Delegations** → pick Priya, optional window, reason. **Elena** can manage any pair from the same screen. Revoke is a soft inactivate — history remains.
+
+**PO change order walkthrough:** Switch to **Carol Zhang** → Purchase Orders → open **PO-2026-004** (issued Figma seats; 2 × $540.00; no SES yet). **Change order** → e.g. qty 2 → 3 or unit price $540.00 → $500.00, required reason, confirm. Totals recompute in integer cents; history lists the new `CO-YYYY-NNN`. To see an already-applied revision: open **PO-2026-007** (Rev 1, **CO-2026-001**, $2,670.00 → $2,550.00 volume discount) or Document trail **PR-2026-008**. Do not amend **PO-2026-001** (paid happy path), **PO-2026-002** (INV-TSG-11029 short-pay), or **PO-2026-006** (buyer inbox). A net increase over $1,000 requires the confirm-increase checkbox. Reducing a line below received / accepted / invoiced is rejected (400).
 
 ---
 
@@ -200,7 +203,7 @@ Vercel runs `npm run build`, deploys `api/index.js` as one Node Function (`inclu
 
 ---
 
-Document numbers (`PR-` / `PO-` / `GRN-` / `SES-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
+Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CO-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
 
 Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 
@@ -219,7 +222,8 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items
 - `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
 - `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
-- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`)
+- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`, `revision`, `change_order_count`)
+- `po_change_orders` & `po_change_order_items`: Formal PO revisions (`CO-YYYY-NNN`, before/after totals in cents)
 - `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
 - `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay)

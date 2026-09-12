@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { asCents, formatCents, fromCents, lineTotalCents, requireIntegerCents, toCents, toQty } from './money.js';
+import { asCents, APPROVAL_TIER2_CENTS, CHANGE_ORDER_INCREASE_CONFIRM_CENTS, formatCents, fromCents, lineTotalCents, requireIntegerCents, toCents, toQty } from './money.js';
 import { priceToleranceCents } from './match.js';
 
 describe('money helpers', () => {
@@ -30,6 +30,11 @@ describe('money helpers', () => {
     assert.throws(() => requireIntegerCents('1498.00', 'payable_total_cents'), /integer number of cents/);
     assert.throws(() => requireIntegerCents(undefined, 'payable_total_cents'), /required/);
     assert.throws(() => requireIntegerCents(true, 'payable_total_cents'), /integer number of cents/);
+  });
+
+  test('change-order increase confirm threshold reuses the $1,000 tier-2 constant', () => {
+    assert.equal(CHANGE_ORDER_INCREASE_CONFIRM_CENTS, APPROVAL_TIER2_CENTS);
+    assert.equal(CHANGE_ORDER_INCREASE_CONFIRM_CENTS, 100_000);
   });
 
   test('price tolerance is 1% of PO unit price in cents, rounded to nearest cent', () => {

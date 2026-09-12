@@ -143,6 +143,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   payment_terms TEXT DEFAULT 'Net 30',
   shipping_address TEXT,
   notes TEXT,
+  revision INTEGER NOT NULL DEFAULT 0,
+  change_order_count INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id),
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -164,6 +166,38 @@ CREATE TABLE IF NOT EXISTS po_items (
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (requisition_item_id) REFERENCES requisition_items(id)
+);
+
+-- Formal PO amendments. Apply-on-confirm (status usually 'applied').
+-- Numbered CO-YYYY-NNN. revision is 1-based per PO (PO header revision tracks last applied).
+CREATE TABLE IF NOT EXISTS po_change_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_id INTEGER NOT NULL,
+  co_number TEXT UNIQUE NOT NULL,
+  revision INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'applied' CHECK (status IN ('draft', 'applied')),
+  reason TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  notes TEXT,
+  before_total_cents INTEGER NOT NULL,
+  after_total_cents INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  applied_at DATETIME,
+  UNIQUE(po_id, revision),
+  FOREIGN KEY (po_id) REFERENCES purchase_orders(id)
+);
+
+CREATE TABLE IF NOT EXISTS po_change_order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  change_order_id INTEGER NOT NULL,
+  po_item_id INTEGER NOT NULL,
+  old_quantity INTEGER NOT NULL,
+  new_quantity INTEGER NOT NULL,
+  old_unit_price INTEGER NOT NULL,
+  new_unit_price INTEGER NOT NULL,
+  notes TEXT,
+  FOREIGN KEY (change_order_id) REFERENCES po_change_orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (po_item_id) REFERENCES po_items(id)
 );
 
 CREATE TABLE IF NOT EXISTS goods_receipts (

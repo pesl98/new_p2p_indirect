@@ -11,7 +11,8 @@ import {
   CreditCard,
   ExternalLink,
   Clock,
-  AlertCircle
+  AlertCircle,
+  FileEdit
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
@@ -62,6 +63,7 @@ function statusTone(status) {
     case 'tolerated_match':
     case 'issued':
     case 'partially_received':
+    case 'applied':
       return 'bg-amber-100 text-amber-800';
     case 'not_started':
     case 'waiting':
@@ -95,6 +97,8 @@ function eventIcon(kind) {
       return CheckSquare;
     case 'purchase_order':
       return ShoppingCart;
+    case 'change_order':
+      return FileEdit;
     case 'goods_receipt':
       return PackageCheck;
     case 'service_entry_sheet':
@@ -175,7 +179,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {['PR-2026-001', 'PR-2026-005', 'PR-2026-006'].map((number) => (
+          {['PR-2026-001', 'PR-2026-005', 'PR-2026-006', 'PR-2026-008'].map((number) => (
             <button
               key={number}
               type="button"

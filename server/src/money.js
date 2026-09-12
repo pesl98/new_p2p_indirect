@@ -77,3 +77,9 @@ export function requireIntegerCents(value, field = 'amount') {
 /** Existing approval routing thresholds, expressed in cents ($1,000 / $10,000). */
 export const APPROVAL_TIER2_CENTS = 100_000;
 export const APPROVAL_TIER3_CENTS = 1_000_000;
+
+/**
+ * Change-order net-increase gate. Increases strictly above this amount
+ * require `confirm_increase: true` (not a second approval chain).
+ */
+export const CHANGE_ORDER_INCREASE_CONFIRM_CENTS = APPROVAL_TIER2_CENTS;

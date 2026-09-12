@@ -11,12 +11,16 @@ import {
   FileText, 
   Building2, 
   X,
-  ExternalLink
+  ExternalLink,
+  FileEdit
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
 import { isServiceLine, lineTypeLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
+import ChangeOrderModal from '../components/ChangeOrderModal';
+
+const AMENDABLE_PO_STATUSES = ['issued', 'acknowledged', 'partially_received', 'received'];
 
 export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, convertRequisitionId }) {
   const [orders, setOrders] = useState([]);
@@ -24,6 +28,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
   const [loading, setLoading] = useState(true);
   const [selectedPO, setSelectedPO] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showChangeOrder, setShowChangeOrder] = useState(false);
   const [convertTargetId, setConvertTargetId] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
 
@@ -153,6 +158,11 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                     <tr key={po.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900">
                         {po.po_number}
+                        {po.revision > 0 && (
+                          <span className="ml-1.5 text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                            Rev {po.revision}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900">{po.supplier_name}</div>
@@ -236,6 +246,21 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
         />
       )}
 
+      {showChangeOrder && selectedPO && (
+        <ChangeOrderModal
+          purchaseOrder={selectedPO}
+          currentUser={currentUser}
+          onClose={() => setShowChangeOrder(false)}
+          onApplied={async () => {
+            setShowChangeOrder(false);
+            await loadData();
+            if (selectedPO?.id) {
+              await handleOpenDetail(selectedPO.id);
+            }
+          }}
+        />
+      )}
+
       {/* Printable / Formal PO Viewer Modal */}
       {selectedPO && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -247,6 +272,15 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                 <span className="font-bold">Official Purchase Order Document</span>
               </div>
               <div className="flex items-center space-x-2">
+                {AMENDABLE_PO_STATUSES.includes(selectedPO.status) && (
+                  <button
+                    onClick={() => setShowChangeOrder(true)}
+                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg font-medium flex items-center space-x-1"
+                  >
+                    <FileEdit className="w-3.5 h-3.5" />
+                    <span>Change order</span>
+                  </button>
+                )}
                 <button
                   onClick={() => window.print()}
                   className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded-lg font-medium flex items-center space-x-1"
@@ -270,7 +304,10 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   <p className="text-slate-500 mt-0.5">Procurement Dept: purchasing@acme.com</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-xl font-mono font-black text-indigo-700">{selectedPO.po_number}</div>
+                  <div className="text-xl font-mono font-black text-indigo-700">
+                    {selectedPO.po_number}
+                    {selectedPO.revision > 0 ? ` · Rev ${selectedPO.revision}` : ''}
+                  </div>
                   <div className="text-slate-500 mt-1">Date: <strong>{selectedPO.issue_date}</strong></div>
                   <div className="text-slate-500">Terms: <strong>{selectedPO.payment_terms}</strong></div>
                   <div className="mt-2">{getStatusBadge(selectedPO.status)}</div>
@@ -367,6 +404,27 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                 </div>
               </div>
             </div>
+
+            {selectedPO.change_orders?.length > 0 && (
+              <div className="px-8 pb-4 text-xs">
+                <div className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-2">Change orders</div>
+                <div className="space-y-2">
+                  {selectedPO.change_orders.map((co) => (
+                    <div key={co.id} className="border border-slate-200 rounded-lg px-3 py-2 bg-slate-50">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono font-bold text-slate-900">{co.co_number}</span>
+                        <span className="text-[10px] font-semibold text-indigo-700">Rev {co.revision} · {co.status}</span>
+                      </div>
+                      <div className="text-slate-600 mt-1">{co.reason}</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        ${formatMoney(co.before_total_cents)} → ${formatMoney(co.after_total_cents)}
+                        {co.actor_name ? ` · ${co.actor_name}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {selectedPO.service_entry_sheets?.length > 0 && (
               <div className="px-8 pb-4 text-xs">

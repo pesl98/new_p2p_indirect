@@ -265,6 +265,67 @@ async function migrateApprovalDelegations(database) {
   await maybe(database.exec(APPROVAL_DELEGATIONS_TABLE_SQL));
 }
 
+/**
+ * Existing DBs created before PO change orders need header revision columns
+ * plus po_change_orders / po_change_order_items. CREATE TABLE IF NOT EXISTS
+ * matches catalog/SES/delegation bootstrap in schema.sql.
+ */
+export const PURCHASE_ORDERS_REVISION_COLUMN_SQL =
+  `ALTER TABLE purchase_orders ADD COLUMN revision INTEGER NOT NULL DEFAULT 0`;
+
+export const PURCHASE_ORDERS_CHANGE_ORDER_COUNT_COLUMN_SQL =
+  `ALTER TABLE purchase_orders ADD COLUMN change_order_count INTEGER NOT NULL DEFAULT 0`;
+
+export const PO_CHANGE_ORDERS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS po_change_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    po_id INTEGER NOT NULL,
+    co_number TEXT UNIQUE NOT NULL,
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'applied' CHECK (status IN ('draft', 'applied')),
+    reason TEXT NOT NULL,
+    actor_name TEXT NOT NULL,
+    notes TEXT,
+    before_total_cents INTEGER NOT NULL,
+    after_total_cents INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    applied_at DATETIME,
+    UNIQUE(po_id, revision),
+    FOREIGN KEY (po_id) REFERENCES purchase_orders(id)
+  )
+`;
+
+export const PO_CHANGE_ORDER_ITEMS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS po_change_order_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    change_order_id INTEGER NOT NULL,
+    po_item_id INTEGER NOT NULL,
+    old_quantity INTEGER NOT NULL,
+    new_quantity INTEGER NOT NULL,
+    old_unit_price INTEGER NOT NULL,
+    new_unit_price INTEGER NOT NULL,
+    notes TEXT,
+    FOREIGN KEY (change_order_id) REFERENCES po_change_orders(id) ON DELETE CASCADE,
+    FOREIGN KEY (po_item_id) REFERENCES po_items(id)
+  )
+`;
+
+async function migratePurchaseOrderChangeOrders(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('purchase_orders') && !(await tableHasColumn(database, 'purchase_orders', 'revision'))) {
+    await maybe(database.exec(PURCHASE_ORDERS_REVISION_COLUMN_SQL));
+  }
+  if (tables.includes('purchase_orders') && !(await tableHasColumn(database, 'purchase_orders', 'change_order_count'))) {
+    await maybe(database.exec(PURCHASE_ORDERS_CHANGE_ORDER_COUNT_COLUMN_SQL));
+  }
+
+  await maybe(database.exec(PO_CHANGE_ORDERS_TABLE_SQL));
+  await maybe(database.exec(PO_CHANGE_ORDER_ITEMS_TABLE_SQL));
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
@@ -275,6 +336,7 @@ export async function applySchema(database) {
   await migrateInvoiceShortPay(database);
   await migrateDepartmentApprover(database);
   await migrateApprovalDelegations(database);
+  await migratePurchaseOrderChangeOrders(database);
   return database;
 }
 

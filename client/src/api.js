@@ -190,6 +190,18 @@ export const api = {
     });
     return jsonOk(r, 'Failed to update purchase order status');
   },
+  getChangeOrders: (id) =>
+    fetch(`${API_BASE}/purchase-orders/${id}/change-orders`).then((r) =>
+      jsonOk(r, 'Failed to load change orders')
+    ),
+  createChangeOrder: async (id, data) => {
+    const r = await fetch(`${API_BASE}/purchase-orders/${id}/change-orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to apply change order');
+  },
 
   // Goods Receipts
   getGoodsReceipts: (po_id = '') => {
