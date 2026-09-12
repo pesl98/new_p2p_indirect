@@ -185,7 +185,7 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
   };
 }
 
-export async function markInvoicePaid(db, id, { payment_reference, payer_name } = {}) {
+export async function markInvoicePaid(db, id, { payment_reference, payer_name, actor_name } = {}) {
   const invoice = await db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(id);
   if (!invoice) {
     const err = new Error('Invoice not found.');
@@ -201,6 +201,7 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name } 
   const amountNote = isShortPay
     ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
     : `$${formatCents(payableCents)}`;
+  const actor = payer_name || actor_name || 'Finance Lead';
 
   const payTransaction = db.transaction(async () => {
     await db.prepare(`
@@ -212,7 +213,7 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name } 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, 'PAID', ?, ?)
-    `).run(id, payer_name || 'Finance Lead', `Marked as paid with reference ${ref} (${amountNote})`);
+    `).run(id, actor, `Marked as paid with reference ${ref} (${amountNote})`);
   });
 
   await payTransaction();

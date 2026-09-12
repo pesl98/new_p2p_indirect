@@ -13,6 +13,7 @@ import {
   GitBranch,
   ShieldAlert,
   Inbox,
+  CalendarClock,
   UserCog,
   UserCheck
 } from 'lucide-react';
@@ -23,7 +24,7 @@ function dbModeLabel(mode) {
   return 'Database connected';
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, currentUser }) {
+export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, currentUser }) {
   const [dbMode, setDbMode] = useState(null);
 
   useEffect(() => {
@@ -107,6 +108,16 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           badge: buyerInboxCount > 0 ? buyerInboxCount : null,
           badgeColor: 'bg-amber-500 text-white',
           desc: 'Invoices AP returned to the requester'
+        }]
+      : []),
+    ...(['finance', 'admin'].includes(currentUser?.role)
+      ? [{
+          id: 'ap_aging',
+          label: 'AP Aging',
+          icon: CalendarClock,
+          badge: apAgingOverdueCount > 0 ? apAgingOverdueCount : null,
+          badgeColor: 'bg-rose-500 text-white',
+          desc: 'Approved payables by due date'
         }]
       : []),
     {
@@ -213,7 +224,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
             <span className="text-[10px] text-emerald-400 font-mono">100% Traceable</span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5">
-            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Pay
+            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Aging ➔ Pay
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>

@@ -51,12 +51,20 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
               <span>+ New Requisition</span>
             </button>
             {(currentUser?.role === 'finance' || currentUser?.role === 'admin') && (
-              <button
-                onClick={() => onNavigate('exception_workbench')}
-                className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
-              >
-                <span>Exception Workbench</span>
-              </button>
+              <>
+                <button
+                  onClick={() => onNavigate('exception_workbench')}
+                  className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
+                >
+                  <span>Exception Workbench</span>
+                </button>
+                <button
+                  onClick={() => onNavigate('ap_aging')}
+                  className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
+                >
+                  <span>AP Aging</span>
+                </button>
+              </>
             )}
             {currentUser?.role === 'requester' && (
               <button

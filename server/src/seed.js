@@ -80,7 +80,7 @@ await db.transaction(async () => {
   await insertBudget.run(1, 2026, 15000000, 1782100, 2435000); // MKT $150,000 / $17,821 committed (PR-2026-006 + buyer-inbox PR-2026-007) / $24,350
   await insertBudget.run(2, 2026, 32000000, 6070000, 8910000); // ITE + $12,500 committed for SOC 2 SES PO
   await insertBudget.run(3, 2026, 9500000, 1485000, 1845000);  // FAC + $2,670 PR-2026-008 minus $120 CO-2026-001 volume discount
-  await insertBudget.run(4, 2026, 6000000, 450000, 1120000);   // HRP
+  await insertBudget.run(4, 2026, 6000000, 450000, 1131600);   // HRP + $116 AP-aging INV-WED-3308 (approved; committed already released)
   await insertBudget.run(5, 2026, 5000000, 320000, 890000);    // ADM
 
   // 4. Suppliers
@@ -146,6 +146,8 @@ await db.transaction(async () => {
   // Buyer inbox: INV-TSG-22041 is parked return_to_buyer on Alice's PR-2026-007.
   // Change orders: PR-2026-008 / PO-2026-007 has applied CO-2026-001 (volume discount).
   // Live walkthrough: amend issued PO-2026-004 (Figma seats, no SES yet).
+  // AP Aging payables: INV-FCJ-8810 overdue (short-pay then approved), INV-WED-3308 due soon
+  // (PR-2026-009 / Sofia), INV-TSG-5508 later. Do not approve/pay INV-TSG-11029 or INV-TSG-22041.
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -190,6 +192,10 @@ await db.transaction(async () => {
   await insertPR.run(8, 'PR-2026-008', 7, 3, 'converted_to_po', 267000, 'Lobby and boardroom HEPA filtration for Q4 visitor season. Issued as PO-2026-007; vendor later confirmed a volume discount via change order.', '2026-10-20', 'Medium', '-6 days');
   await insertPRItem.run(8, 14, 'Blueair Pro XL Commercial HEPA Air Purifier', 'Facilities & MRO', 3, 89000, 267000, 4);
 
+  // AP Aging due-soon demo: HR paper restock, already converted + invoice approved for payment.
+  await insertPR.run(9, 'PR-2026-009', 8, 4, 'converted_to_po', 11600, 'HR wing copy-paper restock. Issued as PO-2026-009; invoice INV-WED-3308 is approved and due within the AP Aging 7-day window.', '2026-09-20', 'Low', '-8 days');
+  await insertPRItem.run(9, 12, 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 'Office Supplies', 2, 5800, 11600, 3);
+
   await db.exec(`
     UPDATE requisition_items
     SET line_type = 'service'
@@ -226,6 +232,8 @@ await db.transaction(async () => {
   // PR-2026-008 is $2,670 — Facilities head + procurement.
   await insertApproval.run(8, 7, 1, 'approved', 'Approved filtration refresh against FAC FY26 MRO.', '2026-09-02 09:20:00');
   await insertApproval.run(8, 3, 2, 'approved', 'FacilityCare contract pricing; issue PO-2026-007.', '2026-09-02 11:05:00');
+  // PR-2026-009 is $116 — department head only (Sofia).
+  await insertApproval.run(9, 8, 1, 'approved', 'Approved HR paper restock against HRP office supply budget.', '2026-09-03 09:40:00');
 
   // 7b. Approval delegation (OOO): Bob → Priya, covering now. Stored
   // approval_requests.approver_id on PR-2026-003 stays Bob; Priya sees it at list/decide time.
@@ -403,6 +411,58 @@ await db.transaction(async () => {
   );
   await insertChangeOrderItem.run(1, 7, 3, 3, 89000, 85000, 'Volume discount on 3 units');
 
+  const hrPaperItem = await db.prepare(`SELECT id FROM requisition_items WHERE requisition_id = 9`).get();
+
+  // AP Aging payables (approved_for_payment). Standalone overdue + later POs do not
+  // touch the short-pay / buyer-inbox / paid happy-path / change-order walkthrough POs.
+  await insertPO.run(
+    8,
+    'PO-2026-008',
+    null,
+    4,
+    3,
+    'received',
+    21000,
+    '2026-08-20',
+    '2026-08-27',
+    'Net 30',
+    'Acme Corp HQ - Facilities Closet, 450 Tech Blvd, Austin, TX 78701',
+    'OSHA first-aid restock. Used for AP Aging overdue (INV-FCJ-8810).'
+  );
+  await insertPOItem.run(8, 8, null, 'OSHA 4-Shelf Industrial First Aid Station', 'Facilities & MRO', 1, 21000, 21000, 1, 1);
+
+  await insertPO.run(
+    9,
+    'PO-2026-009',
+    9,
+    3,
+    3,
+    'received',
+    11600,
+    '2026-09-04',
+    '2026-09-12',
+    'Net 45',
+    'Acme Corp HQ - People & Talent, 450 Tech Blvd, Austin, TX 78701',
+    'HR copy-paper restock. Used for AP Aging due-soon (INV-WED-3308).'
+  );
+  await insertPOItem.run(9, 9, hrPaperItem.id, 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 'Office Supplies', 2, 5800, 11600, 2, 2);
+
+  await insertPO.run(
+    10,
+    'PO-2026-010',
+    null,
+    1,
+    3,
+    'received',
+    39900,
+    '2026-08-28',
+    '2026-09-05',
+    'Net 30',
+    'Acme Corp HQ - IT Dept Receiving, 450 Tech Blvd, Austin, TX 78701',
+    'Docking station for contractor bench. Used for AP Aging later (INV-TSG-5508).'
+  );
+  await insertPOItem.run(10, 10, null, 'CalDigit TS4 Thunderbolt 4 Docking Station', 'IT Hardware', 1, 39900, 39900, 1, 1);
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -424,6 +484,15 @@ await db.transaction(async () => {
 
   await insertGRN.run(4, 'GRN-2026-004', 6, 3, '2026-09-06', 'UPS-1Z22041001', 'DN-TSG-2204', 'Partial delivery: 2 of 3 mice received; one remains on backorder.');
   await insertGRNItem.run(4, 6, 2, 'good', 'Serials logged; packaging intact.');
+
+  await insertGRN.run(5, 'GRN-2026-005', 8, 3, '2026-08-26', 'GSO-8810012', 'DN-FCJ-8810', 'First-aid station received and wall-mounted in the facilities closet.');
+  await insertGRNItem.run(5, 8, 1, 'good', 'Cabinet sealed; inventory card present.');
+
+  await insertGRN.run(6, 'GRN-2026-006', 9, 3, '2026-09-08', 'FEDEX-3308117', 'DN-WED-3308', 'Two cases of recycled copy paper received for HR.');
+  await insertGRNItem.run(6, 9, 2, 'good', 'Cases unopened.');
+
+  await insertGRN.run(7, 'GRN-2026-007', 10, 3, '2026-09-02', 'UPS-1Z5508002', 'DN-TSG-5508', 'CalDigit dock received for the contractor bench.');
+  await insertGRNItem.run(7, 10, 1, 'good', 'Serial logged; packaging intact.');
 
   await db.exec(`
     UPDATE po_items
@@ -570,6 +639,75 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(5, 6, 'Logitech MX Master 3S Wireless Mouse', 3, 9900, 29700);
   await insertMatch.run(5, 6, 6, 3, 2, 3, 9900, 9900, 1, 0, 'fail', 'Quantity variance: Cumulative invoiced 3 (prior 0 + this claim 3) exceeds 2 physically received on GRN.');
 
+  // Aging buckets use UTC calendar date vs today at seed time so the David/Elena
+  // walkthrough stays overdue / due-soon / later whenever the DB is re-seeded.
+  const utcYmdOffset = (days) => {
+    const now = new Date();
+    const utc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days);
+    return new Date(utc).toISOString().slice(0, 10);
+  };
+  const agingOverdueDue = utcYmdOffset(-12);
+  const agingDueSoonDue = utcYmdOffset(3);
+  const agingLaterDue = utcYmdOffset(21);
+
+  // Overdue approved payable (short-pay already applied). Mark-paid walkthrough target.
+  await insertInvoice.run(
+    6,
+    'INV-FCJ-8810',
+    8,
+    4,
+    utcYmdOffset(-18),
+    agingOverdueDue,
+    22000,
+    0,
+    22000,
+    'approved_for_payment',
+    'price_variance',
+    null,
+    'Price variance short-paid then approved. Billed $220.00 vs PO $210.00; payable $210.00. AP Aging overdue demo — do not confuse with INV-WED-9042 (paid happy path).'
+  );
+  await insertInvoiceItem.run(6, 8, 'OSHA 4-Shelf Industrial First Aid Station', 1, 22000, 22000);
+  await insertMatch.run(6, 8, 8, 1, 1, 1, 21000, 22000, 0, 1000, 'fail', 'Price discrepancy: Billed at $220.00 vs authorized PO price $210.00 (+4.76%).');
+  await db.exec(`UPDATE invoices SET payable_total_cents = 21000 WHERE id = 6`);
+
+  // Due soon approved payable (perfect match). Linked to Sofia / PR-2026-009.
+  await insertInvoice.run(
+    7,
+    'INV-WED-3308',
+    9,
+    3,
+    utcYmdOffset(-6),
+    agingDueSoonDue,
+    11600,
+    0,
+    11600,
+    'approved_for_payment',
+    'perfect_match',
+    null,
+    'Perfect match against GRN-2026-006 and PO-2026-009. Approved for payment; due within the AP Aging 7-day window.'
+  );
+  await insertInvoiceItem.run(7, 9, 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 2, 5800, 11600);
+  await insertMatch.run(7, 9, 9, 2, 2, 2, 5800, 5800, 0, 0, 'pass', 'Exact match on quantity (2) and price ($58.00).');
+
+  // Later approved payable (perfect match).
+  await insertInvoice.run(
+    8,
+    'INV-TSG-5508',
+    10,
+    1,
+    utcYmdOffset(-10),
+    agingLaterDue,
+    39900,
+    0,
+    39900,
+    'approved_for_payment',
+    'perfect_match',
+    null,
+    'Perfect match against GRN-2026-007 and PO-2026-010. Approved for payment; due after the AP Aging 7-day window.'
+  );
+  await insertInvoiceItem.run(8, 10, 'CalDigit TS4 Thunderbolt 4 Docking Station', 1, 39900, 39900);
+  await insertMatch.run(8, 10, 10, 1, 1, 1, 39900, 39900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($399.00).');
+
   const insertDisposition = db.prepare(`
     INSERT INTO invoice_exception_dispositions (
       invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, billed_total_cents, created_at
@@ -594,6 +732,16 @@ await db.transaction(async () => {
     'quantity_variance',
     29700,
     '2026-09-08 09:15:00'
+  );
+  await insertDisposition.run(
+    6,
+    'short_pay',
+    'Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.',
+    'David Miller',
+    21000,
+    'price_variance',
+    22000,
+    '2026-08-28 10:00:00'
   );
 
   // 11. Audit Logs
@@ -646,6 +794,21 @@ await db.transaction(async () => {
     'CO-2026-001 (rev 1) applied to PO-2026-007: $2,670.00 → $2,550.00 (delta -$120.00). Reason: Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged. Lines: Blueair Pro XL Commercial HEPA Air Purifier (unit $890.00→$850.00). Budget committed released by $120.00.',
     '-4 days'
   );
+  await insertAudit.run('requisition', 9, 'CREATED', 'Sofia Berg', 'Requisition created for 2 cases of recycled copy paper', '-8 days');
+  await insertAudit.run('requisition', 9, 'APPROVED', 'Sofia Berg', 'Approved PR-2026-009 for $116.00', '-8 days');
+  await insertAudit.run('purchase_order', 8, 'ISSUED', 'Carol Zhang', 'PO-2026-008 issued to FacilityCare & Janitorial Pro', '-20 days');
+  await insertAudit.run('purchase_order', 9, 'ISSUED', 'Carol Zhang', 'PO-2026-009 issued to WorkSpace Ergonomics Depot', '-8 days');
+  await insertAudit.run('purchase_order', 10, 'ISSUED', 'Carol Zhang', 'PO-2026-010 issued to TechSupply Global', '-14 days');
+  await insertAudit.run('goods_receipt', 5, 'RECEIVED', 'Carol Zhang', 'GRN-2026-005 confirmed first-aid station received', '-17 days');
+  await insertAudit.run('goods_receipt', 6, 'RECEIVED', 'Carol Zhang', 'GRN-2026-006 confirmed 2 cases of copy paper received', '-4 days');
+  await insertAudit.run('goods_receipt', 7, 'RECEIVED', 'Carol Zhang', 'GRN-2026-007 confirmed CalDigit dock received', '-10 days');
+  await insertAudit.run('invoice', 6, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-8810 flagged price_variance (1000¢ over PO)', '-17 days');
+  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', 'Short-pay INV-FCJ-8810: billed $220.00 → payable $210.00 (delta $10.00). Reason: Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.', '-15 days');
+  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-8810 for Billed $220.00 → Pay $210.00 payment', '-14 days');
+  await insertAudit.run('invoice', 7, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-6 days');
+  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '-5 days');
+  await insertAudit.run('invoice', 8, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-10 days');
+  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '-9 days');
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).
@@ -683,6 +846,25 @@ await db.transaction(async () => {
     UPDATE po_change_orders SET created_at = '2026-09-04 10:15:00', applied_at = '2026-09-04 10:15:00' WHERE id = 1;
     UPDATE audit_logs SET created_at = '2026-09-04 10:15:00'
       WHERE entity_type = 'purchase_order' AND entity_id = 7 AND action = 'CHANGE_ORDER_APPLIED';
+
+    UPDATE purchase_requisitions SET created_at = '2026-09-03 09:00:00' WHERE id = 9;
+    UPDATE purchase_orders SET created_at = '2026-08-20 10:00:00' WHERE id = 8;
+    UPDATE purchase_orders SET created_at = '2026-09-04 10:30:00' WHERE id = 9;
+    UPDATE purchase_orders SET created_at = '2026-08-28 11:00:00' WHERE id = 10;
+    UPDATE goods_receipts SET created_at = '2026-08-26 14:00:00' WHERE id = 5;
+    UPDATE goods_receipts SET created_at = '2026-09-08 11:00:00' WHERE id = 6;
+    UPDATE goods_receipts SET created_at = '2026-09-02 15:00:00' WHERE id = 7;
+    UPDATE invoices SET created_at = '2026-08-26 16:00:00' WHERE id = 6;
+    UPDATE invoices SET created_at = '2026-09-08 13:00:00' WHERE id = 7;
+    UPDATE invoices SET created_at = '2026-09-02 16:30:00' WHERE id = 8;
+    UPDATE audit_logs SET created_at = '2026-08-28 10:00:00'
+      WHERE entity_type = 'invoice' AND entity_id = 6 AND action = 'EXCEPTION_SHORT_PAY';
+    UPDATE audit_logs SET created_at = '2026-08-29 09:00:00'
+      WHERE entity_type = 'invoice' AND entity_id = 6 AND action = 'APPROVED_FOR_PAYMENT';
+    UPDATE audit_logs SET created_at = '2026-09-09 09:00:00'
+      WHERE entity_type = 'invoice' AND entity_id = 7 AND action = 'APPROVED_FOR_PAYMENT';
+    UPDATE audit_logs SET created_at = '2026-09-03 09:30:00'
+      WHERE entity_type = 'invoice' AND entity_id = 8 AND action = 'APPROVED_FOR_PAYMENT';
   `);
 
 });
