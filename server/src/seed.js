@@ -23,6 +23,8 @@ const allTables = [
   'requisition_items',
   'purchase_requisitions',
   'catalog_items',
+  'contract_items',
+  'contracts',
   'suppliers',
   'budgets',
   'users',
@@ -847,7 +849,29 @@ await db.transaction(async () => {
     '2026-08-28 10:00:00'
   );
 
-  // 11. Audit Logs
+  // 11. SaaS & Vendor Contracts
+  const insertContract = db.prepare(`
+    INSERT INTO contracts (id, contract_number, supplier_id, department_id, title, category, start_date, end_date, notice_period_days, annual_value_cents, auto_renew, status, terms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertContractItem = db.prepare(`
+    INSERT INTO contract_items (contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  await insertContract.run(1, 'CNT-2026-001', 2, 1, 'Figma Enterprise Organization Subscription', 'Software & Cloud', '2025-10-01', '2026-09-30', 30, 540000, 1, 'expiring_soon', 'Annual enterprise tier with unlimited design workspaces. 30 days written notice required.');
+  await insertContractItem.run(1, 5, 'Figma Organization Annual User License', 10, 54000, 540000, 'service');
+
+  await insertContract.run(2, 'CNT-2026-002', 2, 2, 'Slack Enterprise Grid Annual Agreement', 'Software & Cloud', '2025-12-01', '2026-11-30', 60, 900000, 1, 'active', 'Enterprise grid corporate communications. 60 days advance cancellation notice.');
+  await insertContractItem.run(2, 6, 'Slack Enterprise Grid Annual Subscription', 50, 18000, 900000, 'service');
+
+  await insertContract.run(3, 'CNT-2026-003', 4, 3, 'CleanPro Commercial Facilities & Janitorial Master Agreement', 'Facilities & MRO', '2025-09-20', '2026-09-20', 30, 1200000, 1, 'expiring_soon', 'Daily commercial facility cleaning and maintenance across HQ wings.');
+  await insertContractItem.run(3, null, 'Annual Comprehensive Facility Cleaning & Janitorial Retainer', 1, 1200000, 1200000, 'service');
+
+  await insertContract.run(4, 'CNT-2026-004', 5, 1, 'Apex Strategic Design & UX On-Demand Retainer', 'Consulting & Professional Services', '2026-01-01', '2026-12-31', 30, 1700000, 0, 'active', 'Bi-weekly sprint design advisory and product design system support.');
+  await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service');
+
+  // 12. Audit Logs
   const insertAudit = db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
     VALUES (?, ?, ?, ?, ?, datetime('now', ?))

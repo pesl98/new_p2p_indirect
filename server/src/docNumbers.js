@@ -11,7 +11,8 @@ const DOC_KINDS = {
   po: { table: 'purchase_orders', column: 'po_number', prefix: 'PO' },
   grn: { table: 'goods_receipts', column: 'grn_number', prefix: 'GRN' },
   ses: { table: 'service_entry_sheets', column: 'ses_number', prefix: 'SES' },
-  co: { table: 'po_change_orders', column: 'co_number', prefix: 'CO' }
+  co: { table: 'po_change_orders', column: 'co_number', prefix: 'CO' },
+  cnt: { table: 'contracts', column: 'contract_number', prefix: 'CNT' }
 };
 
 export async function nextDocumentNumber(db, kind, year = new Date().getFullYear()) {

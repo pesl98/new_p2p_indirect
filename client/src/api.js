@@ -101,6 +101,32 @@ export const api = {
   // Budgets
   getBudgets: () => fetch(`${API_BASE}/budgets`).then(r => r.json()),
 
+  // Contracts & Renewals
+  getContracts: (category = '', status = '', search = '') => {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+    return fetch(`${API_BASE}/contracts?${params.toString()}`).then(r => r.json());
+  },
+  getContractDetail: (id) => fetch(`${API_BASE}/contracts/${id}`).then(r => r.json()),
+  createContract: async (contractData) => {
+    const r = await fetch(`${API_BASE}/contracts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(contractData)
+    });
+    return jsonOk(r, 'Failed to create contract');
+  },
+  renewContractPr: async (contractId, data = {}) => {
+    const r = await fetch(`${API_BASE}/contracts/${contractId}/renew-pr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to generate renewal requisition');
+  },
+
   // Requisitions
   getRequisitions: (status = '', department_id = '') => {
     const params = new URLSearchParams();
