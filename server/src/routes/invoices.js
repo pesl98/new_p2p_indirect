@@ -1,6 +1,7 @@
 import express from 'express';
 import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from '../invoicesService.js';
 import { attachExceptionToInvoice } from '../invoiceExceptionsService.js';
+import { attachDuplicateToInvoice } from '../invoiceDuplicatesService.js';
 
 const router = express.Router();
 
@@ -118,13 +119,13 @@ router.get('/:id', async (req, res) => {
       ORDER BY ses.id DESC
     `).all(invoice.po_id);
 
-    res.json(await attachExceptionToInvoice(db, {
+    res.json(await attachDuplicateToInvoice(db, await attachExceptionToInvoice(db, {
       ...invoice,
       items,
       match_results: matchResults,
       receipts,
       service_entry_sheets: serviceSheets
-    }));
+    })));
   } catch (error) {
     httpError(res, error);
   }
@@ -135,11 +136,18 @@ router.post('/', async (req, res) => {
   try {
     const db = req.db;
     const result = await createVendorInvoice(db, req.body);
+    const duplicateStatus = result.duplicate_status || 'clear';
+    const suspects = result.duplicate_suspects || [];
+    const message = duplicateStatus === 'suspect'
+      ? 'Invoice created and 3-way matched successfully. Likely duplicate flagged — Approve for Payment is blocked until AP clears it in Duplicate Suspects.'
+      : 'Invoice created and 3-way matched successfully.';
     res.status(201).json({
       invoiceId: result.invoiceId,
       matchStatus: result.matchOutcome.overallMatchStatus,
       status: result.matchOutcome.invoiceStatus,
-      message: 'Invoice created and 3-way matched successfully.'
+      duplicate_status: duplicateStatus,
+      duplicate_suspects: suspects,
+      message
     });
   } catch (error) {
     httpError(res, error);

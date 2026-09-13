@@ -38,6 +38,7 @@ const LIST_SQL = `
     inv.payable_total_cents,
     inv.status,
     inv.match_status,
+    inv.duplicate_status,
     inv.payment_reference,
     inv.notes,
     inv.created_at,
@@ -128,7 +129,9 @@ export async function listApAging(db, {
   ]);
 
   const open = sortPayableRows(openRows.map((row) => attachAgingFields(row, { today, days })));
-  const readyToApprove = matchedRows.map((row) => attachAgingFields(row, { today, days }));
+  const readyToApprove = matchedRows
+    .map((row) => attachAgingFields(row, { today, days }))
+    .filter((row) => !['suspect', 'confirmed_duplicate'].includes(row.duplicate_status || 'clear'));
   const paid = paidRows.map((row) => attachAgingFields(row, { today, days }));
 
   const counts = emptyCounts();

@@ -12,7 +12,8 @@ import {
   Building2, 
   X,
   FileCheck,
-  ShieldAlert
+  ShieldAlert,
+  Copy
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, fromCents, toCents } from '../money';
@@ -143,6 +144,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
       setInvoiceLines([]);
       await loadData();
       if (onDataChanged) onDataChanged();
+      if (result.duplicate_status === 'suspect') {
+        alert(result.message || 'Invoice flagged as a likely duplicate. Approve for Payment is blocked until AP clears it in Duplicate Suspects.');
+      }
       handleOpenDetail(result.invoiceId);
     } catch (err) {
       alert(err.message);
@@ -284,7 +288,16 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 invoices.map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                      {inv.invoice_number}
+                      <div>{inv.invoice_number}</div>
+                      {(inv.duplicate_status === 'suspect' || inv.duplicate_status === 'confirmed_duplicate') && (
+                        <span className={`mt-1 inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                          inv.duplicate_status === 'suspect'
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-slate-800 text-white'
+                        }`}>
+                          {inv.duplicate_status === 'suspect' ? 'Duplicate suspect' : 'Confirmed duplicate'}
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 font-medium text-slate-900">
                       {inv.supplier_name}
@@ -642,6 +655,43 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 </div>
               )}
 
+              {(selectedInvoice.duplicate_status === 'suspect' || selectedInvoice.duplicate_status === 'confirmed_duplicate') && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-amber-950 space-y-2">
+                  <div className="font-bold text-xs inline-flex items-center space-x-1.5">
+                    <Copy className="w-4 h-4" />
+                    <span>
+                      {selectedInvoice.duplicate_status === 'suspect'
+                        ? 'Likely duplicate — approve and pay are blocked'
+                        : 'Confirmed duplicate — this invoice was voided'}
+                    </span>
+                  </div>
+                  <p className="text-[11px]">
+                    {selectedInvoice.duplicate_status === 'suspect'
+                      ? 'Same supplier + billed amount + near invoice date, and/or same PO + billed amount. Clear or confirm in Duplicate Suspects. Dual match is unchanged.'
+                      : 'AP confirmed this invoice as a duplicate. Status is rejected; approve and pay stay blocked.'}
+                  </p>
+                  {selectedInvoice.duplicate_suspects?.length > 0 && (
+                    <ul className="list-disc list-inside text-[11px] space-y-0.5">
+                      {selectedInvoice.duplicate_suspects.map((row) => (
+                        <li key={row.flag_id || row.id}>
+                          {row.invoice_number} · ${formatMoney(row.billed_total_cents ?? row.total_amount)} · {row.invoice_date}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <button
+                    onClick={() => {
+                      setSelectedInvoice(null);
+                      onNavigate?.('duplicate_suspects', { focusId: selectedInvoice.id });
+                    }}
+                    className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Open Duplicate Suspects</span>
+                  </button>
+                </div>
+              )}
+
               {selectedInvoice.status === 'variance_flagged' && (
                 <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-rose-900 space-y-2">
                   <div className="font-bold text-xs">Hard exception — approve and pay are blocked</div>
@@ -685,7 +735,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   Close
                 </button>
 
-                {selectedInvoice.status === 'matched' && (
+                {selectedInvoice.status === 'matched' && !['suspect', 'confirmed_duplicate'].includes(selectedInvoice.duplicate_status) && (
                   <button
                     onClick={() => handleApprovePayment(selectedInvoice.id)}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"

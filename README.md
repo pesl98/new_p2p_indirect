@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **AP payment aging / payables queue**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -64,7 +64,19 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - **Buyer Inbox (Alice / requester personas):** queue of invoices whose latest disposition is `return_to_buyer`. Respond with a required reason (ready-for-AP note). Invoice stays `variance_flagged`; AP then accept / short-pay / reject. Not an Approve for Payment override.
    - Seed: **INV-TSG-11029** is open for David/Elena (short-pay practice: billed $3,196.00 → e.g. pay $1,498.00 = 2 received × $749 PO price). **INV-TSG-22041** (`PR-2026-007`) is parked `return_to_buyer` for Alice’s Buyer Inbox. **INV-FCJ-7701** is already accepted. **INV-WED-9042** (PR-2026-001) stays the paid happy path.
 
-8. **AP Payment Aging / Payables Queue**
+8. **Duplicate Invoice Detection**
+   - Exact reuse of `(supplier_id, invoice_number)` remains a hard DB uniqueness fail.
+   - **Likely duplicate (soft hold)** on create when another non-rejected invoice for the same supplier has:
+     - the same billed `total_amount` (integer cents) **and** `invoice_date` within **±7 UTC calendar days**, or
+     - the same `po_id` **and** the same billed amount (different invoice number allowed).
+   - The invoice is still created and dual-matched as today. `duplicate_status` becomes `suspect`; Approve for Payment and mark-paid refuse until AP disposes.
+   - **Confirm unique** clears the hold (`confirmed_unique`) so approve may proceed if the invoice is matched. **Confirm duplicate** voids the new invoice (`rejected` + `confirmed_duplicate`) — Coupa-style; the candidate original is unchanged.
+   - Required reason + persona name. Written to `invoice_duplicate_flags` and `audit_logs` (`DUPLICATE_SUSPECTED` / `DUPLICATE_CLEARED` / `DUPLICATE_CONFIRMED`).
+   - Sidebar **Duplicate Suspects** for finance + admin (David / Elena). Badge on Invoices & Matching. APIs stay demo-open (no JWT).
+   - Seed: **INV-TSG-6610** (paid $99.00 / PO-2026-011) is the candidate. **INV-TSG-6611** (matched $99.00 / PO-2026-012, near date) is the open suspect. Do not use INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / INV-FCJ-8810 / INV-WED-3308 / INV-TSG-5508 for this walkthrough.
+   - Still out of scope: OCR/PDF capture, fuzzy invoice-number OCR typos, payment-run / batch ACH.
+
+9. **AP Payment Aging / Payables Queue**
    - Coupa/Ariba-style inbox for invoices already **`approved_for_payment`**, bucketed by `due_date` vs **today (UTC calendar date)**:
      - **Overdue** — `due_date` is before today
      - **Due soon** — due today through +N days (default **7**)
@@ -75,15 +87,15 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - Sidebar **AP Aging** is visible for finance + admin (David / Elena). APIs stay demo-open (no JWT).
    - Seed: **INV-FCJ-8810** overdue (billed $220.00 → pay $210.00 short-pay, then approved — mark-paid practice). **INV-WED-3308** due soon (`PR-2026-009` / Sofia). **INV-TSG-5508** later. Do not use INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 for this walkthrough.
 
-9. **Department Budgets & Cost Centers**
+10. **Department Budgets & Cost Centers**
    - Real-time departmental tracking in cents: Allocated vs. **Committed (on final PR approve)** vs. Actual Spent (AP-approved invoices) vs. Remaining (`total − committed − actual`).
 
-10. **Document trail (P2P lifecycle overview)**
+11. **Document trail (P2P lifecycle overview)**
    - One screen for a buying journey: PR header, sequential approvals, linked PO(s) (multi-supplier split as branches), GRN and/or SES, invoice `match_status`, and AP approve/paid events.
    - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
    - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** (optionally remapping a line in the convert UI) to see two PO branches — or one, if both lines are issued to the same vendor. **PR-2026-008** / **PO-2026-007** includes applied change order **CO-2026-001**.
 
-11. **Multi-Persona Testing Switcher (demo only — not real auth)**
+12. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
      - **Bob Martinez** (Approver / Dept Head - Marketing)
@@ -139,6 +151,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 **PO change order walkthrough:** Switch to **Carol Zhang** → Purchase Orders → open **PO-2026-004** (issued Figma seats; 2 × $540.00; no SES yet). **Change order** → e.g. qty 2 → 3 or unit price $540.00 → $500.00, required reason, confirm. Totals recompute in integer cents; history lists the new `CO-YYYY-NNN`. To see an already-applied revision: open **PO-2026-007** (Rev 1, **CO-2026-001**, $2,670.00 → $2,550.00 volume discount) or Document trail **PR-2026-008**. Do not amend **PO-2026-001** (paid happy path), **PO-2026-002** (INV-TSG-11029 short-pay), or **PO-2026-006** (buyer inbox). A net increase over $1,000 requires the confirm-increase checkbox. Reducing a line below received / accepted / invoiced is rejected (400).
 
 **AP Aging walkthrough (David / Elena):** Switch to **David Miller** → sidebar **AP Aging**. Overdue shows **INV-FCJ-8810** (FacilityCare first-aid; billed $220.00 → pay $210.00). Due soon shows **INV-WED-3308** (WorkSpace paper / **PR-2026-009** / Sofia). Later shows **INV-TSG-5508** (CalDigit dock). **Mark paid** on INV-FCJ-8810 (payment reference required in the modal) — status becomes `paid` via the existing mark-paid API. Ready to approve still lists matched invoices such as **INV-AAD-5501** and **INV-FCJ-7701**. Leave **INV-WED-9042** paid, **INV-TSG-11029** open for short-pay, and **INV-TSG-22041** in Alice’s Buyer Inbox. Elena sees the same sidebar entry.
+
+**Duplicate suspects walkthrough (David / Elena):** Switch to **David Miller** → sidebar **Duplicate Suspects**. Open **INV-TSG-6611** (TechSupply, billed $99.00, PO-2026-012). The candidate is **INV-TSG-6610** (same $99.00, paid on PO-2026-011, invoice dates within ±7 UTC days). Dual match already passed — Approve for Payment is blocked by the duplicate hold. **Confirm unique** (required reason) clears the hold so Invoices & Matching can approve; **Confirm duplicate** rejects/voids INV-TSG-6611 (the paid original is unchanged). Leave INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / the AP aging trio alone. Elena sees the same sidebar entry.
 
 ---
 
@@ -239,8 +253,9 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `po_change_orders` & `po_change_order_items`: Formal PO revisions (`CO-YYYY-NNN`, before/after totals in cents)
 - `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
-- `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay)
+- `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay; `duplicate_status` `clear` | `suspect` | `confirmed_unique` | `confirmed_duplicate`)
 - `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
 - `invoice_exception_dispositions`: Structured AP exception resolutions (accept / short-pay / reject / return-to-buyer)
+- `invoice_duplicate_flags`: Likely-duplicate candidate links + AP dispositions (confirm unique / confirm duplicate)
 - `audit_logs`: Complete immutable event history
 - Document trail is **not** a new table: `GET /api/document-trail` derives the chain from the FKs above plus AP rows in `audit_logs`

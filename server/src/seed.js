@@ -5,6 +5,7 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'invoice_duplicate_flags',
   'invoice_exception_dispositions',
   'match_results',
   'invoice_items',
@@ -148,6 +149,7 @@ await db.transaction(async () => {
   // Live walkthrough: amend issued PO-2026-004 (Figma seats, no SES yet).
   // AP Aging payables: INV-FCJ-8810 overdue (short-pay then approved), INV-WED-3308 due soon
   // (PR-2026-009 / Sofia), INV-TSG-5508 later. Do not approve/pay INV-TSG-11029 or INV-TSG-22041.
+  // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -463,6 +465,40 @@ await db.transaction(async () => {
   );
   await insertPOItem.run(10, 10, null, 'CalDigit TS4 Thunderbolt 4 Docking Station', 'IT Hardware', 1, 39900, 39900, 1, 1);
 
+  // Duplicate-suspect pair (same supplier + billed cents + near UTC dates, different POs
+  // so dual match can pass independently). Do not reuse INV-TSG-11029 / 22041 / 5508.
+  await insertPO.run(
+    11,
+    'PO-2026-011',
+    null,
+    1,
+    3,
+    'received',
+    9900,
+    '2026-09-01',
+    '2026-09-08',
+    'Net 30',
+    'Acme Corp HQ - IT Dept Receiving, 450 Tech Blvd, Austin, TX 78701',
+    'Spare MX Master for the contractor bench. Used for duplicate detection (INV-TSG-6610 paid original).'
+  );
+  await insertPOItem.run(11, 11, null, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 1, 9900, 9900, 1, 1);
+
+  await insertPO.run(
+    12,
+    'PO-2026-012',
+    null,
+    1,
+    3,
+    'received',
+    9900,
+    '2026-09-04',
+    '2026-09-11',
+    'Net 30',
+    'Acme Corp HQ - IT Dept Receiving, 450 Tech Blvd, Austin, TX 78701',
+    'Second spare MX Master. Used for duplicate detection (INV-TSG-6611 suspect vs INV-TSG-6610).'
+  );
+  await insertPOItem.run(12, 12, null, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 1, 9900, 9900, 1, 1);
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -493,6 +529,12 @@ await db.transaction(async () => {
 
   await insertGRN.run(7, 'GRN-2026-007', 10, 3, '2026-09-02', 'UPS-1Z5508002', 'DN-TSG-5508', 'CalDigit dock received for the contractor bench.');
   await insertGRNItem.run(7, 10, 1, 'good', 'Serial logged; packaging intact.');
+
+  await insertGRN.run(8, 'GRN-2026-008', 11, 3, '2026-09-03', 'UPS-1Z6610001', 'DN-TSG-6610', 'Spare MX Master received for the contractor bench.');
+  await insertGRNItem.run(8, 11, 1, 'good', 'Serial logged; packaging intact.');
+
+  await insertGRN.run(9, 'GRN-2026-009', 12, 3, '2026-09-06', 'UPS-1Z6611002', 'DN-TSG-6611', 'Second spare MX Master received.');
+  await insertGRNItem.run(9, 12, 1, 'good', 'Serial logged; packaging intact.');
 
   await db.exec(`
     UPDATE po_items
@@ -708,6 +750,67 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(8, 10, 'CalDigit TS4 Thunderbolt 4 Docking Station', 1, 39900, 39900);
   await insertMatch.run(8, 10, 10, 1, 1, 1, 39900, 39900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($399.00).');
 
+  const dupOriginalDate = utcYmdOffset(-4);
+  const dupSuspectDate = utcYmdOffset(-1);
+  const dupOriginalDue = utcYmdOffset(26);
+  const dupSuspectDue = utcYmdOffset(29);
+
+  // Paid original: same TechSupply billed $99.00. Candidate for the open suspect.
+  await insertInvoice.run(
+    9,
+    'INV-TSG-6610',
+    11,
+    1,
+    dupOriginalDate,
+    dupOriginalDue,
+    9900,
+    0,
+    9900,
+    'paid',
+    'perfect_match',
+    'ACH-DUP-6610',
+    'Perfect match against GRN-2026-008 and PO-2026-011. Paid original for the Duplicate Suspects walkthrough (INV-TSG-6611).'
+  );
+  await insertInvoiceItem.run(9, 11, 'Logitech MX Master 3S Wireless Mouse', 1, 9900, 9900);
+  await insertMatch.run(9, 11, 11, 1, 1, 1, 9900, 9900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($99.00).');
+
+  // Open suspect: different invoice number, same supplier + billed cents, invoice date +3 UTC days.
+  await insertInvoice.run(
+    10,
+    'INV-TSG-6611',
+    12,
+    1,
+    dupSuspectDate,
+    dupSuspectDue,
+    9900,
+    0,
+    9900,
+    'matched',
+    'perfect_match',
+    null,
+    'Perfect match against GRN-2026-009 and PO-2026-012. Soft-held as a likely duplicate of INV-TSG-6610 (same $99.00, invoice dates within ±7 UTC days).'
+  );
+  await insertInvoiceItem.run(10, 12, 'Logitech MX Master 3S Wireless Mouse', 1, 9900, 9900);
+  await insertMatch.run(10, 12, 12, 1, 1, 1, 9900, 9900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($99.00).');
+  await db.exec(`UPDATE invoices SET duplicate_status = 'suspect' WHERE id = 10`);
+
+  const insertDupFlag = db.prepare(`
+    INSERT INTO invoice_duplicate_flags (
+      invoice_id, candidate_invoice_id, match_rule,
+      billed_total_cents, candidate_billed_total_cents,
+      invoice_date, candidate_invoice_date, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open')
+  `);
+  await insertDupFlag.run(
+    10,
+    9,
+    'same_amount_near_date',
+    9900,
+    9900,
+    dupSuspectDate,
+    dupOriginalDate
+  );
+
   const insertDisposition = db.prepare(`
     INSERT INTO invoice_exception_dispositions (
       invoice_id, disposition, reason, actor_name, accepted_total_cents, accepted_match_status, billed_total_cents, created_at
@@ -809,6 +912,22 @@ await db.transaction(async () => {
   await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '-5 days');
   await insertAudit.run('invoice', 8, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-10 days');
   await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '-9 days');
+  await insertAudit.run('purchase_order', 11, 'ISSUED', 'Carol Zhang', 'PO-2026-011 issued to TechSupply Global', '-6 days');
+  await insertAudit.run('purchase_order', 12, 'ISSUED', 'Carol Zhang', 'PO-2026-012 issued to TechSupply Global', '-3 days');
+  await insertAudit.run('goods_receipt', 8, 'RECEIVED', 'Carol Zhang', 'GRN-2026-008 confirmed spare MX Master received', '-5 days');
+  await insertAudit.run('goods_receipt', 9, 'RECEIVED', 'Carol Zhang', 'GRN-2026-009 confirmed second spare MX Master received', '-2 days');
+  await insertAudit.run('invoice', 9, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-4 days');
+  await insertAudit.run('invoice', 9, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-6610 for $99.00 payment', '-4 days');
+  await insertAudit.run('invoice', 9, 'PAID', 'David Miller', 'Marked as paid with reference ACH-DUP-6610 ($99.00)', '-3 days');
+  await insertAudit.run('invoice', 10, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-1 days');
+  await insertAudit.run(
+    'invoice',
+    10,
+    'DUPLICATE_SUSPECTED',
+    'System Duplicate Detector',
+    `Likely duplicate INV-TSG-6611: billed 9900¢ ($99.00) on ${dupSuspectDate}. Candidates: INV-TSG-6610 (paid, 9900¢, ${dupOriginalDate}, same billed amount + invoice date within ±7 UTC days)`,
+    '-1 days'
+  );
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).
@@ -865,6 +984,13 @@ await db.transaction(async () => {
       WHERE entity_type = 'invoice' AND entity_id = 7 AND action = 'APPROVED_FOR_PAYMENT';
     UPDATE audit_logs SET created_at = '2026-09-03 09:30:00'
       WHERE entity_type = 'invoice' AND entity_id = 8 AND action = 'APPROVED_FOR_PAYMENT';
+
+    UPDATE purchase_orders SET created_at = '2026-09-01 10:00:00' WHERE id = 11;
+    UPDATE purchase_orders SET created_at = '2026-09-04 10:00:00' WHERE id = 12;
+    UPDATE goods_receipts SET created_at = '2026-09-03 14:00:00' WHERE id = 8;
+    UPDATE goods_receipts SET created_at = '2026-09-06 14:00:00' WHERE id = 9;
+    UPDATE invoices SET created_at = datetime('now', '-4 days') WHERE id = 9;
+    UPDATE invoices SET created_at = datetime('now', '-1 days') WHERE id = 10;
   `);
 
 });

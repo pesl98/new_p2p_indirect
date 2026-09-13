@@ -12,7 +12,8 @@ import {
   ExternalLink,
   Clock,
   AlertCircle,
-  FileEdit
+  FileEdit,
+  Copy
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
@@ -107,6 +108,8 @@ function eventIcon(kind) {
       return FileSpreadsheet;
     case 'exception':
       return FileSpreadsheet;
+    case 'duplicate':
+      return Copy;
     case 'ap_event':
       return CreditCard;
     default:

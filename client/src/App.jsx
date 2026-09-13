@@ -11,6 +11,7 @@ import InvoicesMatchingView from './views/InvoicesMatchingView';
 import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
 import BuyerInboxView from './views/BuyerInboxView';
 import ApAgingView from './views/ApAgingView';
+import DuplicateSuspectsView from './views/DuplicateSuspectsView';
 import BudgetsView from './views/BudgetsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
@@ -26,6 +27,7 @@ export default function App() {
   const [analytics, setAnalytics] = useState(null);
   const [buyerInboxCount, setBuyerInboxCount] = useState(0);
   const [apAgingOverdueCount, setApAgingOverdueCount] = useState(0);
+  const [duplicateSuspectCount, setDuplicateSuspectCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const fetchCoreData = async () => {
@@ -53,6 +55,7 @@ export default function App() {
   useEffect(() => {
     if (!['finance', 'admin'].includes(currentUser?.role)) {
       setApAgingOverdueCount(0);
+      setDuplicateSuspectCount(0);
       return;
     }
     let cancelled = false;
@@ -62,6 +65,13 @@ export default function App() {
       })
       .catch(() => {
         if (!cancelled) setApAgingOverdueCount(0);
+      });
+    api.getInvoiceDuplicates('open')
+      .then((rows) => {
+        if (!cancelled) setDuplicateSuspectCount(Array.isArray(rows) ? rows.length : 0);
+      })
+      .catch(() => {
+        if (!cancelled) setDuplicateSuspectCount(0);
       });
     return () => { cancelled = true; };
   }, [currentUser, analytics]);
@@ -96,6 +106,9 @@ export default function App() {
     if (!['finance', 'admin'].includes(user?.role) && activeTab === 'ap_aging') {
       setActiveTab('dashboard');
     }
+    if (!['finance', 'admin'].includes(user?.role) && activeTab === 'duplicate_suspects') {
+      setActiveTab('dashboard');
+    }
   };
 
   const handleNavigate = (tab, focus = null) => {
@@ -122,6 +135,7 @@ export default function App() {
           varianceInvoicesCount={analytics?.kpi?.invoiceVariances || 0}
           buyerInboxCount={buyerInboxCount}
           apAgingOverdueCount={apAgingOverdueCount}
+          duplicateSuspectCount={duplicateSuspectCount}
           currentUser={currentUser}
         />
 
@@ -203,6 +217,15 @@ export default function App() {
 
           {activeTab === 'buyer_inbox' && (
             <BuyerInboxView
+              currentUser={currentUser}
+              onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
+              focusId={navFocus?.focusId}
+            />
+          )}
+
+          {activeTab === 'duplicate_suspects' && (
+            <DuplicateSuspectsView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
               onNavigate={handleNavigate}

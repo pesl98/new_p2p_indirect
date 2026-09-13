@@ -10,6 +10,7 @@ import {
   invoiceShortPayDispositionsMigrationSql,
   PO_CHANGE_ORDERS_TABLE_SQL,
   PO_CHANGE_ORDER_ITEMS_TABLE_SQL,
+  INVOICE_DUPLICATE_FLAGS_TABLE_SQL,
   schemaPath
 } from './db.js';
 import { splitSqlScript } from './tursoHttp.js';
@@ -34,6 +35,8 @@ describe('Turso/SQLite schema migrations', () => {
     }
     const invoicesCols = raw.prepare(`PRAGMA table_info(invoices)`).all().map((col) => col.name);
     assert.ok(invoicesCols.includes('payable_total_cents'));
+    assert.ok(invoicesCols.includes('duplicate_status'));
+    assert.ok(raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'invoice_duplicate_flags'`).get());
     const deptCols = raw.prepare(`PRAGMA table_info(departments)`).all().map((col) => col.name);
     assert.ok(deptCols.includes('approver_user_id'));
     const delegationCols = raw.prepare(`PRAGMA table_info(approval_delegations)`).all().map((col) => col.name);
@@ -58,6 +61,15 @@ describe('Turso/SQLite schema migrations', () => {
     const items = splitSqlScript(PO_CHANGE_ORDER_ITEMS_TABLE_SQL);
     assert.equal(items.length, 1);
     assert.match(items[0], /CREATE TABLE IF NOT EXISTS po_change_order_items/i);
+  });
+
+  test('invoice_duplicate_flags CREATE TABLE is a single Turso-split statement', () => {
+    const stmts = splitSqlScript(INVOICE_DUPLICATE_FLAGS_TABLE_SQL);
+    assert.equal(stmts.length, 1);
+    assert.match(stmts[0], /CREATE TABLE IF NOT EXISTS invoice_duplicate_flags/i);
+    assert.match(stmts[0], /candidate_invoice_id/);
+    assert.match(stmts[0], /same_amount_near_date/);
+    assert.match(stmts[0], /confirmed_duplicate/);
   });
 
   test('approval_delegations CREATE TABLE is a single Turso-split statement', () => {
@@ -245,6 +257,13 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(db.prepare(`SELECT revision FROM purchase_orders WHERE id = 1`).get().revision, 0);
     assert.ok(columnNames(db, 'po_change_orders').includes('co_number'));
     assert.ok(columnNames(db, 'po_change_order_items').includes('po_item_id'));
+    assert.ok(columnNames(db, 'invoices').includes('duplicate_status'));
+    assert.equal(
+      db.prepare(`SELECT duplicate_status FROM invoices WHERE id = 1`).get().duplicate_status,
+      'clear'
+    );
+    assert.ok(columnNames(db, 'invoice_duplicate_flags').includes('candidate_invoice_id'));
+    assert.ok(columnNames(db, 'invoice_duplicate_flags').includes('match_rule'));
   });
 
   test('applySchema rebuilds dispositions CHECK to add buyer_response on short_pay-era tables', async () => {

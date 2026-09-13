@@ -310,6 +310,46 @@ export const PO_CHANGE_ORDER_ITEMS_TABLE_SQL = `
   )
 `;
 
+/**
+ * Existing DBs created before duplicate-invoice detection need
+ * invoices.duplicate_status plus invoice_duplicate_flags.
+ * CREATE TABLE IF NOT EXISTS matches catalog/SES/delegation bootstrap.
+ */
+export const INVOICES_DUPLICATE_STATUS_COLUMN_SQL =
+  `ALTER TABLE invoices ADD COLUMN duplicate_status TEXT NOT NULL DEFAULT 'clear'`;
+
+export const INVOICE_DUPLICATE_FLAGS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS invoice_duplicate_flags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL,
+    candidate_invoice_id INTEGER NOT NULL,
+    match_rule TEXT NOT NULL CHECK (match_rule IN ('same_amount_near_date', 'same_po_same_amount', 'both')),
+    billed_total_cents INTEGER NOT NULL,
+    candidate_billed_total_cents INTEGER NOT NULL,
+    invoice_date TEXT NOT NULL,
+    candidate_invoice_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'confirmed_unique', 'confirmed_duplicate')),
+    reason TEXT,
+    actor_name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+    FOREIGN KEY (candidate_invoice_id) REFERENCES invoices(id)
+  )
+`;
+
+async function migrateInvoiceDuplicateFlags(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('invoices') && !(await tableHasColumn(database, 'invoices', 'duplicate_status'))) {
+    await maybe(database.exec(INVOICES_DUPLICATE_STATUS_COLUMN_SQL));
+  }
+
+  await maybe(database.exec(INVOICE_DUPLICATE_FLAGS_TABLE_SQL));
+}
+
 async function migratePurchaseOrderChangeOrders(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -337,6 +377,7 @@ export async function applySchema(database) {
   await migrateDepartmentApprover(database);
   await migrateApprovalDelegations(database);
   await migratePurchaseOrderChangeOrders(database);
+  await migrateInvoiceDuplicateFlags(database);
   return database;
 }
 

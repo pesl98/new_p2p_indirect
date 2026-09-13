@@ -14,6 +14,7 @@ import {
   ShieldAlert,
   Inbox,
   CalendarClock,
+  Copy,
   UserCog,
   UserCheck
 } from 'lucide-react';
@@ -24,7 +25,7 @@ function dbModeLabel(mode) {
   return 'Database connected';
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, currentUser }) {
+export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, duplicateSuspectCount, currentUser }) {
   const [dbMode, setDbMode] = useState(null);
 
   useEffect(() => {
@@ -100,6 +101,16 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       badgeColor: 'bg-rose-500 text-white',
       desc: 'AP triage for dual-match failures'
     },
+    ...(['finance', 'admin'].includes(currentUser?.role)
+      ? [{
+          id: 'duplicate_suspects',
+          label: 'Duplicate Suspects',
+          icon: Copy,
+          badge: duplicateSuspectCount > 0 ? duplicateSuspectCount : null,
+          badgeColor: 'bg-amber-500 text-white',
+          desc: 'Likely-duplicate soft holds for AP'
+        }]
+      : []),
     ...(currentUser?.role === 'requester'
       ? [{
           id: 'buyer_inbox',
@@ -224,7 +235,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
             <span className="text-[10px] text-emerald-400 font-mono">100% Traceable</span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5">
-            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Aging ➔ Pay
+            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Duplicates ➔ Aging ➔ Pay
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
