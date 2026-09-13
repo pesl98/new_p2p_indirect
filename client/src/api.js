@@ -291,6 +291,16 @@ export const api = {
     return jsonOk(r, 'Failed to mark invoice paid');
   },
 
+  getApAging: ({ bucket = 'all', days = 7, today } = {}) => {
+    const params = new URLSearchParams();
+    if (bucket) params.append('bucket', bucket);
+    if (days != null && days !== '') params.append('days', String(days));
+    if (today) params.append('today', today);
+    return fetch(`${API_BASE}/ap-aging?${params.toString()}`).then((r) =>
+      jsonOk(r, 'Failed to load AP aging queue')
+    );
+  },
+
   getInvoiceExceptions: (queue = 'open') => {
     const params = new URLSearchParams();
     if (queue) params.append('queue', queue);

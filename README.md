@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **AP payment aging / payables queue**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -64,15 +64,26 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - **Buyer Inbox (Alice / requester personas):** queue of invoices whose latest disposition is `return_to_buyer`. Respond with a required reason (ready-for-AP note). Invoice stays `variance_flagged`; AP then accept / short-pay / reject. Not an Approve for Payment override.
    - Seed: **INV-TSG-11029** is open for David/Elena (short-pay practice: billed $3,196.00 → e.g. pay $1,498.00 = 2 received × $749 PO price). **INV-TSG-22041** (`PR-2026-007`) is parked `return_to_buyer` for Alice’s Buyer Inbox. **INV-FCJ-7701** is already accepted. **INV-WED-9042** (PR-2026-001) stays the paid happy path.
 
-8. **Department Budgets & Cost Centers**
+8. **AP Payment Aging / Payables Queue**
+   - Coupa/Ariba-style inbox for invoices already **`approved_for_payment`**, bucketed by `due_date` vs **today (UTC calendar date)**:
+     - **Overdue** — `due_date` is before today
+     - **Due soon** — due today through +N days (default **7**)
+     - **Later** — due after that window
+   - Optional chips: **Ready to approve** (`matched`, not yet approved) and **Recently paid** (due-date context). Those are not the pay queue.
+   - Each row: invoice #, supplier, PO, invoice/due dates, billed `total_amount`, nullable `payable_total_cents` (short-pay), status, match status, days past due / until due, linked PR requester when present.
+   - **Mark paid** reuses `POST /api/invoices/:id/mark-paid` (fail-closed: must be `approved_for_payment`; payable cents when set). Same `PAID` audit as Invoices & Matching — no second payment engine.
+   - Sidebar **AP Aging** is visible for finance + admin (David / Elena). APIs stay demo-open (no JWT).
+   - Seed: **INV-FCJ-8810** overdue (billed $220.00 → pay $210.00 short-pay, then approved — mark-paid practice). **INV-WED-3308** due soon (`PR-2026-009` / Sofia). **INV-TSG-5508** later. Do not use INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 for this walkthrough.
+
+9. **Department Budgets & Cost Centers**
    - Real-time departmental tracking in cents: Allocated vs. **Committed (on final PR approve)** vs. Actual Spent (AP-approved invoices) vs. Remaining (`total − committed − actual`).
 
-9. **Document trail (P2P lifecycle overview)**
+10. **Document trail (P2P lifecycle overview)**
    - One screen for a buying journey: PR header, sequential approvals, linked PO(s) (multi-supplier split as branches), GRN and/or SES, invoice `match_status`, and AP approve/paid events.
    - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
    - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** (optionally remapping a line in the convert UI) to see two PO branches — or one, if both lines are issued to the same vendor. **PR-2026-008** / **PO-2026-007** includes applied change order **CO-2026-001**.
 
-10. **Multi-Persona Testing Switcher (demo only — not real auth)**
+11. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
      - **Bob Martinez** (Approver / Dept Head - Marketing)
@@ -126,6 +137,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 **Approval delegation walkthrough:** Seed maps **Bob Martinez → Priya Nair** with an active OOO window. Switch to **Priya Nair** → Approvals Inbox → **PR-2026-003** shows “Delegated from Bob Martinez”. Approve as delegate; the step’s stored approver stays Bob; Carol’s waiting procurement step is unchanged (promoted to pending after step 1). Audit on the PR notes `Delegated from Bob Martinez`. To create/revoke: switch to **Bob** → sidebar **Delegations** → pick Priya, optional window, reason. **Elena** can manage any pair from the same screen. Revoke is a soft inactivate — history remains.
 
 **PO change order walkthrough:** Switch to **Carol Zhang** → Purchase Orders → open **PO-2026-004** (issued Figma seats; 2 × $540.00; no SES yet). **Change order** → e.g. qty 2 → 3 or unit price $540.00 → $500.00, required reason, confirm. Totals recompute in integer cents; history lists the new `CO-YYYY-NNN`. To see an already-applied revision: open **PO-2026-007** (Rev 1, **CO-2026-001**, $2,670.00 → $2,550.00 volume discount) or Document trail **PR-2026-008**. Do not amend **PO-2026-001** (paid happy path), **PO-2026-002** (INV-TSG-11029 short-pay), or **PO-2026-006** (buyer inbox). A net increase over $1,000 requires the confirm-increase checkbox. Reducing a line below received / accepted / invoiced is rejected (400).
+
+**AP Aging walkthrough (David / Elena):** Switch to **David Miller** → sidebar **AP Aging**. Overdue shows **INV-FCJ-8810** (FacilityCare first-aid; billed $220.00 → pay $210.00). Due soon shows **INV-WED-3308** (WorkSpace paper / **PR-2026-009** / Sofia). Later shows **INV-TSG-5508** (CalDigit dock). **Mark paid** on INV-FCJ-8810 (payment reference required in the modal) — status becomes `paid` via the existing mark-paid API. Ready to approve still lists matched invoices such as **INV-AAD-5501** and **INV-FCJ-7701**. Leave **INV-WED-9042** paid, **INV-TSG-11029** open for short-pay, and **INV-TSG-22041** in Alice’s Buyer Inbox. Elena sees the same sidebar entry.
 
 ---
 
