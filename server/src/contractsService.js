@@ -331,14 +331,18 @@ export async function createContract(db, payload = {}) {
   })();
 }
 
-async function findOpenRenewalRequisition(db, contractNumber) {
+async function findOpenRenewalRequisition(db, contract) {
   const rows = await db.prepare(`
-    SELECT id, pr_number, status
+    SELECT id, pr_number, status, justification
     FROM purchase_requisitions
-    WHERE justification LIKE ?
+    WHERE source_contract_id = ?
+       OR justification LIKE ?
     ORDER BY id DESC
-  `).all(`%${contractNumber}%`);
-  return rows.find((row) => OPEN_RENEWAL_PR_STATUSES.has(row.status)) || null;
+  `).all(contract.id, `%${contract.contract_number}%`);
+  return (rows || []).find((row) =>
+    OPEN_RENEWAL_PR_STATUSES.has(row.status) &&
+    /renewal/i.test(row.justification || '')
+  ) || null;
 }
 
 /**
@@ -373,7 +377,7 @@ export async function createRenewalRequisition(db, contractId, {
     if (!requester) throw new ContractError('requester_id does not match a user');
     const actorName = (typeof actor_name === 'string' && actor_name.trim()) || requester.name;
 
-    const existing = await findOpenRenewalRequisition(db, contract.contract_number);
+    const existing = await findOpenRenewalRequisition(db, contract);
     if (existing) {
       throw new ContractError(
         `Renewal requisition ${existing.pr_number} is already ${existing.status} for ${contract.contract_number}`
@@ -392,8 +396,9 @@ export async function createRenewalRequisition(db, contractId, {
 
     const insertPR = db.prepare(`
       INSERT INTO purchase_requisitions (
-        pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority
-      ) VALUES (?, ?, ?, 'pending_approval', ?, ?, ?, 'High')
+        pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority,
+        source_contract_id, contract_use_status
+      ) VALUES (?, ?, ?, 'pending_approval', ?, ?, ?, 'High', ?, 'proposed')
     `);
 
     const prResult = await insertPR.run(
@@ -402,7 +407,8 @@ export async function createRenewalRequisition(db, contractId, {
       contract.department_id,
       acv,
       justification,
-      prNeededDate
+      prNeededDate,
+      contract.id
     );
 
     let prId = Number(prResult.lastInsertRowid);
@@ -454,6 +460,16 @@ export async function createRenewalRequisition(db, contractId, {
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+      VALUES ('requisition', ?, 'CONTRACT_PROPOSED', ?, ?)
+    `).run(
+      prId,
+      actorName,
+      `Proposed ${contract.contract_number} (${contract.title}) from 1-click renewal. ` +
+      `ACV ${acv} cents ($${formatCents(acv)}). Approver must allow or refuse contract use.`
+    );
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('requisition', ?, 'SUBMITTED', ?, ?)
     `).run(
       prId,
@@ -475,6 +491,8 @@ export async function createRenewalRequisition(db, contractId, {
       pr_number: prNumber,
       contract_id: contract.id,
       contract_number: contract.contract_number,
+      source_contract_id: contract.id,
+      contract_use_status: 'proposed',
       total_amount_cents: acv,
       message: `Renewal Requisition ${prNumber} created successfully.`
     };

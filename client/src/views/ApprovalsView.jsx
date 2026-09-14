@@ -9,7 +9,8 @@ import {
   User, 
   FileText,
   Check,
-  X
+  X,
+  FileCheck
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
@@ -21,6 +22,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
   const [decisionType, setDecisionType] = useState('approved');
   const [decisionComments, setDecisionComments] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [allowContractUse, setAllowContractUse] = useState('');
 
   const loadApprovals = async () => {
     if (!currentUser?.id) {
@@ -48,6 +50,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
     setActiveDecisionModal(item);
     setDecisionType(type);
     setDecisionComments(type === 'approved' ? 'Approved. Aligns with departmental budget & priorities.' : '');
+    setAllowContractUse('');
   };
 
   const handleExecuteDecision = async () => {
@@ -57,16 +60,29 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       return;
     }
 
+    const needsContractDecision = decisionType === 'approved'
+      && activeDecisionModal.contract_use_status === 'proposed'
+      && activeDecisionModal.source_contract_id;
+    if (needsContractDecision && allowContractUse !== 'true' && allowContractUse !== 'false') {
+      alert('Choose whether to allow or refuse use of the proposed contract. Refusing does not reject the requisition.');
+      return;
+    }
+
     setProcessing(true);
     try {
-      await api.decideApproval(activeDecisionModal.approval_id, {
+      const payload = {
         decision: decisionType,
         comments: decisionComments,
         approver_id: currentUser?.id,
         approver_name: currentUser?.name || 'Authorized Approver'
-      });
+      };
+      if (needsContractDecision) {
+        payload.allow_contract_use = allowContractUse === 'true';
+      }
+      await api.decideApproval(activeDecisionModal.approval_id, payload);
       setActiveDecisionModal(null);
       setDecisionComments('');
+      setAllowContractUse('');
       await loadApprovals();
       if (onDataChanged) onDataChanged();
     } catch (err) {
@@ -153,6 +169,27 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                       "{item.justification}"
                     </div>
 
+                    {item.source_contract && item.contract_use_status !== 'none' && (
+                      <div className="p-3 rounded-lg text-xs border border-sky-200 bg-sky-50 text-sky-950">
+                        <span className="font-semibold text-sky-700 text-[10px] uppercase block mb-0.5 flex items-center gap-1">
+                          <FileCheck className="w-3 h-3" />
+                          Linked contract · {item.contract_use_status === 'proposed' ? 'Awaiting allow / refuse' : item.contract_use_status}
+                        </span>
+                        <div className="font-mono font-bold">{item.source_contract.contract_number}</div>
+                        <div>{item.source_contract.title}</div>
+                        <div className="text-[11px] text-sky-800 mt-1">
+                          {item.source_contract.supplier_name}
+                          {' · ACV $'}{formatMoney(item.source_contract.annual_value_cents)}
+                          {item.source_contract.start_date ? ` · ${item.source_contract.start_date} → ${item.source_contract.end_date}` : ''}
+                        </div>
+                        {item.contract_use_status === 'proposed' && (
+                          <p className="text-[11px] mt-1.5 text-sky-800">
+                            Allowing uses this contract. Refusing keeps the PR as ad-hoc — it does not reject the requisition.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {/* Budget Impact Indicator */}
                     <div className="flex items-center space-x-4 text-[11px] text-slate-500 pt-1">
                       <span>Available Dept Budget: <strong className="text-slate-800">${formatMoney(item.available_budget)}</strong></span>
@@ -201,7 +238,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       {/* Decision Modal */}
       {activeDecisionModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex items-center space-x-2 text-slate-900 font-bold text-base mb-1">
               {decisionType === 'approved' ? (
                 <>
@@ -225,6 +262,41 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
             </p>
 
             <div className="space-y-3 text-xs">
+              {decisionType === 'approved'
+                && activeDecisionModal.contract_use_status === 'proposed'
+                && activeDecisionModal.source_contract && (
+                <div className="p-3 rounded-lg border border-sky-200 bg-sky-50 space-y-2">
+                  <div className="font-semibold text-sky-900">
+                    Contract use for {activeDecisionModal.source_contract.contract_number}
+                  </div>
+                  <p className="text-[11px] text-sky-800">
+                    {activeDecisionModal.source_contract.supplier_name} · ACV ${formatMoney(activeDecisionModal.source_contract.annual_value_cents)}
+                    {activeDecisionModal.source_contract.end_date ? ` · ends ${activeDecisionModal.source_contract.end_date}` : ''}
+                  </p>
+                  <label className="flex items-start gap-2 text-slate-800">
+                    <input
+                      type="radio"
+                      name="allow_contract_use"
+                      value="true"
+                      checked={allowContractUse === 'true'}
+                      onChange={() => setAllowContractUse('true')}
+                      className="mt-0.5"
+                    />
+                    <span><strong>Allow contract use</strong> — approve this PR against the linked contract.</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-slate-800">
+                    <input
+                      type="radio"
+                      name="allow_contract_use"
+                      value="false"
+                      checked={allowContractUse === 'false'}
+                      onChange={() => setAllowContractUse('false')}
+                      className="mt-0.5"
+                    />
+                    <span><strong>Refuse contract use</strong> — still approve the PR as ad-hoc (does not reject it).</span>
+                  </label>
+                </div>
+              )}
               <label className="block text-slate-700 font-medium">
                 {decisionType === 'approved' ? 'Approver Notes / Comments (Optional)' : 'Rejection Reason (Required)'}
               </label>

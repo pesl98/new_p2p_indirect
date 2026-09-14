@@ -396,6 +396,33 @@ async function migrateContracts(database) {
   await maybe(database.exec(CONTRACT_ITEMS_TABLE_SQL));
 }
 
+/**
+ * Existing DBs need a durable PR → contract link plus the approver's
+ * allow/refuse decision. Not a SQLite FK (contracts is created after
+ * purchase_requisitions). CHECK is on schema.sql for new DBs; ALTER
+ * cannot add CHECK, so application code still validates the enum.
+ */
+export const PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL =
+  `ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id INTEGER`;
+
+export const PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL =
+  `ALTER TABLE purchase_requisitions ADD COLUMN contract_use_status TEXT NOT NULL DEFAULT 'none'`;
+
+async function migratePurchaseRequisitionContractLink(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (!tables.includes('purchase_requisitions')) return;
+
+  if (!(await tableHasColumn(database, 'purchase_requisitions', 'source_contract_id'))) {
+    await maybe(database.exec(PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL));
+  }
+  if (!(await tableHasColumn(database, 'purchase_requisitions', 'contract_use_status'))) {
+    await maybe(database.exec(PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL));
+  }
+}
+
 async function migratePurchaseOrderChangeOrders(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -425,6 +452,7 @@ export async function applySchema(database) {
   await migratePurchaseOrderChangeOrders(database);
   await migrateInvoiceDuplicateFlags(database);
   await migrateContracts(database);
+  await migratePurchaseRequisitionContractLink(database);
   return database;
 }
 

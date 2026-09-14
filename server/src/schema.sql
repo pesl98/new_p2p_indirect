@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS purchase_requisitions (
   justification TEXT,
   needed_by_date TEXT,
   priority TEXT DEFAULT 'Medium' CHECK (priority IN ('Low', 'Medium', 'High', 'Urgent')),
+  -- Nullable pointer at contracts.id. Not a SQLite FK: contracts is created later.
+  source_contract_id INTEGER,
+  -- none = no link. proposed = auto/explicit/renewal assignment awaiting approver.
+  -- allowed / refused are the approver's contract-use decision (PR may still be approved).
+  contract_use_status TEXT NOT NULL DEFAULT 'none' CHECK (contract_use_status IN ('none', 'proposed', 'allowed', 'refused')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (requester_id) REFERENCES users(id),

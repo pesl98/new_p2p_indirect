@@ -14,13 +14,14 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
         → Services: SES accept ─┴→ Vendor invoice → dual match
         → Exception workbench (hard failures only; optional return_to_buyer → Buyer Inbox → AP disposition; optional short-pay)
         → Duplicate suspects (likely-duplicate soft hold) → AP approve → AP Aging payables queue → Mark paid
-        (parallel) Contracts hub → 1-click renewal PR (active/expiring_soon only) → sequential approvals
+        (parallel) Contracts hub → 1-click renewal PR (active/expiring_soon only; sets source_contract_id) → sequential approvals
+        New PR create/submit auto-proposes a matching contract when confident; approver allows or refuses use
 ```
 
 | Stage | What happens |
 | --- | --- |
-| Requisition | Lines stored as qty × unit price in cents. Numbered `PR-YYYY-NNN`. |
-| Approval | Role-based chain; only the current `pending` step can decide. Later steps stay `waiting`. |
+| Requisition | Lines stored as qty × unit price in cents. Numbered `PR-YYYY-NNN`. Optional durable `source_contract_id` (proposed until the first approver allows or refuses). |
+| Approval | Role-based chain; only the current `pending` step can decide. Later steps stay `waiting`. If `contract_use_status = proposed`, the first approve must send `allow_contract_use`. |
 | Budget commit | On **final PR approve** only: `budgets.committed_amount += PR total`. Not on PO issue. |
 | Purchase order | Copy of approved PR lines, including `line_type`. Numbered `PO-YYYY-NNN`. Multi-supplier PRs issue **one PO per resolved supplier**. |
 | Change order | Formal revision of an issued / partially received / received PO. Numbered `CO-YYYY-NNN` (MAX-suffix). Apply-on-confirm. Qty cannot drop below received (goods), accepted (services), or invoiced. Recalculates line and PO totals in integer cents. Linked-PR POs move `budgets.committed_amount` by the delta (floor 0); `actual_spent` is untouched. |
@@ -31,7 +32,7 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 | Duplicate suspects | Soft hold when another non-rejected invoice for the same supplier has the same billed cents and an invoice date within ±7 UTC calendar days, **or** the same `po_id` and billed cents. Invoice is created; Approve / mark-paid refuse until AP confirms unique or confirms duplicate (voids the new invoice). |
 | AP approve | Relieves committed, increases `actual_spent` by **payable** cents (`payable_total_cents` when set, else billed `total_amount`). Refuses unresolved hard exceptions, open duplicate suspects, confirmed duplicates, and rejected invoices. |
 | AP Aging | Inbox of invoices already `approved_for_payment`, bucketed by `due_date` vs today (UTC calendar date). Mark paid reuses the existing endpoint. Open suspects are excluded from the optional ready-to-approve chip. |
-| Contract renewal | `contracts` / `contract_items` (ACV and line prices in integer cents, `CNT-YYYY-NNN`). Dynamic status from UTC dates. 1-click renewal copies lines onto a `PR-YYYY-NNN` and calls `insertApprovalChain`. Only `active` / `expiring_soon`. |
+| Contract renewal | `contracts` / `contract_items` (ACV and line prices in integer cents, `CNT-YYYY-NNN`). Dynamic status from UTC dates. 1-click renewal copies lines onto a `PR-YYYY-NNN`, sets `source_contract_id`, and calls `insertApprovalChain`. Only `active` / `expiring_soon`. |
 
 ## Money (integer cents)
 
@@ -62,6 +63,70 @@ Steps are sequential, not parallel:
 - Rejecting a step sets remaining `waiting`/`pending` rows to `skipped` and the PR to `rejected`. No budget movement.
 
 Waiting steps do not appear in the approver inbox (list defaults to `status=pending`). When the current pending step’s mapped approver has an **active** delegation covering now, the **delegate** also sees that row (and may decide it).
+
+## PR → contract auto-assignment
+
+World-class P2P (Coupa/Ariba-style) proposes a contract when the buying document matches an active agreement, then lets the **approver** confirm use. ProcureFlow does **not** silently force a contract onto a PR.
+
+`purchase_requisitions.source_contract_id` is a nullable integer pointing at `contracts.id`. It is **not** a SQLite FOREIGN KEY (`contracts` is created after `purchase_requisitions`, same pattern as `departments.approver_user_id`). `contract_use_status`:
+
+| Status | Meaning |
+| --- | --- |
+| `none` | No contract linked (ad-hoc). |
+| `proposed` | Auto-match, explicit pick, or 1-click renewal. Approver has not decided yet. |
+| `allowed` | Approver allowed use of that contract. FK kept. |
+| `refused` | Approver refused contract use. FK is **kept for audit**; the PR continues as ad-hoc. |
+
+Existing Turso/SQLite DBs get `ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id` and `contract_use_status TEXT NOT NULL DEFAULT 'none'` in `db.js` (`migratePurchaseRequisitionContractLink`).
+
+### Matching (“contract available”)
+
+`server/src/contractAssignment.js` runs after PR lines exist (create, and submit of a still-unlinked draft). Fail-soft: a matcher exception never blocks PR create — the row stays `none`.
+
+Eligible contracts have computed status `active` or `expiring_soon` (same UTC date rules as renew). Line supplier is `estimated_supplier_id`, else catalog `preferred_supplier_id`. Majority supplier is by **line count** (ties → lower supplier id).
+
+Score:
+
+| Signal | Points |
+| --- | --- |
+| Contract supplier appears on any line | +100 |
+| That supplier is the majority vendor | +20 |
+| `contracts.category` overlaps a line category | +40 |
+| `contract_items.catalog_item_id` overlaps a line catalog item | +50 |
+
+**Confident enough to assign** (else leave `none`):
+
+- any supplier match, or
+- catalog-item overlap, or
+- a **unique** category match (exactly one eligible contract in the PR’s categories)
+
+Category-only with **multiple** candidates is treated as ambiguous → unassigned. When several confident candidates exist, pick the **top score**, then nearest `end_date`, then highest `annual_value_cents` (integer), then lowest id. The top candidate is stored as `proposed` — the approver is the ambiguity resolver. Documented choice: we do **not** leave unassigned when a single best confident match exists.
+
+Create/submit body:
+
+- omit `source_contract_id` → auto-match
+- `source_contract_id: N` → fail-closed if missing / not assignable
+- `skip_contract_match: true` → force `none` (clears an existing draft link)
+
+Draft override: `PATCH /api/requisitions/:id/contract` with `source_contract_id` (null to clear). Draft only.
+
+PO `source_contract_id` is **out of scope** (not trivial without a new PO column and convert-time rules). The durable PR FK is the control.
+
+### Approver gate
+
+On `POST /api/approvals/:id/decide` with `decision: approved`, if `contract_use_status` is still `proposed`:
+
+- `allow_contract_use: true` → `allowed`, audit `CONTRACT_USE_ALLOWED`
+- `allow_contract_use: false` → `refused`, audit `CONTRACT_USE_REFUSED`. The **PR is still approved** as ad-hoc (remaining sequential steps / budget commit unchanged).
+- omitted → HTTP 400 (no silent allow)
+
+Rejecting the PR does **not** require a contract-use choice. Later steps after allow/refuse do not re-prompt. Delegates may decide contract use the same as the mapped approver.
+
+Audit (requisition `audit_logs`, persona name): `CONTRACT_PROPOSED`, `CONTRACT_USE_ALLOWED`, `CONTRACT_USE_REFUSED`, `CONTRACT_CLEARED`. Document trail surfaces those rows when present — it does not invent them.
+
+`insertApprovalChain` is unchanged. Integer cents (PR totals, contract ACV) are untouched.
+
+Demo: **PR-2026-010** (Alice, 1 × Figma seat $540.00, Marketing) is seeded `proposed` against **CNT-2026-001**. Bob (or Priya via the seeded OOO delegation) allows or refuses. Creating a new Figma catalog PR also auto-links. Existing walkthrough PRs stay `none` so short-pay, buyer inbox, AP aging, duplicates, delegation (**PR-2026-003**), CO, and 1-click renew stay intact. Open-renewal uniqueness still requires justification matching `/renewal/i` plus `CNT-` / `source_contract_id` — an ordinary auto-linked Figma seat does not block renew.
 
 ## Approval delegation (out-of-office)
 
@@ -403,8 +468,8 @@ Non-production SaaS / vendor agreements live on `contracts` + `contract_items` (
 - `supplier_id` and `department_id` must exist
 - ACV / line prices must be non-negative integer cents (`requireIntegerCents`)
 - A second open renewal PR (`draft` / `pending_approval` / `approved`) for the same `CNT-YYYY-NNN` is refused
-- Inserts `purchase_requisitions` + copied `requisition_items`, then **`insertApprovalChain`** (same sequential pending/waiting policy as a normal submit)
-- Audit: requisition `SUBMITTED` and contract `RENEWAL_PR_CREATED` with the persona name (not a invented “Contract Manager”)
+- Inserts `purchase_requisitions` + copied `requisition_items` with durable `source_contract_id` (status `proposed`), then **`insertApprovalChain`** (same sequential pending/waiting policy as a normal submit)
+- Audit: requisition `CONTRACT_PROPOSED` + `SUBMITTED` and contract `RENEWAL_PR_CREATED` with the persona name (not a invented “Contract Manager”)
 
 Numbered `CNT-YYYY-NNN` via the same MAX-suffix allocator. Existing Turso DBs get the tables from `schema.sql` `CREATE TABLE IF NOT EXISTS` plus `migrateContracts` in `applySchema` (no wipe).
 
@@ -433,6 +498,7 @@ Response includes:
 - Exception dispositions, when present, from the same invoice `audit_logs` (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`, `EXCEPTION_BUYER_RESPONDED`)
 - Duplicate-suspect events, when present, from the same invoice `audit_logs` (`DUPLICATE_SUSPECTED`, `DUPLICATE_CLEARED`, `DUPLICATE_CONFIRMED`) — the trail does not invent them
 - PO change orders, when present, from purchase-order `audit_logs` (`CHANGE_ORDER_APPLIED`) — the trail does not invent a revision if no audit row exists
+- Contract assignment events, when present, from requisition `audit_logs` (`CONTRACT_PROPOSED`, `CONTRACT_USE_ALLOWED`, `CONTRACT_USE_REFUSED`, `CONTRACT_CLEARED`) — the trail does not invent them
 
 The Document trail sidebar screen opens this payload as a stage strip + vertical timeline, with click-through to the existing PR / PO / GRN / SES / invoice tabs.
 
@@ -461,7 +527,7 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events, change-order audit when present), PO change orders (qty/price apply in integer cents; reject reduce below received/accepted/invoiced; budget committed delta floored at 0 and actual_spent untouched; empty/invalid payloads; closed PO rejected; increase confirm threshold; `CHANGE_ORDER_APPLIED` audit; GET/POST HTTP; document trail surfaces the event only when the audit row exists), the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents), AP payment aging (UTC bucket classification including due-today and inclusive 7-day window; payable cents on rows; empty buckets; matched/paid/hard-exception seed numbers stay off the default pay queue; fail-closed mark-paid still requires `approved_for_payment`; mark-paid from the aging path writes the same `PAID` audit; GET `/api/ap-aging` HTTP), duplicate invoice detection (same supplier + billed cents + ±7 UTC calendar-day window inclusive, including the 8th-day miss; same PO + same amount with a different invoice number; rejected candidates excluded; self excluded; integer-cent miss; create still succeeds and flags `suspect`; approve/mark-paid refuse while suspect; `confirm_unique` unlocks approve; `confirm_duplicate` rejects/voids the new invoice; `DUPLICATE_SUSPECTED` / `DUPLICATE_CLEARED` / `DUPLICATE_CONFIRMED` audit rows; document trail surfaces those actions only when the audit row exists; GET `/api/invoice-duplicates` HTTP), and the contract renewal hub (CNT MAX-suffix numbering; integer-cent ACV/line prices with float/negative reject; supplier/department required; renew only active/expiring_soon; copied lines + `insertApprovalChain` sequential pending/waiting; second open renewal PR refused; applySchema `CREATE TABLE IF NOT EXISTS` on existing DBs).
+Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events, change-order audit when present), PO change orders (qty/price apply in integer cents; reject reduce below received/accepted/invoiced; budget committed delta floored at 0 and actual_spent untouched; empty/invalid payloads; closed PO rejected; increase confirm threshold; `CHANGE_ORDER_APPLIED` audit; GET/POST HTTP; document trail surfaces the event only when the audit row exists), the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents), AP payment aging (UTC bucket classification including due-today and inclusive 7-day window; payable cents on rows; empty buckets; matched/paid/hard-exception seed numbers stay off the default pay queue; fail-closed mark-paid still requires `approved_for_payment`; mark-paid from the aging path writes the same `PAID` audit; GET `/api/ap-aging` HTTP), duplicate invoice detection (same supplier + billed cents + ±7 UTC calendar-day window inclusive, including the 8th-day miss; same PO + same amount with a different invoice number; rejected candidates excluded; self excluded; integer-cent miss; create still succeeds and flags `suspect`; approve/mark-paid refuse while suspect; `confirm_unique` unlocks approve; `confirm_duplicate` rejects/voids the new invoice; `DUPLICATE_SUSPECTED` / `DUPLICATE_CLEARED` / `DUPLICATE_CONFIRMED` audit rows; document trail surfaces those actions only when the audit row exists; GET `/api/invoice-duplicates` HTTP), the contract renewal hub (CNT MAX-suffix numbering; integer-cent ACV/line prices with float/negative reject; supplier/department required; renew only active/expiring_soon; copied lines + `insertApprovalChain` sequential pending/waiting; second open renewal PR refused; applySchema `CREATE TABLE IF NOT EXISTS` on existing DBs; renewal writes `source_contract_id` + `proposed`), and PR → contract auto-assignment (supplier+category+catalog scoring; no-match leaves null; expired excluded; ambiguous category-only unassigned; Figma seats pick Figma over Slack; create auto-sets proposed; skip leaves none; approve without `allow_contract_use` is 400; allow keeps FK; refuse keeps FK and still approves the PR; reject does not require a contract decision; inbox snapshot; `CONTRACT_*` audit; integer cents untouched; applySchema ALTER on existing `purchase_requisitions`).
 
 ## Known demo limits (out of scope)
 
@@ -474,7 +540,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Change orders amend **existing PO lines only** (no new catalog lines, no supplier swap, no blanket/contract PO). Apply-on-confirm — there is no second sequential approval chain. Increases above $1,000 require `confirm_increase: true` only. A change-order increase does not re-run the remaining-budget fail-closed check used on final PR approve.
 - AP Aging is a **queue + due-date classification**, not a payment-run engine. No batch ACH / payment proposal, no early-pay discount calendar, no supplier portal remittance advice. The due-soon window defaults to **7 UTC calendar days** (inclusive of today). Due dates are compared as UTC `YYYY-MM-DD` only.
 - Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute. Payment runs / batch ACH remain out of scope.
-- Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT).
+- Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR with `source_contract_id` proposed. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT). Carrying `source_contract_id` onto the PO at convert time is out of scope.
 
 ## Local vs Vercel / Turso
 

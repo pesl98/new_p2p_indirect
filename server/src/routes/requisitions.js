@@ -5,6 +5,13 @@ import { nextDocumentNumber } from '../docNumbers.js';
 import { normalizeLineType } from '../lineType.js';
 import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
 import { assertActiveCatalogItem, assertActiveSupplierForBuyer } from '../masterData.js';
+import {
+  assignContractToRequisition,
+  nestSourceContract,
+  SOURCE_CONTRACT_JOIN_SQL,
+  SOURCE_CONTRACT_SELECT_SQL,
+  updateDraftContractLink
+} from '../contractAssignment.js';
 
 const router = express.Router();
 
@@ -20,11 +27,13 @@ router.get('/', async (req, res) => {
         u.email as requester_email,
         d.name as department_name,
         d.code as department_code,
+        ${SOURCE_CONTRACT_SELECT_SQL},
         (SELECT COUNT(*) FROM requisition_items WHERE requisition_id = pr.id) as item_count,
         (SELECT COUNT(*) FROM approval_requests WHERE requisition_id = pr.id AND status = 'pending') as pending_approvals_count
       FROM purchase_requisitions pr
       JOIN users u ON pr.requester_id = u.id
       JOIN departments d ON pr.department_id = d.id
+      ${SOURCE_CONTRACT_JOIN_SQL}
       WHERE 1=1
     `;
     const params = [];
@@ -44,7 +53,7 @@ router.get('/', async (req, res) => {
 
     query += ` ORDER BY pr.id DESC`;
     const prs = await db.prepare(query).all(...params);
-    res.json(prs);
+    res.json(prs.map((row) => nestSourceContract(row)));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -62,10 +71,12 @@ router.get('/:id', async (req, res) => {
         u.email as requester_email,
         u.title as requester_title,
         d.name as department_name,
-        d.code as department_code
+        d.code as department_code,
+        ${SOURCE_CONTRACT_SELECT_SQL}
       FROM purchase_requisitions pr
       JOIN users u ON pr.requester_id = u.id
       JOIN departments d ON pr.department_id = d.id
+      ${SOURCE_CONTRACT_JOIN_SQL}
       WHERE pr.id = ?
     `).get(id);
 
@@ -112,7 +123,7 @@ router.get('/:id', async (req, res) => {
     `).all(id);
 
     res.json({
-      ...pr,
+      ...nestSourceContract(pr),
       items: annotateResolvedSuppliers(items),
       approvals,
       logs,
@@ -132,7 +143,19 @@ function httpErrorStatus(error) {
 router.post('/', async (req, res) => {
   try {
     const db = req.db;
-    const { requester_id, department_id, justification, needed_by_date, priority, items, submitImmediately } = req.body;
+    const {
+      requester_id,
+      department_id,
+      justification,
+      needed_by_date,
+      priority,
+      items,
+      submitImmediately,
+      source_contract_id,
+      skip_contract_match,
+      actor_name,
+      today
+    } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'Requisition must have at least one line item.' });
@@ -159,8 +182,8 @@ router.post('/', async (req, res) => {
       const status = submitImmediately ? 'pending_approval' : 'draft';
 
       const insertPR = db.prepare(`
-        INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, source_contract_id, contract_use_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'none')
       `);
       const prResult = await insertPR.run(
         prNumber,
@@ -217,6 +240,13 @@ router.post('/', async (req, res) => {
         VALUES ('requisition', ?, 'CREATED', 'System', ?)
       `).run(prId, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
 
+      const assignment = await assignContractToRequisition(db, prId, {
+        source_contract_id,
+        skip_contract_match,
+        actor_name: actor_name || 'System',
+        today
+      });
+
       if (submitImmediately) {
         await insertApprovalChain(db, prId, calculatedTotal, department_id || 1);
         await db.prepare(`
@@ -225,9 +255,14 @@ router.post('/', async (req, res) => {
         `).run(prId);
       }
 
-      return prId;
+      return { prId, assignment };
     });
-    res.status(201).json({ id: newPrId, message: 'Requisition created successfully' });
+    res.status(201).json({
+      id: newPrId.prId,
+      message: 'Requisition created successfully',
+      source_contract_id: newPrId.assignment?.source_contract_id ?? null,
+      contract_use_status: newPrId.assignment?.contract_use_status || 'none'
+    });
   } catch (error) {
     const status = httpErrorStatus(error);
     if (status >= 500) console.error('Error creating requisition:', error);
@@ -244,16 +279,51 @@ router.post('/:id/submit', async (req, res) => {
     if (!pr) return res.status(404).json({ error: 'Requisition not found' });
     if (pr.status !== 'draft') return res.status(400).json({ error: 'Only draft requisitions can be submitted' });
 
-    await db.transaction(async () => {
+    const { source_contract_id, skip_contract_match, actor_name, today } = req.body || {};
+
+    const assignment = await db.transaction(async () => {
       await db.prepare(`UPDATE purchase_requisitions SET status = 'pending_approval', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
       await insertApprovalChain(db, id, pr.total_amount, pr.department_id);
       await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'SUBMITTED', 'Requester', 'Submitted for approval routing')
       `).run(id);
+
+      const alreadyLinked = pr.source_contract_id && pr.contract_use_status && pr.contract_use_status !== 'none';
+      if (alreadyLinked && source_contract_id == null && !skip_contract_match) {
+        return {
+          source_contract_id: pr.source_contract_id,
+          contract_use_status: pr.contract_use_status
+        };
+      }
+      return assignContractToRequisition(db, id, {
+        source_contract_id,
+        skip_contract_match,
+        actor_name: actor_name || 'Requester',
+        today
+      });
     });
 
-    res.json({ message: 'Requisition submitted for approval' });
+    res.json({
+      message: 'Requisition submitted for approval',
+      source_contract_id: assignment?.source_contract_id ?? pr.source_contract_id ?? null,
+      contract_use_status: assignment?.contract_use_status || pr.contract_use_status || 'none'
+    });
+  } catch (error) {
+    res.status(httpErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+// Draft override: set, replace, or clear the proposed contract before submit.
+router.patch('/:id/contract', async (req, res) => {
+  try {
+    const { source_contract_id, actor_name, today } = req.body || {};
+    const result = await updateDraftContractLink(req.db, req.params.id, {
+      source_contract_id,
+      actor_name,
+      today
+    });
+    res.json({ message: 'Contract link updated', ...result });
   } catch (error) {
     res.status(httpErrorStatus(error)).json({ error: error.message });
   }

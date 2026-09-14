@@ -13,6 +13,8 @@ import {
   INVOICE_DUPLICATE_FLAGS_TABLE_SQL,
   CONTRACTS_TABLE_SQL,
   CONTRACT_ITEMS_TABLE_SQL,
+  PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL,
+  PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL,
   schemaPath
 } from './db.js';
 import { splitSqlScript } from './tursoHttp.js';
@@ -58,6 +60,9 @@ describe('Turso/SQLite schema migrations', () => {
     const contractCols = raw.prepare(`PRAGMA table_info(contracts)`).all().map((col) => col.name);
     assert.ok(contractCols.includes('annual_value_cents'));
     assert.ok(contractCols.includes('contract_number'));
+    const prCols = raw.prepare(`PRAGMA table_info(purchase_requisitions)`).all().map((col) => col.name);
+    assert.ok(prCols.includes('source_contract_id'));
+    assert.ok(prCols.includes('contract_use_status'));
   });
 
   test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {
@@ -88,6 +93,15 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(items.length, 1);
     assert.match(items[0], /CREATE TABLE IF NOT EXISTS contract_items/i);
     assert.match(items[0], /unit_price INTEGER NOT NULL/);
+  });
+
+  test('purchase_requisitions contract-link ALTER statements are single Turso-split statements', () => {
+    const idSql = splitSqlScript(PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL);
+    assert.equal(idSql.length, 1);
+    assert.match(idSql[0], /ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id INTEGER/);
+    const statusSql = splitSqlScript(PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL);
+    assert.equal(statusSql.length, 1);
+    assert.match(statusSql[0], /ALTER TABLE purchase_requisitions ADD COLUMN contract_use_status TEXT NOT NULL DEFAULT 'none'/);
   });
 
   test('approval_delegations CREATE TABLE is a single Turso-split statement', () => {
@@ -284,6 +298,12 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(columnNames(db, 'invoice_duplicate_flags').includes('match_rule'));
     assert.ok(columnNames(db, 'contracts').includes('annual_value_cents'));
     assert.ok(columnNames(db, 'contract_items').includes('unit_price'));
+    assert.ok(columnNames(db, 'purchase_requisitions').includes('source_contract_id'));
+    assert.ok(columnNames(db, 'purchase_requisitions').includes('contract_use_status'));
+    assert.equal(
+      db.prepare(`SELECT source_contract_id, contract_use_status FROM purchase_requisitions WHERE id = 1`).get().contract_use_status,
+      'none'
+    );
   });
 
   test('applySchema rebuilds dispositions CHECK to add buyer_response on short_pay-era tables', async () => {

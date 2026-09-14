@@ -14,7 +14,8 @@ import {
   DollarSign,
   Building2,
   X,
-  FileText
+  FileText,
+  FileCheck
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, toCents } from '../money';
@@ -50,20 +51,25 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
   const [customPrice, setCustomPrice] = useState('');
   const [customQty, setCustomQty] = useState(1);
   const [customSupplierId, setCustomSupplierId] = useState(1);
+  const [contracts, setContracts] = useState([]);
+  const [contractChoice, setContractChoice] = useState('auto');
+  const [previewMatch, setPreviewMatch] = useState(null);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [prs, catalog, depts, sups] = await Promise.all([
+      const [prs, catalog, depts, sups, contractList] = await Promise.all([
         api.getRequisitions(statusFilter === 'all' ? '' : statusFilter),
         api.getCatalog(),
         api.getDepartments(),
-        api.getSuppliers()
+        api.getSuppliers(),
+        api.getContracts()
       ]);
       setRequisitions(prs);
       setCatalogItems(catalog);
       setDepartments(depts);
       setSuppliers(Array.isArray(sups) ? sups : []);
+      setContracts(Array.isArray(contractList) ? contractList : []);
       const activeSups = (Array.isArray(sups) ? sups : []).filter((s) => !s.status || s.status === 'active');
       if (activeSups.length && !activeSups.some((s) => Number(s.id) === Number(customSupplierId))) {
         setCustomSupplierId(activeSups[0].id);
@@ -84,6 +90,24 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
       handleOpenDetail(focusId);
     }
   }, [focusId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function preview() {
+      if (!showNewModal || contractChoice !== 'auto' || cartItems.length === 0) {
+        setPreviewMatch(null);
+        return;
+      }
+      try {
+        const result = await api.previewContractMatch({ items: cartItems });
+        if (!cancelled) setPreviewMatch(result.match || null);
+      } catch {
+        if (!cancelled) setPreviewMatch(null);
+      }
+    }
+    preview();
+    return () => { cancelled = true; };
+  }, [cartItems, contractChoice, showNewModal]);
 
   const handleOpenDetail = async (id) => {
     try {
@@ -149,7 +173,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
       return;
     }
     try {
-      await api.createRequisition({
+      const payload = {
         requester_id: currentUser?.id || 1,
         department_id: departmentId,
         justification,
@@ -157,10 +181,18 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
         priority,
         items: cartItems,
         submitImmediately
-      });
+      };
+      if (contractChoice === 'none') {
+        payload.skip_contract_match = true;
+      } else if (contractChoice !== 'auto') {
+        payload.source_contract_id = Number(contractChoice);
+      }
+      await api.createRequisition(payload);
       setShowNewModal(false);
       setCartItems([]);
       setJustification('');
+      setContractChoice('auto');
+      setPreviewMatch(null);
       loadData();
     } catch (err) {
       alert(err.message);
@@ -185,6 +217,20 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
     }
   };
 
+  const handleDraftContractChange = async (pr, value) => {
+    try {
+      const source_contract_id = value === '' || value === 'none' ? null : Number(value);
+      await api.updateRequisitionContract(pr.id, {
+        source_contract_id,
+        actor_name: currentUser?.name || 'Requester'
+      });
+      handleOpenDetail(pr.id);
+      loadData();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const getStatusBadge = (status) => {
     switch (status) {
       case 'draft':
@@ -201,6 +247,33 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
         return <span className="bg-slate-100 text-slate-800 text-xs px-2 py-0.5 rounded">{status}</span>;
     }
   };
+
+  const contractUseLabel = (status) => {
+    switch (status) {
+      case 'proposed': return 'Proposed';
+      case 'allowed': return 'Allowed';
+      case 'refused': return 'Refused';
+      default: return null;
+    }
+  };
+
+  const ContractBadge = ({ pr }) => {
+    const linked = pr?.source_contract || (pr?.source_contract_id ? { contract_number: 'Contract' } : null);
+    if (!linked || pr.contract_use_status === 'none') return null;
+    const tone = pr.contract_use_status === 'allowed'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      : pr.contract_use_status === 'refused'
+        ? 'bg-slate-50 text-slate-600 border-slate-200'
+        : 'bg-sky-50 text-sky-800 border-sky-200';
+    return (
+      <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${tone}`}>
+        <FileCheck className="w-3 h-3" />
+        {linked.contract_number} · {contractUseLabel(pr.contract_use_status)}
+      </span>
+    );
+  };
+
+  const assignableContracts = contracts.filter((c) => c.status === 'active' || c.status === 'expiring_soon');
 
   return (
     <div className="space-y-6">
@@ -269,7 +342,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 requisitions.map((pr) => (
                   <tr key={pr.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                      {pr.pr_number}
+                      <div>{pr.pr_number}</div>
+                      <div className="mt-1"><ContractBadge pr={pr} /></div>
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-medium text-slate-900">{pr.requester_name}</div>
@@ -518,6 +592,39 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-slate-500 text-xs mb-1">Linked contract</label>
+                    <select
+                      value={contractChoice}
+                      onChange={(e) => setContractChoice(e.target.value)}
+                      className="w-full p-2 border border-slate-200 rounded-lg font-medium text-xs"
+                    >
+                      <option value="auto">Auto-match when a contract is available</option>
+                      <option value="none">None — ad-hoc (no contract)</option>
+                      {assignableContracts.map((c) => (
+                        <option key={c.id} value={String(c.id)}>
+                          {c.contract_number} · {c.title} ({c.supplier_name})
+                        </option>
+                      ))}
+                    </select>
+                    {contractChoice === 'auto' && previewMatch && (
+                      <div className="mt-2 p-2.5 rounded-lg border border-sky-200 bg-sky-50 text-[11px] text-sky-900">
+                        <div className="font-bold flex items-center gap-1">
+                          <FileCheck className="w-3.5 h-3.5" />
+                          Will propose {previewMatch.contract_number}
+                        </div>
+                        <div className="mt-0.5">
+                          {previewMatch.supplier_name} · {previewMatch.title} · ACV ${formatMoney(previewMatch.annual_value_cents)}
+                          {previewMatch.end_date ? ` · ends ${previewMatch.end_date}` : ''}
+                        </div>
+                        <div className="text-sky-700 mt-0.5">Approver will allow or refuse use of this contract.</div>
+                      </div>
+                    )}
+                    {contractChoice === 'auto' && cartItems.length > 0 && !previewMatch && (
+                      <p className="text-[11px] text-slate-500 mt-1">No confident contract match yet — this PR will stay ad-hoc.</p>
+                    )}
+                  </div>
+
                   {/* Selected Cart Items */}
                   <div className="pt-2">
                     <div className="flex justify-between items-center text-xs font-bold text-slate-800 mb-2">
@@ -600,6 +707,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 <div className="flex items-center space-x-2">
                   <h3 className="text-lg font-mono font-bold text-slate-900">{selectedPR.pr_number}</h3>
                   {getStatusBadge(selectedPR.status)}
+                  <ContractBadge pr={selectedPR} />
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Requested by {selectedPR.requester_name} ({selectedPR.department_name})
@@ -626,6 +734,63 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                   <span>Total Cost: <strong className="text-emerald-700 text-sm font-bold">${formatMoney(selectedPR.total_amount)}</strong></span>
                 </div>
               </div>
+
+              {selectedPR.source_contract && selectedPR.contract_use_status !== 'none' && (
+                <div className="rounded-xl p-4 border border-sky-200 bg-sky-50/60">
+                  <div className="font-bold text-sky-900 uppercase tracking-wider text-[11px] mb-1 flex items-center gap-1">
+                    <FileCheck className="w-3.5 h-3.5" />
+                    Linked contract · {contractUseLabel(selectedPR.contract_use_status)}
+                  </div>
+                  <div className="font-mono font-bold text-slate-900">{selectedPR.source_contract.contract_number}</div>
+                  <p className="text-slate-800 mt-0.5">{selectedPR.source_contract.title}</p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-slate-600">
+                    <span>Supplier: <strong className="text-slate-900">{selectedPR.source_contract.supplier_name}</strong></span>
+                    <span>ACV: <strong className="text-slate-900">${formatMoney(selectedPR.source_contract.annual_value_cents)}</strong></span>
+                    <span>{selectedPR.source_contract.start_date} → {selectedPR.source_contract.end_date}</span>
+                  </div>
+                  {selectedPR.contract_use_status === 'proposed' && (
+                    <p className="text-[11px] text-sky-800 mt-2">
+                      Approver must <strong>allow</strong> or <strong>refuse</strong> contract use. Refusing keeps this PR as ad-hoc.
+                    </p>
+                  )}
+                  {selectedPR.status === 'draft' && (
+                    <div className="mt-3">
+                      <label className="block text-slate-500 text-[11px] mb-1">Override before submit</label>
+                      <select
+                        value={selectedPR.source_contract_id ? String(selectedPR.source_contract_id) : 'none'}
+                        onChange={(e) => handleDraftContractChange(selectedPR, e.target.value)}
+                        className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white"
+                      >
+                        <option value="none">None — ad-hoc</option>
+                        {assignableContracts.map((c) => (
+                          <option key={c.id} value={String(c.id)}>
+                            {c.contract_number} · {c.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {selectedPR.status === 'draft' && (!selectedPR.source_contract || selectedPR.contract_use_status === 'none') && (
+                <div className="rounded-xl p-4 border border-slate-200 bg-slate-50">
+                  <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">Linked contract</div>
+                  <p className="text-slate-500 mb-2">No contract assigned. Optionally pick one before submit.</p>
+                  <select
+                    value="none"
+                    onChange={(e) => handleDraftContractChange(selectedPR, e.target.value)}
+                    className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white"
+                  >
+                    <option value="none">None — ad-hoc</option>
+                    {assignableContracts.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.contract_number} · {c.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Line items */}
               <div>
