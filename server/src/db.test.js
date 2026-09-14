@@ -63,6 +63,9 @@ describe('Turso/SQLite schema migrations', () => {
     const prCols = raw.prepare(`PRAGMA table_info(purchase_requisitions)`).all().map((col) => col.name);
     assert.ok(prCols.includes('source_contract_id'));
     assert.ok(prCols.includes('contract_use_status'));
+    const prSql = raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'purchase_requisitions'`).get().sql;
+    assert.match(prSql, /contract_use_status TEXT NOT NULL DEFAULT 'none'/);
+    assert.match(prSql, /'skipped'/);
   });
 
   test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {

@@ -259,7 +259,7 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures
 - `suppliers`: Approved vendor repository with payment terms, ratings, and `status` (`active` | `inactive` | `under_review`). Edit via `PATCH /api/suppliers/:id`; deactivate via status — never hard-delete.
 - `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service, `status` active|inactive). Edit via `PATCH /api/catalog/:id`. Requisition browse defaults to active items.
-- `purchase_requisitions` & `requisition_items`: Requisitions & line items (`source_contract_id` nullable pointer at `contracts.id`; `contract_use_status` `none` | `proposed` | `allowed` | `refused`)
+- `purchase_requisitions` & `requisition_items`: Requisitions & line items (`source_contract_id` nullable pointer at `contracts.id`; `contract_use_status` `none` | `skipped` | `proposed` | `allowed` | `refused`)
 - `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
 - `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
 - `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`, `revision`, `change_order_count`)

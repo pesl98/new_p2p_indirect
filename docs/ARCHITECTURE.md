@@ -72,7 +72,8 @@ World-class P2P (Coupa/Ariba-style) proposes a contract when the buying document
 
 | Status | Meaning |
 | --- | --- |
-| `none` | No contract linked (ad-hoc). |
+| `none` | No contract linked yet. Submit of a draft in this state **may still auto-match**. |
+| `skipped` | Requester explicitly opted out (create “None — ad-hoc”, `skip_contract_match`, or draft clear). Submit **must not rematch**. |
 | `proposed` | Auto-match, explicit pick, or 1-click renewal. Approver has not decided yet. |
 | `allowed` | Approver allowed use of that contract. FK kept. |
 | `refused` | Approver refused contract use. FK is **kept for audit**; the PR continues as ad-hoc. |
@@ -81,7 +82,7 @@ Existing Turso/SQLite DBs get `ALTER TABLE purchase_requisitions ADD COLUMN sour
 
 ### Matching (“contract available”)
 
-`server/src/contractAssignment.js` runs after PR lines exist (create, and submit of a still-unlinked draft). Fail-soft: a matcher exception never blocks PR create — the row stays `none`.
+`server/src/contractAssignment.js` runs after PR lines exist (create, and submit of a draft that is still `none`). Fail-soft: a matcher exception never blocks PR create — the row stays `none`. A `skipped` draft is left unchanged on submit unless the body sends a new `source_contract_id` or `skip_contract_match`.
 
 Eligible contracts have computed status `active` or `expiring_soon` (same UTC date rules as renew). Line supplier is `estimated_supplier_id`, else catalog `preferred_supplier_id`. Majority supplier is by **line count** (ties → lower supplier id).
 
@@ -104,11 +105,11 @@ Category-only with **multiple** candidates is treated as ambiguous → unassigne
 
 Create/submit body:
 
-- omit `source_contract_id` → auto-match
+- omit `source_contract_id` → auto-match (unless the draft is already `skipped`)
 - `source_contract_id: N` → fail-closed if missing / not assignable
-- `skip_contract_match: true` → force `none` (clears an existing draft link)
+- `skip_contract_match: true` → force `skipped` (clears an existing draft link and records `CONTRACT_CLEARED`)
 
-Draft override: `PATCH /api/requisitions/:id/contract` with `source_contract_id` (null to clear). Draft only.
+Draft override: `PATCH /api/requisitions/:id/contract` with `source_contract_id` (null to clear → `skipped`). Draft only.
 
 PO `source_contract_id` is **out of scope** (not trivial without a new PO column and convert-time rules). The durable PR FK is the control.
 

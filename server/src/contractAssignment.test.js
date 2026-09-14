@@ -11,7 +11,6 @@ import {
   pickBestContract,
   scoreContractCandidate,
   majoritySupplierId,
-  assignContractToRequisition,
   parseAllowContractUse
 } from './contractAssignment.js';
 
@@ -298,24 +297,158 @@ describe('PR → contract auto-assignment', () => {
     });
   });
 
-  test('skip_contract_match leaves null even when a contract would match', async () => {
+  test('skip_contract_match persists skipped and does not rematch on submit', async () => {
+    const db = await makeDb();
+    const { figma } = await seedFigmaAndSlack(db);
+    const app = createApp({ db, config: loadDbConfig({}) });
+
+    await withServer(app, async (base) => {
+      const created = await fetch(`${base}/api/requisitions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requester_id: 1,
+          department_id: 1,
+          justification: 'Ad-hoc Figma seat — do not link the contract',
+          skip_contract_match: true,
+          today: '2026-09-14',
+          items: [{
+            catalog_item_id: 5,
+            item_description: 'Figma Organization Annual User License',
+            category: 'Software & Cloud',
+            quantity: 1,
+            unit_price: 54000,
+            estimated_supplier_id: 2,
+            line_type: 'service'
+          }]
+        })
+      });
+      const body = await created.json();
+      assert.equal(created.status, 201, body.error || 'expected 201');
+      assert.equal(body.source_contract_id, null);
+      assert.equal(body.contract_use_status, 'skipped');
+
+      const draft = await (await fetch(`${base}/api/requisitions/${body.id}`)).json();
+      assert.equal(draft.source_contract_id, null);
+      assert.equal(draft.contract_use_status, 'skipped');
+      assert.equal(draft.logs.some((row) => row.action === 'CONTRACT_PROPOSED'), false);
+      assert.ok(draft.logs.find((row) => row.action === 'CONTRACT_CLEARED'));
+
+      const submitted = await fetch(`${base}/api/requisitions/${body.id}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ today: '2026-09-14' })
+      });
+      const submitBody = await submitted.json();
+      assert.equal(submitted.status, 200, submitBody.error || 'expected 200');
+      assert.equal(submitBody.source_contract_id, null);
+      assert.equal(submitBody.contract_use_status, 'skipped');
+
+      const after = await (await fetch(`${base}/api/requisitions/${body.id}`)).json();
+      assert.equal(after.source_contract_id, null);
+      assert.equal(after.contract_use_status, 'skipped');
+      assert.equal(after.status, 'pending_approval');
+      assert.equal(after.logs.filter((row) => row.action === 'CONTRACT_PROPOSED').length, 0);
+      assert.notEqual(figma.id, after.source_contract_id);
+    });
+  });
+
+  test('clearing a proposed draft link persists skipped so submit does not rematch', async () => {
+    const db = await makeDb();
+    const { figma } = await seedFigmaAndSlack(db);
+    const app = createApp({ db, config: loadDbConfig({}) });
+
+    await withServer(app, async (base) => {
+      const created = await fetch(`${base}/api/requisitions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requester_id: 1,
+          department_id: 1,
+          justification: 'Figma seat draft then clear',
+          today: '2026-09-14',
+          items: [{
+            catalog_item_id: 5,
+            item_description: 'Figma Organization Annual User License',
+            category: 'Software & Cloud',
+            quantity: 1,
+            unit_price: 54000,
+            estimated_supplier_id: 2,
+            line_type: 'service'
+          }]
+        })
+      });
+      const body = await created.json();
+      assert.equal(created.status, 201, body.error || 'expected 201');
+      assert.equal(body.source_contract_id, figma.id);
+      assert.equal(body.contract_use_status, 'proposed');
+
+      const cleared = await fetch(`${base}/api/requisitions/${body.id}/contract`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_contract_id: null, actor_name: 'Alice Chen' })
+      });
+      const clearBody = await cleared.json();
+      assert.equal(cleared.status, 200, clearBody.error || 'expected 200');
+      assert.equal(clearBody.source_contract_id, null);
+      assert.equal(clearBody.contract_use_status, 'skipped');
+
+      const submitted = await fetch(`${base}/api/requisitions/${body.id}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ today: '2026-09-14' })
+      });
+      const submitBody = await submitted.json();
+      assert.equal(submitted.status, 200, submitBody.error || 'expected 200');
+      assert.equal(submitBody.source_contract_id, null);
+      assert.equal(submitBody.contract_use_status, 'skipped');
+
+      const after = await (await fetch(`${base}/api/requisitions/${body.id}`)).json();
+      assert.equal(after.source_contract_id, null);
+      assert.equal(after.contract_use_status, 'skipped');
+      assert.equal(after.logs.filter((row) => row.action === 'CONTRACT_PROPOSED').length, 1);
+      assert.ok(after.logs.find((row) => row.action === 'CONTRACT_CLEARED'));
+    });
+  });
+
+  test('unmatched none draft may still auto-match on submit', async () => {
     const db = await makeDb();
     await seedFigmaAndSlack(db);
-    const result = await db.transaction(async () => {
-      const prNumber = 'PR-TEST-SKIP';
-      await db.prepare(`
-        INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification)
-        VALUES (?, 1, 1, 'draft', 54000, 'adhoc')
-      `).run(prNumber);
-      const pr = await db.prepare(`SELECT id FROM purchase_requisitions WHERE pr_number = ?`).get(prNumber);
-      await db.prepare(`
-        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type)
-        VALUES (?, 5, 'Figma seat', 'Software & Cloud', 1, 54000, 54000, 2, 'service')
-      `).run(pr.id);
-      return assignContractToRequisition(db, pr.id, { skip_contract_match: true, today: '2026-09-14' });
+    const app = createApp({ db, config: loadDbConfig({}) });
+
+    await withServer(app, async (base) => {
+      const created = await fetch(`${base}/api/requisitions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requester_id: 1,
+          department_id: 1,
+          justification: 'Laptop then add nothing — stays none',
+          items: [{
+            catalog_item_id: 1,
+            item_description: 'MacBook Pro',
+            category: 'IT Hardware',
+            quantity: 1,
+            unit_price: 349900,
+            estimated_supplier_id: 1,
+            line_type: 'goods'
+          }]
+        })
+      });
+      const body = await created.json();
+      assert.equal(created.status, 201, body.error || 'expected 201');
+      assert.equal(body.contract_use_status, 'none');
+
+      const submitted = await fetch(`${base}/api/requisitions/${body.id}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ today: '2026-09-14' })
+      });
+      const submitBody = await submitted.json();
+      assert.equal(submitted.status, 200, submitBody.error || 'expected 200');
+      assert.equal(submitBody.source_contract_id, null);
+      assert.equal(submitBody.contract_use_status, 'none');
     });
-    assert.equal(result.source_contract_id, null);
-    assert.equal(result.contract_use_status, 'none');
   });
 
   test('renewal PR sets source_contract_id FK (not just CNT- in justification)', async () => {
