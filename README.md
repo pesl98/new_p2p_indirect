@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **SaaS & vendor contract renewals**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -95,7 +95,14 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - Derived from existing FKs + `audit_logs` only — no invented events. Lookup by `requisition_id`, `pr_number`, `po_id`, `po_number`, or document number search.
    - Seed demo: **PR-2026-001** is the completed goods path (PR → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → paid). Convert **PR-2026-006** (optionally remapping a line in the convert UI) to see two PO branches — or one, if both lines are issued to the same vendor. **PR-2026-008** / **PO-2026-007** includes applied change order **CO-2026-001**.
 
-12. **Multi-Persona Testing Switcher (demo only — not real auth)**
+12. **SaaS & Vendor Contract Renewal Hub**
+   - Track non-production software licenses, maintenance, and professional-service retainers (`contracts` / `contract_items`). ACV and line prices are **integer cents**.
+   - Dynamic status from UTC calendar dates: **active**, **expiring_soon** (within `notice_period_days` of `end_date`), **expired**, **cancelled**.
+   - **1-click renewal PR:** only `active` / `expiring_soon` (expired and cancelled fail closed). Copies lines onto a `PR-YYYY-NNN` (MAX-suffix) and inserts the existing sequential approval chain (`insertApprovalChain`). Refuses a second open renewal PR for the same `CNT-YYYY-NNN`.
+   - Numbered `CNT-YYYY-NNN`. Sidebar **Contracts & Renewals** is visible to all demo personas (no JWT). APIs stay demo-open like catalog PATCH.
+   - Seed: **CNT-2026-001** Figma (Marketing / CloudCore, 10 seats × $540.00 = $5,400.00 ACV) is the expiring-soon walkthrough. **CNT-2026-002** Slack (IT, active). **CNT-2026-003** FacilityCare janitorial (Facilities, expiring soon). **CNT-2026-004** Apex retainer (Marketing, active, no auto-renew).
+
+13. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
      - **Alice Chen** (Requester - Marketing)
      - **Bob Martinez** (Approver / Dept Head - Marketing)
@@ -153,6 +160,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 **AP Aging walkthrough (David / Elena):** Switch to **David Miller** → sidebar **AP Aging**. Overdue shows **INV-FCJ-8810** (FacilityCare first-aid; billed $220.00 → pay $210.00). Due soon shows **INV-WED-3308** (WorkSpace paper / **PR-2026-009** / Sofia). Later shows **INV-TSG-5508** (CalDigit dock). **Mark paid** on INV-FCJ-8810 (payment reference required in the modal) — status becomes `paid` via the existing mark-paid API. Ready to approve still lists matched invoices such as **INV-AAD-5501** and **INV-FCJ-7701**. Leave **INV-WED-9042** paid, **INV-TSG-11029** open for short-pay, and **INV-TSG-22041** in Alice’s Buyer Inbox. Elena sees the same sidebar entry.
 
 **Duplicate suspects walkthrough (David / Elena):** Switch to **David Miller** → sidebar **Duplicate Suspects**. Open **INV-TSG-6611** (TechSupply, billed $99.00, PO-2026-012). The candidate is **INV-TSG-6610** (same $99.00, paid on PO-2026-011, invoice dates within ±7 UTC days). Dual match already passed — Approve for Payment is blocked by the duplicate hold. **Confirm unique** (required reason) clears the hold so Invoices & Matching can approve; **Confirm duplicate** rejects/voids INV-TSG-6611 (the paid original is unchanged). Leave INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / the AP aging trio alone. Elena sees the same sidebar entry.
+
+**Contract renewal walkthrough (Carol / Alice):** Switch to **Carol Zhang** (or Alice) → sidebar **Contracts & Renewals**. **CNT-2026-001** Figma is expiring soon (10 seats × $540.00 = $5,400.00 ACV, CloudCore / Marketing). **Renew PR** creates the next `PR-YYYY-NNN` with copied seats, sequential dept-head + procurement approvals (Bob pending, Carol waiting), and `SUBMITTED` / `RENEWAL_PR_CREATED` audit rows. Expired and cancelled contracts cannot renew. A second click while that PR is still draft/pending/approved is refused. Leave INV-TSG-11029 / 22041 / 6610 / 6611 and the AP aging trio alone. Then Approvals Inbox → Bob (or Priya via the seeded OOO delegation if you use a Marketing step-1 PR — this Figma PR is also Marketing).
 
 ---
 
@@ -230,7 +239,7 @@ Vercel runs `npm run build`, deploys `api/index.js` as one Node Function (`inclu
 
 ---
 
-Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CO-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
+Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CO-` / `CNT-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
 
 Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 
@@ -257,5 +266,6 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
 - `invoice_exception_dispositions`: Structured AP exception resolutions (accept / short-pay / reject / return-to-buyer)
 - `invoice_duplicate_flags`: Likely-duplicate candidate links + AP dispositions (confirm unique / confirm duplicate)
+- `contracts` & `contract_items`: SaaS / vendor agreements (ACV and line prices in integer cents, `CNT-YYYY-NNN`)
 - `audit_logs`: Complete immutable event history
 - Document trail is **not** a new table: `GET /api/document-trail` derives the chain from the FKs above plus AP rows in `audit_logs`

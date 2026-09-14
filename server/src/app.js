@@ -20,6 +20,7 @@ import analyticsRouter from './routes/analytics.js';
 import documentTrailRouter from './routes/documentTrail.js';
 import departmentsRouter from './routes/departments.js';
 import delegationsRouter from './routes/delegations.js';
+import contractsRouter from './routes/contracts.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
@@ -85,6 +86,7 @@ export function createApp(options = {}) {
   app.use('/api/payment-queue', apAgingRouter);
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/document-trail', documentTrailRouter);
+  app.use('/api/contracts', contractsRouter);
 
   app.get('/api/health', (req, res) => {
     const db = req.db || peekCachedDb();

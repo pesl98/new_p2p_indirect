@@ -13,6 +13,7 @@ import BuyerInboxView from './views/BuyerInboxView';
 import ApAgingView from './views/ApAgingView';
 import DuplicateSuspectsView from './views/DuplicateSuspectsView';
 import BudgetsView from './views/BudgetsView';
+import ContractsView from './views/ContractsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
 import AdminDepartmentsView from './views/AdminDepartmentsView';
@@ -244,6 +245,14 @@ export default function App() {
 
           {activeTab === 'budgets' && (
             <BudgetsView />
+          )}
+
+          {activeTab === 'contracts' && (
+            <ContractsView
+              currentUser={currentUser}
+              onNavigate={handleNavigate}
+              onDataChanged={fetchCoreData}
+            />
           )}
 
           {activeTab === 'catalog' && (

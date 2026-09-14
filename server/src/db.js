@@ -350,6 +350,52 @@ async function migrateInvoiceDuplicateFlags(database) {
   await maybe(database.exec(INVOICE_DUPLICATE_FLAGS_TABLE_SQL));
 }
 
+/**
+ * Existing DBs created before the contract renewal hub need contracts /
+ * contract_items. CREATE TABLE IF NOT EXISTS matches catalog/SES/delegation
+ * bootstrap in schema.sql so Turso cold-start does not wipe data.
+ */
+export const CONTRACTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS contracts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_number TEXT UNIQUE NOT NULL,
+    supplier_id INTEGER NOT NULL,
+    department_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL CHECK (category IN ('Software & Cloud', 'Consulting & Professional Services', 'Facilities & MRO', 'Office Supplies', 'Marketing & Events', 'Travel & Subscriptions', 'IT Hardware')),
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    notice_period_days INTEGER DEFAULT 30,
+    annual_value_cents INTEGER NOT NULL,
+    auto_renew INTEGER DEFAULT 1,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'expiring_soon', 'expired', 'cancelled')),
+    terms TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+    FOREIGN KEY (department_id) REFERENCES departments(id)
+  )
+`;
+
+export const CONTRACT_ITEMS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS contract_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id INTEGER NOT NULL,
+    catalog_item_id INTEGER,
+    description TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    unit_price INTEGER NOT NULL,
+    total_price INTEGER NOT NULL,
+    line_type TEXT NOT NULL DEFAULT 'service' CHECK (line_type IN ('goods', 'service')),
+    FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+    FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
+  )
+`;
+
+async function migrateContracts(database) {
+  await maybe(database.exec(CONTRACTS_TABLE_SQL));
+  await maybe(database.exec(CONTRACT_ITEMS_TABLE_SQL));
+}
+
 async function migratePurchaseOrderChangeOrders(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -378,6 +424,7 @@ export async function applySchema(database) {
   await migrateApprovalDelegations(database);
   await migratePurchaseOrderChangeOrders(database);
   await migrateInvoiceDuplicateFlags(database);
+  await migrateContracts(database);
   return database;
 }
 

@@ -16,7 +16,8 @@ import {
   CalendarClock,
   Copy,
   UserCog,
-  UserCheck
+  UserCheck,
+  FileCheck
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -142,6 +143,12 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       label: 'Budgets & Cost Centers',
       icon: Landmark,
       desc: 'Department spend allocation'
+    },
+    {
+      id: 'contracts',
+      label: 'Contracts & Renewals',
+      icon: FileCheck,
+      desc: 'Vendor agreements & renewal hub'
     },
     {
       id: 'catalog',
