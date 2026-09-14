@@ -399,8 +399,9 @@ async function migrateContracts(database) {
 /**
  * Existing DBs need a durable PR → contract link plus the approver's
  * allow/refuse decision. Not a SQLite FK (contracts is created after
- * purchase_requisitions). CHECK is on schema.sql for new DBs; ALTER
- * cannot add CHECK, so application code still validates the enum.
+ * purchase_requisitions). CHECK (including skipped opt-out) is on
+ * schema.sql for new DBs; ALTER cannot add CHECK, so application code
+ * still validates the enum.
  */
 export const PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL =
   `ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id INTEGER`;
