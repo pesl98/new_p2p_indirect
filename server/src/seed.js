@@ -152,6 +152,8 @@ await db.transaction(async () => {
   // AP Aging payables: INV-FCJ-8810 overdue (short-pay then approved), INV-WED-3308 due soon
   // (PR-2026-009 / Sofia), INV-TSG-5508 later. Do not approve/pay INV-TSG-11029 or INV-TSG-22041.
   // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
+  // Contracts hub: CNT-2026-001 Figma (expiring soon) is the 1-click renewal walkthrough.
+  // Do not convert that live renewal onto INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))
@@ -849,7 +851,12 @@ await db.transaction(async () => {
     '2026-08-28 10:00:00'
   );
 
-  // 11. SaaS & Vendor Contracts
+  // 11. SaaS & Vendor Contracts (ACV and line prices are integer cents).
+  // Relative UTC end dates keep the walkthrough valid after re-seed:
+  //   CNT-2026-001 Figma — expiring_soon (end in 20 days, 30-day notice)
+  //   CNT-2026-002 Slack — active
+  //   CNT-2026-003 FacilityCare janitorial — expiring_soon
+  //   CNT-2026-004 Apex retainer — active, no auto-renew
   const insertContract = db.prepare(`
     INSERT INTO contracts (id, contract_number, supplier_id, department_id, title, category, start_date, end_date, notice_period_days, annual_value_cents, auto_renew, status, terms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -859,16 +866,21 @@ await db.transaction(async () => {
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  await insertContract.run(1, 'CNT-2026-001', 2, 1, 'Figma Enterprise Organization Subscription', 'Software & Cloud', '2025-10-01', '2026-09-30', 30, 540000, 1, 'expiring_soon', 'Annual enterprise tier with unlimited design workspaces. 30 days written notice required.');
+  const figEnd = utcYmdOffset(20);
+  const slackEnd = utcYmdOffset(90);
+  const cleanEnd = utcYmdOffset(8);
+  const apexEnd = utcYmdOffset(120);
+
+  await insertContract.run(1, 'CNT-2026-001', 2, 1, 'Figma Enterprise Organization Subscription', 'Software & Cloud', utcYmdOffset(-345), figEnd, 30, 540000, 1, 'active', 'Annual enterprise tier with unlimited design workspaces. 30 days written notice required.');
   await insertContractItem.run(1, 5, 'Figma Organization Annual User License', 10, 54000, 540000, 'service');
 
-  await insertContract.run(2, 'CNT-2026-002', 2, 2, 'Slack Enterprise Grid Annual Agreement', 'Software & Cloud', '2025-12-01', '2026-11-30', 60, 900000, 1, 'active', 'Enterprise grid corporate communications. 60 days advance cancellation notice.');
+  await insertContract.run(2, 'CNT-2026-002', 2, 2, 'Slack Enterprise Grid Annual Agreement', 'Software & Cloud', utcYmdOffset(-275), slackEnd, 60, 900000, 1, 'active', 'Enterprise grid corporate communications. 60 days advance cancellation notice.');
   await insertContractItem.run(2, 6, 'Slack Enterprise Grid Annual Subscription', 50, 18000, 900000, 'service');
 
-  await insertContract.run(3, 'CNT-2026-003', 4, 3, 'CleanPro Commercial Facilities & Janitorial Master Agreement', 'Facilities & MRO', '2025-09-20', '2026-09-20', 30, 1200000, 1, 'expiring_soon', 'Daily commercial facility cleaning and maintenance across HQ wings.');
+  await insertContract.run(3, 'CNT-2026-003', 4, 3, 'CleanPro Commercial Facilities & Janitorial Master Agreement', 'Facilities & MRO', utcYmdOffset(-357), cleanEnd, 30, 1200000, 1, 'active', 'Daily commercial facility cleaning and maintenance across HQ wings.');
   await insertContractItem.run(3, null, 'Annual Comprehensive Facility Cleaning & Janitorial Retainer', 1, 1200000, 1200000, 'service');
 
-  await insertContract.run(4, 'CNT-2026-004', 5, 1, 'Apex Strategic Design & UX On-Demand Retainer', 'Consulting & Professional Services', '2026-01-01', '2026-12-31', 30, 1700000, 0, 'active', 'Bi-weekly sprint design advisory and product design system support.');
+  await insertContract.run(4, 'CNT-2026-004', 5, 1, 'Apex Strategic Design & UX On-Demand Retainer', 'Consulting & Professional Services', utcYmdOffset(-250), apexEnd, 30, 1700000, 0, 'active', 'Bi-weekly sprint design advisory and product design system support.');
   await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service');
 
   // 12. Audit Logs
@@ -952,6 +964,10 @@ await db.transaction(async () => {
     `Likely duplicate INV-TSG-6611: billed 9900¢ ($99.00) on ${dupSuspectDate}. Candidates: INV-TSG-6610 (paid, 9900¢, ${dupOriginalDate}, same billed amount + invoice date within ±7 UTC days)`,
     '-1 days'
   );
+  await insertAudit.run('contract', 1, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-001 (Figma Enterprise Organization Subscription) created with ACV 540000 cents ($5400.00)', '-30 days');
+  await insertAudit.run('contract', 2, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-002 (Slack Enterprise Grid Annual Agreement) created with ACV 900000 cents ($9000.00)', '-20 days');
+  await insertAudit.run('contract', 3, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-003 (CleanPro Commercial Facilities & Janitorial Master Agreement) created with ACV 1200000 cents ($12000.00)', '-25 days');
+  await insertAudit.run('contract', 4, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-004 (Apex Strategic Design & UX On-Demand Retainer) created with ACV 1700000 cents ($17000.00)', '-15 days');
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).

@@ -1,5 +1,5 @@
 /**
- * Sequential document numbers (PR-/PO-/GRN-/SES-/CO-YYYY-NNN).
+ * Sequential document numbers (PR-/PO-/GRN-/SES-/CO-/CNT-YYYY-NNN).
  *
  * Uses MAX of the numeric suffix for the current year, not COUNT(*)+1.
  * COUNT(*)+1 collides after deletes or when numbers are not dense (seed gaps).

@@ -1,5 +1,5 @@
 import { nextDocumentNumber } from './docNumbers.js';
-import { asCents, formatCents, lineTotalCents, toQty } from './money.js';
+import { formatCents, lineTotalCents, requireIntegerCents, toQty } from './money.js';
 import { normalizeLineType } from './lineType.js';
 import { insertApprovalChain } from './approvalPolicy.js';
 
@@ -11,26 +11,152 @@ export class ContractError extends Error {
   }
 }
 
-/**
- * Computes dynamic status and countdown days for a contract:
- * - expired if today > end_date
- * - expiring_soon if within notice_period_days of end_date
- * - active otherwise (unless explicitly cancelled)
- */
-export function computeContractStatus(contract, todayStr = new Date().toISOString().split('T')[0]) {
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const RENEWABLE_STATUSES = new Set(['active', 'expiring_soon']);
+const OPEN_RENEWAL_PR_STATUSES = new Set(['draft', 'pending_approval', 'approved']);
+const CONTRACT_CATEGORIES = new Set([
+  'Software & Cloud',
+  'Consulting & Professional Services',
+  'Facilities & MRO',
+  'Office Supplies',
+  'Marketing & Events',
+  'Travel & Subscriptions',
+  'IT Hardware'
+]);
+
+function utcTodayYmd(todayStr) {
+  if (todayStr) {
+    if (!YMD.test(todayStr)) {
+      throw new ContractError('today must be YYYY-MM-DD');
+    }
+    return todayStr;
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
+function utcParts(ymd) {
+  const [year, month, day] = ymd.split('-').map(Number);
+  return { year, month, day };
+}
+
+/** Inclusive whole UTC calendar days from `fromYmd` to `toYmd`. */
+export function utcCalendarDaysUntil(toYmd, fromYmd) {
+  const to = utcParts(toYmd);
+  const from = utcParts(fromYmd);
+  const toUtc = Date.UTC(to.year, to.month - 1, to.day);
+  const fromUtc = Date.UTC(from.year, from.month - 1, from.day);
+  return Math.round((toUtc - fromUtc) / 86400000);
+}
+
+export function utcYmdPlusDays(ymd, days) {
+  const { year, month, day } = utcParts(ymd);
+  return new Date(Date.UTC(year, month - 1, day + Number(days))).toISOString().slice(0, 10);
+}
+
+function requireYmd(value, field) {
+  if (!value || !YMD.test(String(value))) {
+    throw new ContractError(`${field} must be YYYY-MM-DD`);
+  }
+  return String(value);
+}
+
+function requirePositiveId(value, field) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new ContractError(`${field} is required`);
+  }
+  return n;
+}
+
+function centsField(value, field) {
+  try {
+    const cents = requireIntegerCents(value, field);
+    if (cents < 0) {
+      throw new ContractError(`${field} must be a non-negative integer number of cents`);
+    }
+    return cents;
+  } catch (error) {
+    if (error instanceof ContractError) throw error;
+    throw new ContractError(error.message, error.statusCode || 400);
+  }
+}
+
+export function computeContractStatus(contract, todayStr = utcTodayYmd()) {
   if (contract.status === 'cancelled') return 'cancelled';
-  const today = new Date(todayStr);
-  const end = new Date(contract.end_date);
-  const diffDays = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+  const today = utcTodayYmd(todayStr);
+  const endDate = requireYmd(contract.end_date, 'end_date');
+  const diffDays = utcCalendarDaysUntil(endDate, today);
+  const notice = Number(contract.notice_period_days);
+  const noticeDays = Number.isFinite(notice) && notice >= 0 ? notice : 30;
 
   if (diffDays < 0) return 'expired';
-  if (diffDays <= (contract.notice_period_days || 30)) return 'expiring_soon';
+  if (diffDays <= noticeDays) return 'expiring_soon';
   return 'active';
 }
 
-export async function listContracts(db, { category, status, search } = {}) {
+function enrichContract(contract, todayStr) {
+  const today = utcTodayYmd(todayStr);
+  const endDate = requireYmd(contract.end_date, 'end_date');
+  const notice = Number(contract.notice_period_days);
+  const noticeDays = Number.isFinite(notice) && notice >= 0 ? notice : 30;
+  const daysUntilExpiry = utcCalendarDaysUntil(endDate, today);
+  return {
+    ...contract,
+    status: computeContractStatus(contract, today),
+    days_until_expiry: daysUntilExpiry,
+    notice_deadline: utcYmdPlusDays(endDate, -noticeDays)
+  };
+}
+
+async function requireSupplier(db, supplierId) {
+  const supplier = await db.prepare(`SELECT id, name, status FROM suppliers WHERE id = ?`).get(supplierId);
+  if (!supplier) throw new ContractError('supplier_id does not match a supplier', 400);
+  return supplier;
+}
+
+async function requireDepartment(db, departmentId) {
+  const department = await db.prepare(`SELECT id, name, code FROM departments WHERE id = ?`).get(departmentId);
+  if (!department) throw new ContractError('department_id does not match a department', 400);
+  return department;
+}
+
+async function resolveActorName(db, { actor_name, requester_id } = {}) {
+  const named = typeof actor_name === 'string' ? actor_name.trim() : '';
+  if (named) return named;
+  if (requester_id) {
+    const user = await db.prepare(`SELECT id, name FROM users WHERE id = ?`).get(requester_id);
+    if (user?.name) return user.name;
+  }
+  throw new ContractError('actor_name or a valid requester_id is required for audit');
+}
+
+function parseContractItems(items, category) {
+  if (items == null) return [];
+  if (!Array.isArray(items)) throw new ContractError('items must be an array');
+  return items.map((item, index) => {
+    const description = String(item?.description || '').trim();
+    if (!description) {
+      throw new ContractError(`items[${index}].description is required`);
+    }
+    const qty = toQty(item.quantity);
+    if (qty <= 0) {
+      throw new ContractError(`items[${index}].quantity must be a positive whole number`);
+    }
+    const unitPrice = centsField(item.unit_price, `items[${index}].unit_price`);
+    return {
+      catalog_item_id: item.catalog_item_id || null,
+      description,
+      quantity: qty,
+      unit_price: unitPrice,
+      total_price: lineTotalCents(qty, unitPrice),
+      line_type: normalizeLineType(item.line_type, category)
+    };
+  });
+}
+
+export async function listContracts(db, { category, status, search, today } = {}) {
   let query = `
-    SELECT 
+    SELECT
       c.*,
       s.name as supplier_name,
       s.code as supplier_code,
@@ -56,21 +182,9 @@ export async function listContracts(db, { category, status, search } = {}) {
 
   query += ` ORDER BY c.end_date ASC`;
   const contracts = await db.prepare(query).all(...params);
+  const todayStr = utcTodayYmd(today);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const today = new Date(todayStr);
-
-  const enriched = contracts.map((c) => {
-    const end = new Date(c.end_date);
-    const daysUntilExpiry = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
-    const dynamicStatus = computeContractStatus(c, todayStr);
-    return {
-      ...c,
-      status: dynamicStatus,
-      days_until_expiry: daysUntilExpiry,
-      notice_deadline: new Date(end.getTime() - ((c.notice_period_days || 30) * 86400000)).toISOString().split('T')[0]
-    };
-  });
+  const enriched = contracts.map((c) => enrichContract(c, todayStr));
 
   if (status && status !== 'all') {
     return enriched.filter((c) => c.status === status);
@@ -79,9 +193,9 @@ export async function listContracts(db, { category, status, search } = {}) {
   return enriched;
 }
 
-export async function getContractDetail(db, id) {
+export async function getContractDetail(db, id, { today } = {}) {
   const contract = await db.prepare(`
-    SELECT 
+    SELECT
       c.*,
       s.name as supplier_name,
       s.code as supplier_code,
@@ -107,46 +221,52 @@ export async function getContractDetail(db, id) {
     ORDER BY ci.id ASC
   `).all(id);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const today = new Date(todayStr);
-  const end = new Date(contract.end_date);
-  const daysUntilExpiry = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
-  const dynamicStatus = computeContractStatus(contract, todayStr);
-
   return {
-    ...contract,
-    status: dynamicStatus,
-    days_until_expiry: daysUntilExpiry,
-    notice_deadline: new Date(end.getTime() - ((contract.notice_period_days || 30) * 86400000)).toISOString().split('T')[0],
+    ...enrichContract(contract, today),
     items
   };
 }
 
-export async function createContract(db, {
-  supplier_id,
-  department_id,
-  title,
-  category,
-  start_date,
-  end_date,
-  notice_period_days = 30,
-  annual_value_cents,
-  auto_renew = 1,
-  terms,
-  items = []
-}) {
-  if (!supplier_id) throw new ContractError('supplier_id is required');
-  if (!department_id) throw new ContractError('department_id is required');
+export async function createContract(db, payload = {}) {
+  const supplier_id = requirePositiveId(payload.supplier_id, 'supplier_id');
+  const department_id = requirePositiveId(payload.department_id, 'department_id');
+  const title = String(payload.title || '').trim();
   if (!title) throw new ContractError('Contract title is required');
-  if (!start_date || !end_date) throw new ContractError('start_date and end_date are required');
+
+  const category = payload.category || 'Software & Cloud';
+  if (!CONTRACT_CATEGORIES.has(category)) {
+    throw new ContractError('category is not a valid catalog category');
+  }
+
+  const start_date = requireYmd(payload.start_date, 'start_date');
+  const end_date = requireYmd(payload.end_date, 'end_date');
+  if (utcCalendarDaysUntil(end_date, start_date) < 0) {
+    throw new ContractError('end_date must be on or after start_date');
+  }
+
+  let notice_period_days = 30;
+  if (payload.notice_period_days !== undefined && payload.notice_period_days !== null && payload.notice_period_days !== '') {
+    const notice = Number(payload.notice_period_days);
+    if (!Number.isInteger(notice) || notice < 0) {
+      throw new ContractError('notice_period_days must be a non-negative integer');
+    }
+    notice_period_days = notice;
+  }
+
+  const parsedItems = parseContractItems(payload.items, category);
+  const calculatedAnnualValue = parsedItems.length > 0
+    ? parsedItems.reduce((sum, item) => sum + item.total_price, 0)
+    : centsField(payload.annual_value_cents, 'annual_value_cents');
+
+  const auto_renew = payload.auto_renew ? 1 : 0;
+  const actorName = await resolveActorName(db, payload);
 
   return await db.transaction(async () => {
+    await requireSupplier(db, supplier_id);
+    await requireDepartment(db, department_id);
+
     const currentYear = new Date().getFullYear();
     const contractNumber = await nextDocumentNumber(db, 'cnt', currentYear);
-
-    const calculatedAnnualValue = items.length > 0
-      ? items.reduce((sum, item) => sum + lineTotalCents(toQty(item.quantity), asCents(item.unit_price)), 0)
-      : asCents(annual_value_cents || 0);
 
     const insertContract = db.prepare(`
       INSERT INTO contracts (
@@ -160,13 +280,13 @@ export async function createContract(db, {
       supplier_id,
       department_id,
       title,
-      category || 'Software & Cloud',
+      category,
       start_date,
       end_date,
       notice_period_days,
       calculatedAnnualValue,
-      auto_renew ? 1 : 0,
-      terms || null
+      auto_renew,
+      payload.terms || null
     );
 
     let contractId = Number(result.lastInsertRowid);
@@ -174,49 +294,98 @@ export async function createContract(db, {
       const row = await db.prepare(`SELECT id FROM contracts WHERE contract_number = ?`).get(contractNumber);
       contractId = Number(row?.id || 0);
     }
+    if (!contractId) {
+      throw new ContractError('Failed to allocate contract id after insert', 500);
+    }
 
-    if (items.length > 0) {
+    if (parsedItems.length > 0) {
       const insertItem = db.prepare(`
         INSERT INTO contract_items (
           contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
-      for (const item of items) {
-        const qty = toQty(item.quantity);
-        const unitPrice = asCents(item.unit_price);
+      for (const item of parsedItems) {
         await insertItem.run(
           contractId,
-          item.catalog_item_id || null,
+          item.catalog_item_id,
           item.description,
-          qty,
-          unitPrice,
-          lineTotalCents(qty, unitPrice),
-          normalizeLineType(item.line_type, category)
+          item.quantity,
+          item.unit_price,
+          item.total_price,
+          item.line_type
         );
       }
     }
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-      VALUES ('contract', ?, 'CREATED', 'Contract Manager', ?)
-    `).run(contractId, `Contract ${contractNumber} (${title}) created with ACV $${formatCents(calculatedAnnualValue)}`);
+      VALUES ('contract', ?, 'CREATED', ?, ?)
+    `).run(
+      contractId,
+      actorName,
+      `Contract ${contractNumber} (${title}) created with ACV ${calculatedAnnualValue} cents ($${formatCents(calculatedAnnualValue)})`
+    );
 
     return await getContractDetail(db, contractId);
   })();
 }
 
+async function findOpenRenewalRequisition(db, contractNumber) {
+  const rows = await db.prepare(`
+    SELECT id, pr_number, status
+    FROM purchase_requisitions
+    WHERE justification LIKE ?
+    ORDER BY id DESC
+  `).all(`%${contractNumber}%`);
+  return rows.find((row) => OPEN_RENEWAL_PR_STATUSES.has(row.status)) || null;
+}
+
 /**
- * 1-Click Renewal Requisition Generator:
- * Turns an expiring or active recurring contract into an approval-routed Purchase Requisition!
+ * 1-click renewal requisition: copies contract lines into a PR and inserts
+ * the existing sequential approval chain (insertApprovalChain).
+ * Fail-closed: only active / expiring_soon contracts; supplier + department
+ * required; integer cents only; refuses a second open renewal PR.
  */
-export async function createRenewalRequisition(db, contractId, { requester_id = 1, needed_by_date, notes } = {}) {
+export async function createRenewalRequisition(db, contractId, {
+  requester_id,
+  needed_by_date,
+  notes,
+  actor_name,
+  today
+} = {}) {
+  const requesterId = requirePositiveId(requester_id, 'requester_id');
+
   return await db.transaction(async () => {
-    const contract = await getContractDetail(db, contractId);
+    const contract = await getContractDetail(db, contractId, { today });
+    if (!RENEWABLE_STATUSES.has(contract.status)) {
+      throw new ContractError(
+        `Contract ${contract.contract_number} cannot be renewed while status is ${contract.status}`
+      );
+    }
+    if (!contract.supplier_id) throw new ContractError('Contract is missing supplier_id');
+    if (!contract.department_id) throw new ContractError('Contract is missing department_id');
+    await requireSupplier(db, contract.supplier_id);
+    await requireDepartment(db, contract.department_id);
+
+    const acv = centsField(contract.annual_value_cents, 'annual_value_cents');
+    const requester = await db.prepare(`SELECT id, name FROM users WHERE id = ?`).get(requesterId);
+    if (!requester) throw new ContractError('requester_id does not match a user');
+    const actorName = (typeof actor_name === 'string' && actor_name.trim()) || requester.name;
+
+    const existing = await findOpenRenewalRequisition(db, contract.contract_number);
+    if (existing) {
+      throw new ContractError(
+        `Renewal requisition ${existing.pr_number} is already ${existing.status} for ${contract.contract_number}`
+      );
+    }
+
     const currentYear = new Date().getFullYear();
     const prNumber = await nextDocumentNumber(db, 'pr', currentYear);
 
-    const prNeededDate = needed_by_date || contract.end_date || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
+    const prNeededDate = needed_by_date
+      ? requireYmd(needed_by_date, 'needed_by_date')
+      : contract.end_date;
     const justification = notes
       ? `Contract Renewal for ${contract.title} (${contract.contract_number}): ${notes}`
       : `Annual Contract Renewal for ${contract.title} (${contract.contract_number}). Renewal notice window: ${contract.notice_period_days} days.`;
@@ -229,9 +398,9 @@ export async function createRenewalRequisition(db, contractId, { requester_id = 
 
     const prResult = await insertPR.run(
       prNumber,
-      requester_id,
+      requesterId,
       contract.department_id,
-      contract.annual_value_cents,
+      acv,
       justification,
       prNeededDate
     );
@@ -240,6 +409,9 @@ export async function createRenewalRequisition(db, contractId, { requester_id = 
     if (!prId) {
       const row = await db.prepare(`SELECT id FROM purchase_requisitions WHERE pr_number = ?`).get(prNumber);
       prId = Number(row?.id || 0);
+    }
+    if (!prId) {
+      throw new ContractError('Failed to allocate requisition id after insert', 500);
     }
 
     const insertItem = db.prepare(`
@@ -250,16 +422,18 @@ export async function createRenewalRequisition(db, contractId, { requester_id = 
 
     if (contract.items && contract.items.length > 0) {
       for (const item of contract.items) {
+        const qty = toQty(item.quantity);
+        const unitPrice = centsField(item.unit_price, 'unit_price');
         await insertItem.run(
           prId,
           item.catalog_item_id || null,
           item.description,
           contract.category,
-          item.quantity,
-          item.unit_price,
-          item.total_price,
+          qty,
+          unitPrice,
+          lineTotalCents(qty, unitPrice),
           contract.supplier_id,
-          item.line_type || 'service'
+          normalizeLineType(item.line_type, contract.category)
         );
       }
     } else {
@@ -269,33 +443,40 @@ export async function createRenewalRequisition(db, contractId, { requester_id = 
         `Annual Renewal - ${contract.title}`,
         contract.category,
         1,
-        contract.annual_value_cents,
-        contract.annual_value_cents,
+        acv,
+        acv,
         contract.supplier_id,
-        'service'
+        normalizeLineType('service', contract.category)
       );
     }
 
-    await insertApprovalChain(db, prId, contract.annual_value_cents, contract.department_id);
+    await insertApprovalChain(db, prId, acv, contract.department_id);
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-      VALUES ('requisition', ?, 'RENEWAL_GENERATED', 'Contract Manager', ?)
-    `).run(prId, `Generated renewal requisition ${prNumber} from contract ${contract.contract_number} for $${formatCents(contract.annual_value_cents)}`);
+      VALUES ('requisition', ?, 'SUBMITTED', ?, ?)
+    `).run(
+      prId,
+      actorName,
+      `Renewal requisition ${prNumber} submitted from contract ${contract.contract_number} for ${acv} cents ($${formatCents(acv)})`
+    );
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-      VALUES ('contract', ?, 'RENEWAL_PR_CREATED', 'System', ?)
-    `).run(contractId, `Renewal requisition ${prNumber} created and routed for approvals`);
+      VALUES ('contract', ?, 'RENEWAL_PR_CREATED', ?, ?)
+    `).run(
+      contractId,
+      actorName,
+      `Renewal requisition ${prNumber} created and routed for sequential approvals (${acv} cents)`
+    );
 
     return {
       pr_id: prId,
       pr_number: prNumber,
       contract_id: contract.id,
       contract_number: contract.contract_number,
-      total_amount_cents: contract.annual_value_cents,
+      total_amount_cents: acv,
       message: `Renewal Requisition ${prNumber} created successfully.`
     };
   })();
 }
-

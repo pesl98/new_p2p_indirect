@@ -126,6 +126,10 @@ export const api = {
     });
     return jsonOk(r, 'Failed to generate renewal requisition');
   },
+  // Alias used by ContractsView (same path).
+  renewContractPR(contractId, data = {}) {
+    return this.renewContractPr(contractId, data);
+  },
 
   // Requisitions
   getRequisitions: (status = '', department_id = '') => {

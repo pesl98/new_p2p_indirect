@@ -24,6 +24,7 @@ describe('document numbering', () => {
     assert.equal(await nextDocumentNumber(db, 'grn', 2026), 'GRN-2026-001');
     assert.equal(await nextDocumentNumber(db, 'ses', 2026), 'SES-2026-001');
     assert.equal(await nextDocumentNumber(db, 'co', 2026), 'CO-2026-001');
+    assert.equal(await nextDocumentNumber(db, 'cnt', 2026), 'CNT-2026-001');
   });
 
   test('MAX suffix skips gaps so COUNT(*)+1 cannot collide', async () => {
@@ -96,5 +97,20 @@ describe('document numbering', () => {
     assert.equal(await nextDocumentNumber(db, 'pr', 2026), 'PR-2026-003');
     assert.equal(await nextDocumentNumber(db, 'pr', 2025), 'PR-2025-100');
     assert.equal(await nextDocumentNumber(db, 'po', 2026), 'PO-2026-002');
+  });
+
+  test('CNT MAX suffix skips gaps independently of PR', async () => {
+    const db = await createTestDb();
+    db.prepare(`
+      INSERT INTO contracts (
+        contract_number, supplier_id, department_id, title, category,
+        start_date, end_date, annual_value_cents
+      ) VALUES
+        ('CNT-2026-001', 1, 1, 'Slack', 'Software & Cloud', '2026-01-01', '2026-12-31', 900000),
+        ('CNT-2026-003', 1, 1, 'Figma', 'Software & Cloud', '2026-01-01', '2026-12-31', 540000)
+    `).run();
+
+    assert.equal(await nextDocumentNumber(db, 'cnt', 2026), 'CNT-2026-004');
+    assert.equal(await nextDocumentNumber(db, 'pr', 2026), 'PR-2026-001');
   });
 });

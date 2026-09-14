@@ -1,22 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  FileCheck, 
-  Plus, 
-  Search, 
-  AlertTriangle, 
-  RefreshCw, 
-  Calendar, 
-  DollarSign, 
-  Clock, 
-  Eye, 
-  X, 
-  Building2, 
-  CheckCircle2, 
+import {
+  FileCheck,
+  Plus,
+  Search,
+  AlertTriangle,
+  RefreshCw,
+  Eye,
+  X,
+  CheckCircle2,
   Sparkles,
   ArrowRight
 } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney } from '../money';
+import { formatMoney, toCents } from '../money';
+
+const RENEWABLE = new Set(['active', 'expiring_soon']);
 
 export default function ContractsView({ currentUser, onNavigate, onDataChanged }) {
   const [contracts, setContracts] = useState([]);
@@ -31,9 +29,8 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
   const [renewingId, setRenewingId] = useState(null);
   const [renewSuccess, setRenewSuccess] = useState(null);
 
-  // New Contract Form
-  const [supplierId, setSupplierId] = useState(1);
-  const [deptId, setDeptId] = useState(currentUser?.department_id || 1);
+  const [supplierId, setSupplierId] = useState('');
+  const [deptId, setDeptId] = useState(currentUser?.department_id ? String(currentUser.department_id) : '');
   const [title, setTitle] = useState('');
   const [contractCat, setContractCat] = useState('Software & Cloud');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -51,9 +48,9 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         api.getSuppliers(),
         api.getDepartments()
       ]);
-      setContracts(contractList);
-      setSuppliers(sups);
-      setDepartments(depts);
+      setContracts(Array.isArray(contractList) ? contractList : []);
+      setSuppliers(Array.isArray(sups) ? sups : []);
+      setDepartments(Array.isArray(depts) ? depts : []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -65,10 +62,30 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
     loadData();
   }, [category, statusFilter, search]);
 
+  useEffect(() => {
+    if (!supplierId && suppliers.length > 0) {
+      setSupplierId(String(suppliers[0].id));
+    }
+  }, [suppliers, supplierId]);
+
+  useEffect(() => {
+    if (!deptId && (currentUser?.department_id || departments.length > 0)) {
+      setDeptId(String(currentUser?.department_id || departments[0].id));
+    }
+  }, [departments, currentUser, deptId]);
+
   const handleCreateContract = async (e) => {
     e.preventDefault();
-    if (!title || !annualValue) {
-      alert('Please provide title and annual value.');
+    if (!title.trim()) {
+      alert('Please provide a contract title.');
+      return;
+    }
+    if (!supplierId || !deptId) {
+      alert('Supplier and department are required.');
+      return;
+    }
+    if (annualValue === '' || Number.isNaN(Number(annualValue))) {
+      alert('Please provide an annual value in dollars.');
       return;
     }
 
@@ -76,14 +93,16 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       await api.createContract({
         supplier_id: Number(supplierId),
         department_id: Number(deptId),
-        title,
+        title: title.trim(),
         category: contractCat,
         start_date: startDate,
         end_date: endDate,
         notice_period_days: Number(noticeDays),
-        annual_value_cents: Math.round(Number(annualValue) * 100),
+        annual_value_cents: toCents(annualValue),
         auto_renew: autoRenew ? 1 : 0,
-        terms
+        terms,
+        actor_name: currentUser?.name,
+        requester_id: currentUser?.id
       });
       setShowCreateModal(false);
       setTitle('');
@@ -97,10 +116,15 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
   };
 
   const handleRenewPR = async (contract) => {
+    if (!RENEWABLE.has(contract.status)) {
+      alert(`Contract ${contract.contract_number} cannot be renewed while ${contract.status}.`);
+      return;
+    }
     setRenewingId(contract.id);
     try {
-      const result = await api.renewContractPR(contract.id, {
-        requester_id: currentUser?.id || 1,
+      const result = await api.renewContractPr(contract.id, {
+        requester_id: currentUser?.id,
+        actor_name: currentUser?.name,
         notes: `Generated via Contract Renewal Hub for FY 2027 cycle.`
       });
       setRenewSuccess(result);
@@ -113,7 +137,16 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
     }
   };
 
-  const expiringContracts = contracts.filter(c => c.status === 'expiring_soon');
+  const openDetail = async (contract) => {
+    try {
+      const detail = await api.getContractDetail(contract.id);
+      setSelectedContract(detail);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const expiringContracts = contracts.filter((c) => c.status === 'expiring_soon');
 
   const getStatusBadge = (status) => {
     switch (status) {
@@ -130,9 +163,20 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
     }
   };
 
+  const renewButton = (contract, className) => (
+    <button
+      onClick={() => handleRenewPR(contract)}
+      disabled={renewingId === contract.id || !RENEWABLE.has(contract.status)}
+      className={className}
+      title={RENEWABLE.has(contract.status) ? 'Generate Renewal Purchase Requisition' : 'Only active or expiring contracts can be renewed'}
+    >
+      <RefreshCw className={`w-3 h-3 ${renewingId === contract.id ? 'animate-spin' : ''}`} />
+      <span>{renewingId === contract.id ? 'Creating...' : 'Renew PR'}</span>
+    </button>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
           <div className="flex items-center space-x-2 text-indigo-600 text-xs font-bold uppercase tracking-wider mb-0.5">
@@ -156,7 +200,6 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         </div>
       </div>
 
-      {/* Renewal Notice Alerts Banner */}
       {expiringContracts.length > 0 && (
         <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-amber-500/10 border border-amber-300 rounded-xl p-4">
           <div className="flex items-start space-x-3">
@@ -169,18 +212,11 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                 The following non-production contracts are approaching expiration or auto-renewal deadlines. Generate renewal requisitions now to ensure uninterrupted service:
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {expiringContracts.map(c => (
+                {expiringContracts.map((c) => (
                   <div key={c.id} className="bg-white/90 border border-amber-200 px-3 py-1.5 rounded-lg text-xs flex items-center space-x-2 shadow-xs">
                     <span className="font-bold text-slate-900">{c.title}</span>
                     <span className="text-amber-700 font-mono font-bold">({c.days_until_expiry}d left)</span>
-                    <button
-                      onClick={() => handleRenewPR(c)}
-                      disabled={renewingId === c.id}
-                      className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold inline-flex items-center space-x-1"
-                    >
-                      <Sparkles className="w-3 h-3" />
-                      <span>{renewingId === c.id ? 'Generating...' : 'Renew PR'}</span>
-                    </button>
+                    {renewButton(c, 'px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded text-[10px] font-bold inline-flex items-center space-x-1')}
                   </div>
                 ))}
               </div>
@@ -189,7 +225,6 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         </div>
       )}
 
-      {/* Success Notification Modal */}
       {renewSuccess && (
         <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -197,7 +232,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
             <div className="text-xs">
               <strong className="text-emerald-900 font-bold block">{renewSuccess.message}</strong>
               <span className="text-emerald-800">
-                Requisition <strong>{renewSuccess.pr_number}</strong> created with multi-tier approval routing for ${formatMoney(renewSuccess.total_amount_cents)}.
+                Requisition <strong>{renewSuccess.pr_number}</strong> created with sequential approval routing for ${formatMoney(renewSuccess.total_amount_cents)}.
               </span>
             </div>
           </div>
@@ -219,7 +254,6 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         </div>
       )}
 
-      {/* Filters Bar */}
       <div className="flex flex-col sm:flex-row gap-3 bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm text-xs">
         <div className="relative flex-1">
           <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
@@ -243,7 +277,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
           <option value="Marketing & Events">Marketing & Events</option>
         </select>
         <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg">
-          {['all', 'expiring_soon', 'active', 'expired'].map(st => (
+          {['all', 'expiring_soon', 'active', 'expired'].map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
@@ -257,7 +291,6 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         </div>
       </div>
 
-      {/* Contracts Table */}
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -283,19 +316,14 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                   <td colSpan="8" className="py-8 text-center text-slate-400">No contracts found.</td>
                 </tr>
               ) : (
-                contracts.map(c => (
+                contracts.map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">
                       {c.contract_number}
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900">{c.title}</div>
-                      <div className="text-[11px] text-slate-500 flex items-center space-x-1.5">
-                        <span>{c.supplier_name}</span>
-                        {c.supplier_tier === 'preferred' && (
-                          <span className="text-amber-600 text-[10px] font-bold">⭐ Preferred</span>
-                        )}
-                      </div>
+                      <div className="text-[11px] text-slate-500">{c.supplier_name}</div>
                     </td>
                     <td className="py-3 px-4">
                       <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium">
@@ -320,21 +348,13 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     </td>
                     <td className="py-3 px-4 text-right space-x-2">
                       <button
-                        onClick={() => setSelectedContract(c)}
+                        onClick={() => openDetail(c)}
                         className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded text-[11px] font-semibold"
                         title="View Details"
                       >
                         <Eye className="w-3.5 h-3.5 inline" />
                       </button>
-                      <button
-                        onClick={() => handleRenewPR(c)}
-                        disabled={renewingId === c.id}
-                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold shadow-xs inline-flex items-center space-x-1"
-                        title="Generate Renewal Purchase Requisition"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${renewingId === c.id ? 'animate-spin' : ''}`} />
-                        <span>{renewingId === c.id ? 'Creating...' : 'Renew PR'}</span>
-                      </button>
+                      {renewButton(c, 'px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded text-[11px] font-bold shadow-xs inline-flex items-center space-x-1')}
                     </td>
                   </tr>
                 ))
@@ -344,7 +364,6 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         </div>
       </div>
 
-      {/* Contract Detail Modal */}
       {selectedContract && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-xs">
@@ -388,6 +407,31 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
               </div>
             )}
 
+            {selectedContract.items?.length > 0 && (
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+                    <tr>
+                      <th className="py-2 px-3">Line</th>
+                      <th className="py-2 px-3">Qty</th>
+                      <th className="py-2 px-3">Unit (cents → $)</th>
+                      <th className="py-2 px-3 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedContract.items.map((item) => (
+                      <tr key={item.id} className="border-t border-slate-100">
+                        <td className="py-2 px-3">{item.description}</td>
+                        <td className="py-2 px-3">{item.quantity}</td>
+                        <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>
+                        <td className="py-2 px-3 text-right font-semibold">${formatMoney(item.total_price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             <div className="flex justify-between items-center pt-3 border-t border-slate-200">
               <div className="text-emerald-700 font-extrabold text-sm">
                 Annual ACV: ${formatMoney(selectedContract.annual_value_cents)}
@@ -401,7 +445,8 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     handleRenewPR(selectedContract);
                     setSelectedContract(null);
                   }}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold flex items-center space-x-1"
+                  disabled={!RENEWABLE.has(selectedContract.status)}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg font-bold flex items-center space-x-1"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Generate Renewal PR</span>
@@ -412,7 +457,6 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         </div>
       )}
 
-      {/* Register Contract Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <form onSubmit={handleCreateContract} className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-xs">
@@ -443,8 +487,10 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-medium"
+                    required
                   >
-                    {suppliers.map(s => (
+                    <option value="">Select supplier</option>
+                    {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
@@ -455,8 +501,10 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     value={deptId}
                     onChange={(e) => setDeptId(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-medium"
+                    required
                   >
-                    {departments.map(d => (
+                    <option value="">Select department</option>
+                    {departments.map((d) => (
                       <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
                     ))}
                   </select>
@@ -474,18 +522,21 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     <option value="Software & Cloud">Software & Cloud</option>
                     <option value="Consulting & Professional Services">Consulting/Services</option>
                     <option value="Facilities & MRO">Facilities & MRO</option>
+                    <option value="Office Supplies">Office Supplies</option>
                     <option value="Marketing & Events">Marketing & Events</option>
+                    <option value="IT Hardware">IT Hardware</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1 font-semibold">Annual Value ($)</label>
+                  <label className="block text-slate-600 mb-1">Annual Value (USD)</label>
                   <input
                     type="number"
+                    min="0"
                     step="0.01"
-                    placeholder="9000.00"
                     value={annualValue}
                     onChange={(e) => setAnnualValue(e.target.value)}
-                    className="w-full p-2 border border-slate-300 rounded-lg text-xs font-bold"
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs"
+                    placeholder="5400.00"
                     required
                   />
                 </div>
@@ -493,39 +544,21 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-slate-600 mb-1">Start Date</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full p-2 border border-slate-300 rounded-lg text-xs"
-                    required
-                  />
+                  <label className="block text-slate-600 mb-1">Start</label>
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" required />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">End Date</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full p-2 border border-slate-300 rounded-lg text-xs"
-                    required
-                  />
+                  <label className="block text-slate-600 mb-1">End</label>
+                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" required />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Notice Days</label>
-                  <input
-                    type="number"
-                    value={noticeDays}
-                    onChange={(e) => setNoticeDays(e.target.value)}
-                    className="w-full p-2 border border-slate-300 rounded-lg text-xs"
-                    required
-                  />
+                  <label className="block text-slate-600 mb-1">Notice (days)</label>
+                  <input type="number" min="0" step="1" value={noticeDays} onChange={(e) => setNoticeDays(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" required />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Special Terms / Cancellation Clause</label>
+                <label className="block text-slate-600 mb-1">Terms / Renewal Clause</label>
                 <textarea
                   rows="2"
                   placeholder="e.g. Renews automatically for 12 months unless notice given 30 days prior..."
