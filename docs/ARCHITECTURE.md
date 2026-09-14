@@ -78,7 +78,7 @@ World-class P2P (Coupa/Ariba-style) proposes a contract when the buying document
 | `allowed` | Approver allowed use of that contract. FK kept. |
 | `refused` | Approver refused contract use. FK is **kept for audit**; the PR continues as ad-hoc. |
 
-Existing Turso/SQLite DBs get `ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id` and `contract_use_status TEXT NOT NULL DEFAULT 'none'` in `db.js` (`migratePurchaseRequisitionContractLink`).
+Existing Turso/SQLite DBs get `ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id` and `contract_use_status TEXT NOT NULL DEFAULT 'none'` in `db.js` (`migratePurchaseRequisitionContractLink`). ALTER cannot attach CHECK, so DBs created from the first contract-link release (CHECK `none|proposed|allowed|refused`) are rebuilt to allow `skipped`. Child rows are kept: the rebuild turns foreign keys off for that script only.
 
 ### Matching (“contract available”)
 
