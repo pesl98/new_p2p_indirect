@@ -205,6 +205,8 @@ test('contracts lifecycle and renewal generator', async (t) => {
     const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(result.pr_id);
     assert.equal(pr.status, 'pending_approval');
     assert.equal(pr.total_amount, contract.annual_value_cents);
+    assert.equal(pr.source_contract_id, contract.id);
+    assert.equal(pr.contract_use_status, 'proposed');
     assert.ok(pr.justification.includes('Figma Enterprise Organization'));
     assert.ok(pr.justification.includes(contract.contract_number));
 
@@ -226,10 +228,15 @@ test('contracts lifecycle and renewal generator', async (t) => {
     assert.equal(approvals[1].approver_id, 3);
 
     const prAudit = await db.prepare(
-      `SELECT action, actor_name FROM audit_logs WHERE entity_type = 'requisition' AND entity_id = ?`
+      `SELECT action, actor_name FROM audit_logs WHERE entity_type = 'requisition' AND entity_id = ? AND action = 'SUBMITTED'`
     ).get(result.pr_id);
     assert.equal(prAudit.action, 'SUBMITTED');
     assert.equal(prAudit.actor_name, 'Alice Chen');
+
+    const proposed = await db.prepare(
+      `SELECT action FROM audit_logs WHERE entity_type = 'requisition' AND entity_id = ? AND action = 'CONTRACT_PROPOSED'`
+    ).get(result.pr_id);
+    assert.ok(proposed);
   });
 
   await t.test('refuses a second open renewal PR for the same contract', async () => {

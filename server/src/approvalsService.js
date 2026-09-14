@@ -1,5 +1,14 @@
 import { formatCents } from './money.js';
 import { resolveDecisionActor } from './delegationsService.js';
+import {
+  CONTRACT_USE_ALLOWED,
+  CONTRACT_USE_PROPOSED,
+  CONTRACT_USE_REFUSED,
+  nestSourceContract,
+  parseAllowContractUse,
+  SOURCE_CONTRACT_JOIN_SQL,
+  SOURCE_CONTRACT_SELECT_SQL
+} from './contractAssignment.js';
 
 export class ApprovalDecisionError extends Error {
   constructor(message, statusCode = 400) {
@@ -55,6 +64,8 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
         pr.justification,
         pr.priority,
         pr.needed_by_date,
+        pr.source_contract_id,
+        pr.contract_use_status,
         u.name as requester_name,
         u.email as requester_email,
         approver.name as assigned_approver_name,
@@ -64,13 +75,15 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
         b.committed_amount,
         b.actual_spent,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
-        (SELECT COUNT(*) FROM requisition_items WHERE requisition_id = pr.id) as item_count
+        (SELECT COUNT(*) FROM requisition_items WHERE requisition_id = pr.id) as item_count,
+        ${SOURCE_CONTRACT_SELECT_SQL}
       FROM approval_requests ar
       JOIN purchase_requisitions pr ON ar.requisition_id = pr.id
       JOIN users u ON pr.requester_id = u.id
       JOIN users approver ON ar.approver_id = approver.id
       JOIN departments d ON pr.department_id = d.id
       LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
+      ${SOURCE_CONTRACT_JOIN_SQL}
       WHERE ar.status = ?
     `;
   const params = [effectiveStatus];
@@ -99,7 +112,7 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
 
   query += ` ORDER BY ar.created_at DESC`;
   const rows = await db.prepare(query).all(...params);
-  return rows.map((row) => decorateInboxRow(row, approver_id));
+  return rows.map((row) => decorateInboxRow(nestSourceContract(row), approver_id));
 }
 
 function delegationAuditNote(delegation) {
@@ -115,7 +128,7 @@ function delegationAuditNote(delegation) {
  * unless `override_budget` is true.
  * Actor may be the mapped step approver or an active delegate covering now.
  */
-export async function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name, override_budget }) {
+export async function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name, override_budget, allow_contract_use }) {
   if (!['approved', 'rejected'].includes(decision)) {
     throw new ApprovalDecisionError('Decision must be approved or rejected');
   }
@@ -146,6 +159,22 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       throw new ApprovalDecisionError('Associated requisition not found', 404);
     }
 
+    let contractUseDecision = null;
+    if (decision === 'approved' && pr.contract_use_status === CONTRACT_USE_PROPOSED) {
+      const allowUse = parseAllowContractUse(allow_contract_use);
+      if (allowUse === undefined) {
+        throw new ApprovalDecisionError(
+          'allow_contract_use is required when a contract is proposed (true = allow, false = refuse; refusing does not reject the requisition)'
+        );
+      }
+      contractUseDecision = allowUse ? CONTRACT_USE_ALLOWED : CONTRACT_USE_REFUSED;
+      await db.prepare(`
+        UPDATE purchase_requisitions
+        SET contract_use_status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(contractUseDecision, pr.id);
+    }
+
     await db.prepare(`
       UPDATE approval_requests
       SET status = ?, comments = ?, decided_at = CURRENT_TIMESTAMP
@@ -163,6 +192,26 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         }
       : { decidedAsDelegate: false };
 
+    if (contractUseDecision === CONTRACT_USE_ALLOWED) {
+      await db.prepare(`
+        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+        VALUES ('requisition', ?, 'CONTRACT_USE_ALLOWED', ?, ?)
+      `).run(
+        pr.id,
+        actor,
+        `Allowed use of contract id=${pr.source_contract_id}.${viaNote}`.trim()
+      );
+    } else if (contractUseDecision === CONTRACT_USE_REFUSED) {
+      await db.prepare(`
+        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+        VALUES ('requisition', ?, 'CONTRACT_USE_REFUSED', ?, ?)
+      `).run(
+        pr.id,
+        actor,
+        `Refused use of contract id=${pr.source_contract_id}; requisition continues as ad-hoc.${viaNote}`.trim()
+      );
+    }
+
     if (decision === 'rejected') {
       await db.prepare(
         `UPDATE purchase_requisitions SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
@@ -178,7 +227,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         VALUES ('requisition', ?, 'REJECTED', ?, ?)
       `).run(pr.id, actor, `Rejected by ${actor}.${viaNote} Reason: ${comments || 'No reason specified'}`);
 
-      return { outcome: 'rejected', budgetCommitted: false, ...delegateMeta };
+      return { outcome: 'rejected', budgetCommitted: false, contract_use_status: pr.contract_use_status, ...delegateMeta };
     }
 
     const nextWaiting = await db.prepare(`
@@ -194,7 +243,13 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'STEP_APPROVED', ?, ?)
       `).run(pr.id, actor, `Step approved by ${actor}.${viaNote} Forwarded to next approver tier.`);
-      return { outcome: 'step_approved', budgetCommitted: false, nextApprovalId: nextWaiting.id, ...delegateMeta };
+      return {
+        outcome: 'step_approved',
+        budgetCommitted: false,
+        nextApprovalId: nextWaiting.id,
+        contract_use_status: contractUseDecision || pr.contract_use_status,
+        ...delegateMeta
+      };
     }
 
     const budget = await db.prepare(
@@ -242,6 +297,11 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       );
     }
 
-    return { outcome: 'approved', budgetCommitted: true, ...delegateMeta };
+    return {
+      outcome: 'approved',
+      budgetCommitted: true,
+      contract_use_status: contractUseDecision || pr.contract_use_status,
+      ...delegateMeta
+    };
   });
 }

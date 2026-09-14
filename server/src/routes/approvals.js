@@ -19,7 +19,7 @@ router.post('/:id/decide', async (req, res) => {
   try {
     const db = req.db;
     const { id } = req.params;
-    const { decision, comments, approver_name, approver_id, override_budget } = req.body; // decision: 'approved' | 'rejected'
+    const { decision, comments, approver_name, approver_id, override_budget, allow_contract_use } = req.body; // decision: 'approved' | 'rejected'
 
     const result = await decideApprovalStep(db, {
       approvalId: id,
@@ -27,7 +27,8 @@ router.post('/:id/decide', async (req, res) => {
       comments,
       approver_id,
       approver_name,
-      override_budget
+      override_budget,
+      allow_contract_use
     });
 
     res.json({ message: `Requisition ${decision} successfully`, ...result });

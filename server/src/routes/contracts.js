@@ -6,6 +6,7 @@ import {
   createRenewalRequisition,
   ContractError
 } from '../contractsService.js';
+import { matchContractForLines } from '../contractAssignment.js';
 
 const router = express.Router();
 
@@ -20,6 +21,35 @@ router.get('/', async (req, res) => {
     const { category, status, search, today } = req.query;
     const contracts = await listContracts(req.db, { category, status, search, today });
     res.json(contracts);
+  } catch (error) {
+    res.status(httpStatus(error)).json({ error: error.message });
+  }
+});
+
+router.post('/match-preview', async (req, res) => {
+  try {
+    const { items, today } = req.body || {};
+    const match = await matchContractForLines(req.db, items || [], { today });
+    if (!match) {
+      return res.json({ match: null, source_contract_id: null });
+    }
+    res.json({
+      match: {
+        id: match.id,
+        contract_number: match.contract_number,
+        title: match.title,
+        supplier_id: match.supplier_id,
+        supplier_name: match.supplier_name,
+        category: match.category,
+        start_date: match.start_date,
+        end_date: match.end_date,
+        annual_value_cents: match.annual_value_cents,
+        status: match.status,
+        score: match.score,
+        reasons: match.reasons
+      },
+      source_contract_id: match.id
+    });
   } catch (error) {
     res.status(httpStatus(error)).json({ error: error.message });
   }

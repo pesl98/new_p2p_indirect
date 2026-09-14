@@ -130,6 +130,14 @@ export const api = {
   renewContractPR(contractId, data = {}) {
     return this.renewContractPr(contractId, data);
   },
+  previewContractMatch: async (data = {}) => {
+    const r = await fetch(`${API_BASE}/contracts/match-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to preview contract match');
+  },
 
   // Requisitions
   getRequisitions: (status = '', department_id = '') => {
@@ -147,11 +155,21 @@ export const api = {
     });
     return jsonOk(r, 'Failed to create requisition');
   },
-  submitRequisition: async (id) => {
+  submitRequisition: async (id, data = {}) => {
     const r = await fetch(`${API_BASE}/requisitions/${id}/submit`, {
-      method: 'POST'
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
     });
     return jsonOk(r, 'Failed to submit requisition');
+  },
+  updateRequisitionContract: async (id, data = {}) => {
+    const r = await fetch(`${API_BASE}/requisitions/${id}/contract`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to update contract link');
   },
 
   // Approvals

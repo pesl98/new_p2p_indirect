@@ -153,6 +153,7 @@ await db.transaction(async () => {
   // (PR-2026-009 / Sofia), INV-TSG-5508 later. Do not approve/pay INV-TSG-11029 or INV-TSG-22041.
   // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
   // Contracts hub: CNT-2026-001 Figma (expiring soon) is the 1-click renewal walkthrough.
+  // PR-2026-010 is the auto-assign walkthrough (Figma seat proposed against CNT-2026-001).
   // Do not convert that live renewal onto INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
   const insertPR = db.prepare(`
     INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, created_at)
@@ -883,6 +884,24 @@ await db.transaction(async () => {
   await insertContract.run(4, 'CNT-2026-004', 5, 1, 'Apex Strategic Design & UX On-Demand Retainer', 'Consulting & Professional Services', utcYmdOffset(-250), apexEnd, 30, 1700000, 0, 'active', 'Bi-weekly sprint design advisory and product design system support.');
   await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service');
 
+  // Live auto-assign walkthrough: Alice's extra Figma seat is already proposed against
+  // CNT-2026-001 so Bob (or Priya via the seeded OOO delegation) can allow/refuse.
+  // This is NOT a renewal PR (justification has no "Renewal") — 1-click renew on
+  // CNT-2026-001 still works. $540 ≤ $1,000 so only the department head steps.
+  await db.prepare(`
+    INSERT INTO purchase_requisitions (
+      id, pr_number, requester_id, department_id, status, total_amount, justification,
+      needed_by_date, priority, created_at, source_contract_id, contract_use_status
+    ) VALUES (
+      10, 'PR-2026-010', 1, 1, 'pending_approval', 54000,
+      'Additional Figma Organization seat for the Q4 campaign designer. Auto-linked to CNT-2026-001.',
+      '2026-10-12', 'Medium', datetime('now', '-1 hours'), 1, 'proposed'
+    )
+  `).run();
+  await insertPRItem.run(10, 5, 'Figma Organization Annual User License', 'Software & Cloud', 1, 54000, 54000, 2);
+  await db.prepare(`UPDATE requisition_items SET line_type = 'service' WHERE requisition_id = 10`).run();
+  await insertApproval.run(10, 2, 1, 'pending', null, null);
+
   // 12. Audit Logs
   const insertAudit = db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
@@ -968,6 +987,9 @@ await db.transaction(async () => {
   await insertAudit.run('contract', 2, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-002 (Slack Enterprise Grid Annual Agreement) created with ACV 900000 cents ($9000.00)', '-20 days');
   await insertAudit.run('contract', 3, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-003 (CleanPro Commercial Facilities & Janitorial Master Agreement) created with ACV 1200000 cents ($12000.00)', '-25 days');
   await insertAudit.run('contract', 4, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-004 (Apex Strategic Design & UX On-Demand Retainer) created with ACV 1700000 cents ($17000.00)', '-15 days');
+  await insertAudit.run('requisition', 10, 'CREATED', 'Alice Chen', 'Requisition PR-2026-010 created with 1 item(s) for $540.00', '-1 hours');
+  await insertAudit.run('requisition', 10, 'CONTRACT_PROPOSED', 'System', 'Proposed CNT-2026-001 (Figma Enterprise Organization Subscription) supplier=CloudCore Software LLC ACV 540000 cents ($5400.00). reason=auto-match', '-1 hours');
+  await insertAudit.run('requisition', 10, 'SUBMITTED', 'Alice Chen', 'Submitted PR-2026-010 for department-head approval', '-1 hours');
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would
   // otherwise place PO/invoice/AP "today" after or before GRN/approval dates).

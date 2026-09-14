@@ -25,17 +25,25 @@ const CHANGE_ORDER_AUDIT_ACTIONS = {
   CHANGE_ORDER_APPLIED: 'Change order applied'
 };
 
+const CONTRACT_AUDIT_ACTIONS = {
+  CONTRACT_PROPOSED: 'Contract proposed',
+  CONTRACT_USE_ALLOWED: 'Contract use allowed',
+  CONTRACT_USE_REFUSED: 'Contract use refused',
+  CONTRACT_CLEARED: 'Contract link cleared'
+};
+
 const KIND_ORDER = {
   requisition: 1,
-  approval: 2,
-  purchase_order: 3,
-  change_order: 4,
-  goods_receipt: 5,
-  service_entry_sheet: 6,
-  invoice: 7,
-  exception: 8,
-  duplicate: 9,
-  ap_event: 10
+  contract_assignment: 2,
+  approval: 3,
+  purchase_order: 4,
+  change_order: 5,
+  goods_receipt: 6,
+  service_entry_sheet: 7,
+  invoice: 8,
+  exception: 9,
+  duplicate: 10,
+  ap_event: 11
 };
 
 export class DocumentTrailError extends Error {
@@ -69,6 +77,7 @@ function tabForKind(kind) {
   switch (kind) {
     case 'requisition':
     case 'approval':
+    case 'contract_assignment':
       return 'requisitions';
     case 'purchase_order':
     case 'change_order':
@@ -121,7 +130,9 @@ function mapRequisition(row) {
     requester_name: row.requester_name,
     department_id: row.department_id,
     department_name: row.department_name,
-    department_code: row.department_code
+    department_code: row.department_code,
+    source_contract_id: row.source_contract_id ?? null,
+    contract_use_status: row.contract_use_status || 'none'
   };
 }
 
@@ -187,6 +198,26 @@ async function loadApprovals(db, requisitionId) {
     approver_role: row.approver_role,
     approver_title: row.approver_title
   }));
+}
+
+async function loadContractEvents(db, requisitionId) {
+  const rows = await db.prepare(`
+    SELECT id, entity_type, entity_id, action, actor_name, details, created_at
+    FROM audit_logs
+    WHERE entity_type = 'requisition' AND entity_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(requisitionId);
+  return rows
+    .filter((row) => Object.prototype.hasOwnProperty.call(CONTRACT_AUDIT_ACTIONS, row.action))
+    .map((row) => ({
+      id: row.id,
+      requisition_id: requisitionId,
+      action: row.action,
+      title: CONTRACT_AUDIT_ACTIONS[row.action],
+      actor_name: row.actor_name,
+      details: row.details,
+      created_at: toIsoTimestamp(row.created_at)
+    }));
 }
 
 async function loadApEvents(db, invoiceId) {
@@ -518,7 +549,7 @@ function timelineEvent(partial) {
   return event;
 }
 
-function buildTimeline({ requisition, approvals, purchaseOrders }) {
+function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents = [] }) {
   const events = [];
 
   if (requisition) {
@@ -534,6 +565,27 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
       actor_name: requisition.requester_name,
       details: requisition.justification,
       amount_cents: requisition.total_amount
+    }));
+  }
+
+  for (const contractEvent of contractEvents) {
+    events.push(timelineEvent({
+      id: `contract_assignment:${contractEvent.id}`,
+      kind: 'contract_assignment',
+      entity_type: 'requisition',
+      entity_id: requisition?.id ?? contractEvent.requisition_id,
+      number: requisition?.pr_number,
+      title: contractEvent.title,
+      status: contractEvent.action === 'CONTRACT_USE_REFUSED' || contractEvent.action === 'CONTRACT_CLEARED'
+        ? 'refused'
+        : contractEvent.action === 'CONTRACT_USE_ALLOWED'
+          ? 'allowed'
+          : 'proposed',
+      at: contractEvent.created_at,
+      actor_name: contractEvent.actor_name,
+      details: contractEvent.details,
+      source: 'audit',
+      focus_id: requisition?.id ?? contractEvent.requisition_id
     }));
   }
 
@@ -726,7 +778,7 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
   return sortTimeline(events);
 }
 
-function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrders }) {
+function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrders, contractEvents = [] }) {
   return {
     starting_point: startingPoint,
     requisition: mapRequisition(requisition),
@@ -737,7 +789,8 @@ function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrde
     timeline: buildTimeline({
       requisition: mapRequisition(requisition),
       approvals,
-      purchaseOrders
+      purchaseOrders,
+      contractEvents
     })
   };
 }
@@ -901,6 +954,7 @@ export async function getDocumentTrail(db, query = {}) {
 
   if (requisition) {
     const approvals = await loadApprovals(db, requisition.id);
+    const contractEvents = await loadContractEvents(db, requisition.id);
     const poRows = await db.prepare(`
       SELECT
         po.*,
@@ -922,7 +976,8 @@ export async function getDocumentTrail(db, query = {}) {
       },
       requisition,
       approvals,
-      purchaseOrders
+      purchaseOrders,
+      contractEvents
     });
   }
 

@@ -13,7 +13,8 @@ import {
   Clock,
   AlertCircle,
   FileEdit,
-  Copy
+  Copy,
+  FileCheck
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
@@ -94,6 +95,8 @@ function eventIcon(kind) {
   switch (kind) {
     case 'requisition':
       return FileText;
+    case 'contract_assignment':
+      return FileCheck;
     case 'approval':
       return CheckSquare;
     case 'purchase_order':

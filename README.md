@@ -2,7 +2,7 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **SaaS & vendor contract renewals**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ---
 
@@ -12,6 +12,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - Pre-negotiated non-production catalog across 6 categories (IT Hardware, Software & Cloud, Office Supplies, Facilities & MRO, Consulting & Professional Services, Marketing & Events).
    - **Master-data maintenance (Carol / procurement persona):** edit supplier and catalog fields; **soft-deactivate** (`active` / `inactive` / `under_review` for suppliers; `active` / `inactive` for catalog). No hard delete — `DELETE` returns 405. Supplier `code` is immutable. Requisition browse and buyer pickers show **active** rows only; the Vendors & Catalog admin screen lists all with status badges.
    - Dynamic Cart with direct catalog addition plus ad-hoc/custom order entry.
+   - **Contract auto-assign:** when a new PR is created or submitted and a suitable `active` / `expiring_soon` contract matches (supplier and/or category / catalog overlap), ProcureFlow stores a durable `source_contract_id` as **proposed**. The requester can override or clear before submit. Matching never blocks create.
    - Cost center assignment, delivery requirements, and business justifications.
 
 2. **Multi-Tier Approval Routing**
@@ -24,6 +25,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - The decide API requires `approver_id` matching the current pending step **or an active delegate** covering now for that mapped approver. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. **Persona auth is client-only demo** (header switcher; no JWT/sessions).
    - **Approval delegation (OOO):** an approver (or Elena as org admin) assigns a temporary substitute (`approval_delegations`: window, reason, soft-revoke). The delegate sees the current pending step in their inbox (badge “Delegated from …”) and may decide it. Waiting steps stay waiting. Cannot delegate to self; expired/inactive windows are ignored. Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED`, plus delegated_from on decide.
    - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved — not when a PO is issued. Final approve **fails closed** if remaining budget (`total − committed − actual`, cents) is less than the PR total.
+   - **Contract use gate:** if a contract is proposed, the current approver (Bob / Priya as delegate) must **Allow contract use** or **Refuse contract use** as part of approve. Refuse does **not** reject the PR — it continues as ad-hoc. Omitting the choice is HTTP 400 (no silent force).
 
 3. **Purchase Orders (PO) Management**
    - Convert approved requisitions into official binding Purchase Orders with sequential numbering (`PO-YYYY-XXX`).
@@ -98,9 +100,9 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 12. **SaaS & Vendor Contract Renewal Hub**
    - Track non-production software licenses, maintenance, and professional-service retainers (`contracts` / `contract_items`). ACV and line prices are **integer cents**.
    - Dynamic status from UTC calendar dates: **active**, **expiring_soon** (within `notice_period_days` of `end_date`), **expired**, **cancelled**.
-   - **1-click renewal PR:** only `active` / `expiring_soon` (expired and cancelled fail closed). Copies lines onto a `PR-YYYY-NNN` (MAX-suffix) and inserts the existing sequential approval chain (`insertApprovalChain`). Refuses a second open renewal PR for the same `CNT-YYYY-NNN`.
+   - **1-click renewal PR:** only `active` / `expiring_soon` (expired and cancelled fail closed). Copies lines onto a `PR-YYYY-NNN` (MAX-suffix), sets `source_contract_id` as proposed, and inserts the existing sequential approval chain (`insertApprovalChain`). Refuses a second open renewal PR for the same `CNT-YYYY-NNN`.
    - Numbered `CNT-YYYY-NNN`. Sidebar **Contracts & Renewals** is visible to all demo personas (no JWT). APIs stay demo-open like catalog PATCH.
-   - Seed: **CNT-2026-001** Figma (Marketing / CloudCore, 10 seats × $540.00 = $5,400.00 ACV) is the expiring-soon walkthrough. **CNT-2026-002** Slack (IT, active). **CNT-2026-003** FacilityCare janitorial (Facilities, expiring soon). **CNT-2026-004** Apex retainer (Marketing, active, no auto-renew).
+   - Seed: **CNT-2026-001** Figma (Marketing / CloudCore, 10 seats × $540.00 = $5,400.00 ACV) is the expiring-soon walkthrough. **PR-2026-010** is a new Figma seat already proposed against that contract so Bob/Priya can allow or refuse. **CNT-2026-002** Slack (IT, active). **CNT-2026-003** FacilityCare janitorial (Facilities, expiring soon). **CNT-2026-004** Apex retainer (Marketing, active, no auto-renew).
 
 13. **Multi-Persona Testing Switcher (demo only — not real auth)**
    - Instant live switcher in the header to alternate between:
@@ -161,7 +163,9 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 **Duplicate suspects walkthrough (David / Elena):** Switch to **David Miller** → sidebar **Duplicate Suspects**. Open **INV-TSG-6611** (TechSupply, billed $99.00, PO-2026-012). The candidate is **INV-TSG-6610** (same $99.00, paid on PO-2026-011, invoice dates within ±7 UTC days). Dual match already passed — Approve for Payment is blocked by the duplicate hold. **Confirm unique** (required reason) clears the hold so Invoices & Matching can approve; **Confirm duplicate** rejects/voids INV-TSG-6611 (the paid original is unchanged). Leave INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / the AP aging trio alone. Elena sees the same sidebar entry.
 
-**Contract renewal walkthrough (Carol / Alice):** Switch to **Carol Zhang** (or Alice) → sidebar **Contracts & Renewals**. **CNT-2026-001** Figma is expiring soon (10 seats × $540.00 = $5,400.00 ACV, CloudCore / Marketing). **Renew PR** creates the next `PR-YYYY-NNN` with copied seats, sequential dept-head + procurement approvals (Bob pending, Carol waiting), and `SUBMITTED` / `RENEWAL_PR_CREATED` audit rows. Expired and cancelled contracts cannot renew. A second click while that PR is still draft/pending/approved is refused. Leave INV-TSG-11029 / 22041 / 6610 / 6611 and the AP aging trio alone. Then Approvals Inbox → Bob (or Priya via the seeded OOO delegation if you use a Marketing step-1 PR — this Figma PR is also Marketing).
+**Contract renewal walkthrough (Carol / Alice):** Switch to **Carol Zhang** (or Alice) → sidebar **Contracts & Renewals**. **CNT-2026-001** Figma is expiring soon (10 seats × $540.00 = $5,400.00 ACV, CloudCore / Marketing). **Renew PR** creates the next `PR-YYYY-NNN` with copied seats, durable `source_contract_id`, sequential dept-head + procurement approvals (Bob pending, Carol waiting), and `CONTRACT_PROPOSED` / `SUBMITTED` / `RENEWAL_PR_CREATED` audit rows. Expired and cancelled contracts cannot renew. A second click while that PR is still draft/pending/approved is refused. Leave INV-TSG-11029 / 22041 / 6610 / 6611 and the AP aging trio alone. Then Approvals Inbox → Bob (or Priya via the seeded OOO delegation if you use a Marketing step-1 PR — this Figma PR is also Marketing). Bob must **Allow** or **Refuse** contract use; refuse still lets him approve the PR as ad-hoc.
+
+**Contract auto-assign walkthrough (Alice → Bob / Priya):** Switch to **Alice Chen** → Requisitions → **Create Requisition** → add **Figma Organization Annual User License**. The create form previews **CNT-2026-001**. Submit for approval. The PR stores `source_contract_id` as **proposed** (not just CNT- in justification). Switch to **Bob Martinez** (or **Priya Nair**, who also sees it via the seeded OOO delegation) → Approvals Inbox → **Allow contract use** or **Refuse contract use**, then confirm approval. Seeded **PR-2026-010** is the same loop without creating a PR. Do not use **PR-2026-003** for this walkthrough (that one stays unlinked so the delegation demo does not require a contract decision).
 
 ---
 
@@ -255,7 +259,7 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures
 - `suppliers`: Approved vendor repository with payment terms, ratings, and `status` (`active` | `inactive` | `under_review`). Edit via `PATCH /api/suppliers/:id`; deactivate via status — never hard-delete.
 - `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service, `status` active|inactive). Edit via `PATCH /api/catalog/:id`. Requisition browse defaults to active items.
-- `purchase_requisitions` & `requisition_items`: Requisitions & line items
+- `purchase_requisitions` & `requisition_items`: Requisitions & line items (`source_contract_id` nullable pointer at `contracts.id`; `contract_use_status` `none` | `proposed` | `allowed` | `refused`)
 - `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
 - `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
 - `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`, `revision`, `change_order_count`)
