@@ -25,6 +25,7 @@ describe('document numbering', () => {
     assert.equal(await nextDocumentNumber(db, 'ses', 2026), 'SES-2026-001');
     assert.equal(await nextDocumentNumber(db, 'co', 2026), 'CO-2026-001');
     assert.equal(await nextDocumentNumber(db, 'cnt', 2026), 'CNT-2026-001');
+    assert.equal(await nextDocumentNumber(db, 'pay', 2026), 'PAY-2026-001');
   });
 
   test('MAX suffix skips gaps so COUNT(*)+1 cannot collide', async () => {
@@ -112,5 +113,18 @@ describe('document numbering', () => {
 
     assert.equal(await nextDocumentNumber(db, 'cnt', 2026), 'CNT-2026-004');
     assert.equal(await nextDocumentNumber(db, 'pr', 2026), 'PR-2026-001');
+  });
+
+  test('PAY MAX suffix skips gaps independently of CNT', async () => {
+    const db = await createTestDb();
+    db.prepare(`
+      INSERT INTO payment_runs (run_number, status, actor_name, billed_total_cents, payable_total_cents, invoice_count)
+      VALUES
+        ('PAY-2026-001', 'cancelled', 'David Miller', 0, 0, 0),
+        ('PAY-2026-003', 'draft', 'David Miller', 0, 0, 0)
+    `).run();
+
+    assert.equal(await nextDocumentNumber(db, 'pay', 2026), 'PAY-2026-004');
+    assert.equal(await nextDocumentNumber(db, 'cnt', 2026), 'CNT-2026-001');
   });
 });

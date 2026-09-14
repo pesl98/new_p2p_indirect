@@ -408,6 +408,47 @@ export const PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL =
 export const PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL =
   `ALTER TABLE purchase_requisitions ADD COLUMN contract_use_status TEXT NOT NULL DEFAULT 'none'`;
 
+/**
+ * Existing DBs created before the AP payment-run engine need payment_runs /
+ * payment_run_items. CREATE TABLE IF NOT EXISTS matches catalog/SES/delegation
+ * bootstrap so Turso cold-start does not wipe data.
+ */
+export const PAYMENT_RUNS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS payment_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_number TEXT UNIQUE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'executed', 'cancelled')),
+    payment_date TEXT,
+    payment_reference TEXT,
+    actor_name TEXT NOT NULL,
+    billed_total_cents INTEGER NOT NULL DEFAULT 0,
+    payable_total_cents INTEGER NOT NULL DEFAULT 0,
+    invoice_count INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    executed_at DATETIME,
+    cancelled_at DATETIME
+  )
+`;
+
+export const PAYMENT_RUN_ITEMS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS payment_run_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    billed_total_cents INTEGER NOT NULL,
+    payable_total_cents INTEGER NOT NULL,
+    UNIQUE(run_id, invoice_id),
+    FOREIGN KEY (run_id) REFERENCES payment_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+  )
+`;
+
+async function migratePaymentRuns(database) {
+  await maybe(database.exec(PAYMENT_RUNS_TABLE_SQL));
+  await maybe(database.exec(PAYMENT_RUN_ITEMS_TABLE_SQL));
+}
+
 async function migratePurchaseRequisitionContractLink(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -453,6 +494,7 @@ export async function applySchema(database) {
   await migrateInvoiceDuplicateFlags(database);
   await migrateContracts(database);
   await migratePurchaseRequisitionContractLink(database);
+  await migratePaymentRuns(database);
   return database;
 }
 

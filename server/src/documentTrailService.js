@@ -32,6 +32,10 @@ const CONTRACT_AUDIT_ACTIONS = {
   CONTRACT_CLEARED: 'Contract link cleared'
 };
 
+const PAYMENT_RUN_AUDIT_ACTIONS = {
+  PAYMENT_RUN_EXECUTED: 'Payment run executed'
+};
+
 const KIND_ORDER = {
   requisition: 1,
   contract_assignment: 2,
@@ -43,7 +47,8 @@ const KIND_ORDER = {
   invoice: 8,
   exception: 9,
   duplicate: 10,
-  ap_event: 11
+  ap_event: 11,
+  payment_run: 12
 };
 
 export class DocumentTrailError extends Error {
@@ -90,6 +95,8 @@ function tabForKind(kind) {
     case 'exception':
     case 'ap_event':
       return 'invoices';
+    case 'payment_run':
+      return 'payment_runs';
     default:
       return null;
   }
@@ -259,6 +266,26 @@ async function loadExceptionEvents(db, invoiceId) {
     }));
 }
 
+async function loadPaymentRunEvents(db, invoiceId) {
+  const rows = await db.prepare(`
+    SELECT id, entity_type, entity_id, action, actor_name, details, created_at
+    FROM audit_logs
+    WHERE entity_type = 'invoice' AND entity_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(invoiceId);
+  return rows
+    .filter((row) => Object.prototype.hasOwnProperty.call(PAYMENT_RUN_AUDIT_ACTIONS, row.action))
+    .map((row) => ({
+      id: row.id,
+      invoice_id: invoiceId,
+      action: row.action,
+      title: PAYMENT_RUN_AUDIT_ACTIONS[row.action],
+      actor_name: row.actor_name,
+      details: row.details,
+      created_at: toIsoTimestamp(row.created_at)
+    }));
+}
+
 async function loadDuplicateEvents(db, invoiceId) {
   const rows = await db.prepare(`
     SELECT id, entity_type, entity_id, action, actor_name, details, created_at
@@ -324,7 +351,8 @@ async function loadInvoiceRows(db, poId) {
     created_at: toIsoTimestamp(row.created_at),
     ap_events: await loadApEvents(db, row.id),
     exception_events: await loadExceptionEvents(db, row.id),
-    duplicate_events: await loadDuplicateEvents(db, row.id)
+    duplicate_events: await loadDuplicateEvents(db, row.id),
+    payment_run_events: await loadPaymentRunEvents(db, row.id)
   })));
 }
 
@@ -770,6 +798,29 @@ function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents 
           po_number: po.po_number,
           supplier_name: invoice.supplier_name,
           source: 'audit'
+        }));
+      }
+
+      for (const paymentRun of invoice.payment_run_events || []) {
+        events.push(timelineEvent({
+          id: `payment_run:${paymentRun.id}`,
+          kind: 'payment_run',
+          entity_type: 'invoice',
+          entity_id: invoice.id,
+          number: invoice.invoice_number,
+          title: paymentRun.title,
+          status: invoice.status,
+          at: paymentRun.created_at,
+          actor_name: paymentRun.actor_name,
+          details: paymentRun.details,
+          amount_cents: invoice.payable_total_cents != null ? invoice.payable_total_cents : invoice.total_amount,
+          payable_total_cents: invoice.payable_total_cents ?? null,
+          match_status: invoice.match_status,
+          po_id: po.id,
+          po_number: po.po_number,
+          supplier_name: invoice.supplier_name,
+          source: 'audit',
+          tab: 'payment_runs'
         }));
       }
     }

@@ -11,6 +11,7 @@ import InvoicesMatchingView from './views/InvoicesMatchingView';
 import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
 import BuyerInboxView from './views/BuyerInboxView';
 import ApAgingView from './views/ApAgingView';
+import PaymentRunsView from './views/PaymentRunsView';
 import DuplicateSuspectsView from './views/DuplicateSuspectsView';
 import BudgetsView from './views/BudgetsView';
 import ContractsView from './views/ContractsView';
@@ -28,6 +29,7 @@ export default function App() {
   const [analytics, setAnalytics] = useState(null);
   const [buyerInboxCount, setBuyerInboxCount] = useState(0);
   const [apAgingOverdueCount, setApAgingOverdueCount] = useState(0);
+  const [paymentRunDraftCount, setPaymentRunDraftCount] = useState(0);
   const [duplicateSuspectCount, setDuplicateSuspectCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
@@ -57,6 +59,7 @@ export default function App() {
     if (!['finance', 'admin'].includes(currentUser?.role)) {
       setApAgingOverdueCount(0);
       setDuplicateSuspectCount(0);
+      setPaymentRunDraftCount(0);
       return;
     }
     let cancelled = false;
@@ -73,6 +76,13 @@ export default function App() {
       })
       .catch(() => {
         if (!cancelled) setDuplicateSuspectCount(0);
+      });
+    api.getPaymentRuns('draft')
+      .then((rows) => {
+        if (!cancelled) setPaymentRunDraftCount(Array.isArray(rows) ? rows.length : 0);
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentRunDraftCount(0);
       });
     return () => { cancelled = true; };
   }, [currentUser, analytics]);
@@ -107,6 +117,9 @@ export default function App() {
     if (!['finance', 'admin'].includes(user?.role) && activeTab === 'ap_aging') {
       setActiveTab('dashboard');
     }
+    if (!['finance', 'admin'].includes(user?.role) && activeTab === 'payment_runs') {
+      setActiveTab('dashboard');
+    }
     if (!['finance', 'admin'].includes(user?.role) && activeTab === 'duplicate_suspects') {
       setActiveTab('dashboard');
     }
@@ -136,6 +149,7 @@ export default function App() {
           varianceInvoicesCount={analytics?.kpi?.invoiceVariances || 0}
           buyerInboxCount={buyerInboxCount}
           apAgingOverdueCount={apAgingOverdueCount}
+          paymentRunDraftCount={paymentRunDraftCount}
           duplicateSuspectCount={duplicateSuspectCount}
           currentUser={currentUser}
         />
@@ -240,6 +254,16 @@ export default function App() {
               onDataChanged={fetchCoreData}
               onNavigate={handleNavigate}
               focusId={navFocus?.focusId}
+            />
+          )}
+
+          {activeTab === 'payment_runs' && (
+            <PaymentRunsView
+              currentUser={currentUser}
+              onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
+              focusId={navFocus?.focusId}
+              createInvoiceIds={navFocus?.invoiceIds}
             />
           )}
 

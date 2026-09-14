@@ -16,6 +16,7 @@ import invoicesRouter from './routes/invoices.js';
 import invoiceExceptionsRouter from './routes/invoiceExceptions.js';
 import invoiceDuplicatesRouter from './routes/invoiceDuplicates.js';
 import apAgingRouter from './routes/apAging.js';
+import paymentRunsRouter from './routes/paymentRuns.js';
 import analyticsRouter from './routes/analytics.js';
 import documentTrailRouter from './routes/documentTrail.js';
 import departmentsRouter from './routes/departments.js';
@@ -84,6 +85,7 @@ export function createApp(options = {}) {
   app.use('/api/invoice-duplicates', invoiceDuplicatesRouter);
   app.use('/api/ap-aging', apAgingRouter);
   app.use('/api/payment-queue', apAgingRouter);
+  app.use('/api/payment-runs', paymentRunsRouter);
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/document-trail', documentTrailRouter);
   app.use('/api/contracts', contractsRouter);

@@ -15,6 +15,7 @@ import {
   Inbox,
   CalendarClock,
   Copy,
+  Banknote,
   UserCog,
   UserCheck,
   FileCheck
@@ -26,7 +27,7 @@ function dbModeLabel(mode) {
   return 'Database connected';
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, duplicateSuspectCount, currentUser }) {
+export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, paymentRunDraftCount, duplicateSuspectCount, currentUser }) {
   const [dbMode, setDbMode] = useState(null);
 
   useEffect(() => {
@@ -130,6 +131,13 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           badge: apAgingOverdueCount > 0 ? apAgingOverdueCount : null,
           badgeColor: 'bg-rose-500 text-white',
           desc: 'Approved payables by due date'
+        }, {
+          id: 'payment_runs',
+          label: 'Payment Runs',
+          icon: Banknote,
+          badge: paymentRunDraftCount > 0 ? paymentRunDraftCount : null,
+          badgeColor: 'bg-indigo-500 text-white',
+          desc: 'Batch ACH payment proposals'
         }]
       : []),
     {
@@ -242,7 +250,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
             <span className="text-[10px] text-emerald-400 font-mono">100% Traceable</span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5">
-            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Duplicates ➔ Aging ➔ Pay
+            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Duplicates ➔ Aging ➔ Payment Run
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>

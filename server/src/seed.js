@@ -5,6 +5,8 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'payment_run_items',
+  'payment_runs',
   'invoice_duplicate_flags',
   'invoice_exception_dispositions',
   'match_results',
@@ -152,6 +154,8 @@ await db.transaction(async () => {
   // AP Aging payables: INV-FCJ-8810 overdue (short-pay then approved), INV-WED-3308 due soon
   // (PR-2026-009 / Sofia), INV-TSG-5508 later. Do not approve/pay INV-TSG-11029 or INV-TSG-22041.
   // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
+  // Payment run: INV-WED-4419 + INV-FCJ-9920 are approved and on draft PAY-2026-001.
+  // Leave INV-FCJ-8810 as the AP Aging single mark-paid practice invoice.
   // Contracts hub: CNT-2026-001 Figma (expiring soon) is the 1-click renewal walkthrough.
   // PR-2026-010 is the auto-assign walkthrough (Figma seat proposed against CNT-2026-001).
   // Do not convert that live renewal onto INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
@@ -504,6 +508,39 @@ await db.transaction(async () => {
   );
   await insertPOItem.run(12, 12, null, 'Logitech MX Master 3S Wireless Mouse', 'IT Hardware', 1, 9900, 9900, 1, 1);
 
+  // Payment-run demo (approved_for_payment, standalone POs). Do not reuse INV-FCJ-8810.
+  await insertPO.run(
+    13,
+    'PO-2026-013',
+    null,
+    3,
+    3,
+    'received',
+    7200,
+    '2026-09-02',
+    '2026-09-09',
+    'Net 45',
+    'Acme Corp HQ - Marketing Kitchen, 450 Tech Blvd, Austin, TX 78701',
+    'Kitchen espresso restock. Used for Payment Run draft PAY-2026-001 (INV-WED-4419).'
+  );
+  await insertPOItem.run(13, 13, null, 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 'Office Supplies', 1, 7200, 7200, 1, 1);
+
+  await insertPO.run(
+    14,
+    'PO-2026-014',
+    null,
+    4,
+    3,
+    'received',
+    14500,
+    '2026-09-03',
+    '2026-09-10',
+    'Net 30',
+    'Acme Corp HQ - Facilities Closet, 450 Tech Blvd, Austin, TX 78701',
+    'Sanitizer stand for lobby. Used for Payment Run draft PAY-2026-001 (INV-FCJ-9920).'
+  );
+  await insertPOItem.run(14, 14, null, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO', 1, 14500, 14500, 1, 1);
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -540,6 +577,12 @@ await db.transaction(async () => {
 
   await insertGRN.run(9, 'GRN-2026-009', 12, 3, '2026-09-06', 'UPS-1Z6611002', 'DN-TSG-6611', 'Second spare MX Master received.');
   await insertGRNItem.run(9, 12, 1, 'good', 'Serial logged; packaging intact.');
+
+  await insertGRN.run(10, 'GRN-2026-010', 13, 3, '2026-09-06', 'FEDEX-4419001', 'DN-WED-4419', 'Espresso bag received for the marketing kitchen.');
+  await insertGRNItem.run(10, 13, 1, 'good', 'Seal intact; roast date logged.');
+
+  await insertGRN.run(11, 'GRN-2026-011', 14, 3, '2026-09-07', 'GSO-9920004', 'DN-FCJ-9920', 'Lobby sanitizer stand received and staged.');
+  await insertGRNItem.run(11, 14, 1, 'good', 'Unit assembled; no damage.');
 
   await db.exec(`
     UPDATE po_items
@@ -799,6 +842,46 @@ await db.transaction(async () => {
   await insertMatch.run(10, 12, 12, 1, 1, 1, 9900, 9900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($99.00).');
   await db.exec(`UPDATE invoices SET duplicate_status = 'suspect' WHERE id = 10`);
 
+  const payRunLaterDueA = utcYmdOffset(14);
+  const payRunLaterDueB = utcYmdOffset(18);
+
+  // Payment-run walkthrough invoices (approved). Leave INV-FCJ-8810 for single mark-paid on Aging.
+  await insertInvoice.run(
+    11,
+    'INV-WED-4419',
+    13,
+    3,
+    utcYmdOffset(-8),
+    payRunLaterDueA,
+    7200,
+    0,
+    7200,
+    'approved_for_payment',
+    'perfect_match',
+    null,
+    'Perfect match against GRN-2026-010 and PO-2026-013. On draft payment run PAY-2026-001 with INV-FCJ-9920.'
+  );
+  await insertInvoiceItem.run(11, 13, 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 1, 7200, 7200);
+  await insertMatch.run(11, 13, 13, 1, 1, 1, 7200, 7200, 0, 0, 'pass', 'Exact match on quantity (1) and price ($72.00).');
+
+  await insertInvoice.run(
+    12,
+    'INV-FCJ-9920',
+    14,
+    4,
+    utcYmdOffset(-7),
+    payRunLaterDueB,
+    14500,
+    0,
+    14500,
+    'approved_for_payment',
+    'perfect_match',
+    null,
+    'Perfect match against GRN-2026-011 and PO-2026-014. On draft payment run PAY-2026-001 with INV-WED-4419.'
+  );
+  await insertInvoiceItem.run(12, 14, 'Commercial Touchless Sanitizer & Dispenser Stand', 1, 14500, 14500);
+  await insertMatch.run(12, 14, 14, 1, 1, 1, 14500, 14500, 0, 0, 'pass', 'Exact match on quantity (1) and price ($145.00).');
+
   const insertDupFlag = db.prepare(`
     INSERT INTO invoice_duplicate_flags (
       invoice_id, candidate_invoice_id, match_rule,
@@ -851,6 +934,27 @@ await db.transaction(async () => {
     22000,
     '2026-08-28 10:00:00'
   );
+
+  const insertPaymentRun = db.prepare(`
+    INSERT INTO payment_runs (
+      id, run_number, status, actor_name, billed_total_cents, payable_total_cents, invoice_count, reason, created_at
+    ) VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, datetime('now', '-2 hours'))
+  `);
+  const insertPaymentRunItem = db.prepare(`
+    INSERT INTO payment_run_items (run_id, invoice_id, billed_total_cents, payable_total_cents)
+    VALUES (?, ?, ?, ?)
+  `);
+  await insertPaymentRun.run(
+    1,
+    'PAY-2026-001',
+    'David Miller',
+    21700,
+    21700,
+    2,
+    'September batch ACH for kitchen espresso and lobby sanitizer. Execute from Payment Runs.'
+  );
+  await insertPaymentRunItem.run(1, 11, 7200, 7200);
+  await insertPaymentRunItem.run(1, 12, 14500, 14500);
 
   // 11. SaaS & Vendor Contracts (ACV and line prices are integer cents).
   // Relative UTC end dates keep the walkthrough valid after re-seed:
@@ -983,6 +1087,22 @@ await db.transaction(async () => {
     `Likely duplicate INV-TSG-6611: billed 9900¢ ($99.00) on ${dupSuspectDate}. Candidates: INV-TSG-6610 (paid, 9900¢, ${dupOriginalDate}, same billed amount + invoice date within ±7 UTC days)`,
     '-1 days'
   );
+  await insertAudit.run('purchase_order', 13, 'ISSUED', 'Carol Zhang', 'PO-2026-013 issued to WorkSpace Ergonomics Depot', '-10 days');
+  await insertAudit.run('purchase_order', 14, 'ISSUED', 'Carol Zhang', 'PO-2026-014 issued to FacilityCare & Janitorial Pro', '-9 days');
+  await insertAudit.run('goods_receipt', 10, 'RECEIVED', 'Carol Zhang', 'GRN-2026-010 confirmed espresso bag received', '-8 days');
+  await insertAudit.run('goods_receipt', 11, 'RECEIVED', 'Carol Zhang', 'GRN-2026-011 confirmed sanitizer stand received', '-7 days');
+  await insertAudit.run('invoice', 11, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-8 days');
+  await insertAudit.run('invoice', 11, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-4419 for $72.00 payment', '-6 days');
+  await insertAudit.run('invoice', 12, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-7 days');
+  await insertAudit.run('invoice', 12, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-9920 for $145.00 payment', '-5 days');
+  await insertAudit.run(
+    'payment_run',
+    1,
+    'PAYMENT_RUN_CREATED',
+    'David Miller',
+    'Created payment run PAY-2026-001 with 2 invoice(s) totaling payable $217.00 (billed $217.00): INV-WED-4419, INV-FCJ-9920',
+    '-2 hours'
+  );
   await insertAudit.run('contract', 1, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-001 (Figma Enterprise Organization Subscription) created with ACV 540000 cents ($5400.00)', '-30 days');
   await insertAudit.run('contract', 2, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-002 (Slack Enterprise Grid Annual Agreement) created with ACV 900000 cents ($9000.00)', '-20 days');
   await insertAudit.run('contract', 3, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-003 (CleanPro Commercial Facilities & Janitorial Master Agreement) created with ACV 1200000 cents ($12000.00)', '-25 days');
@@ -1053,6 +1173,13 @@ await db.transaction(async () => {
     UPDATE goods_receipts SET created_at = '2026-09-06 14:00:00' WHERE id = 9;
     UPDATE invoices SET created_at = datetime('now', '-4 days') WHERE id = 9;
     UPDATE invoices SET created_at = datetime('now', '-1 days') WHERE id = 10;
+
+    UPDATE purchase_orders SET created_at = '2026-09-02 10:00:00' WHERE id = 13;
+    UPDATE purchase_orders SET created_at = '2026-09-03 10:00:00' WHERE id = 14;
+    UPDATE goods_receipts SET created_at = '2026-09-06 15:00:00' WHERE id = 10;
+    UPDATE goods_receipts SET created_at = '2026-09-07 15:00:00' WHERE id = 11;
+    UPDATE invoices SET created_at = datetime('now', '-8 days') WHERE id = 11;
+    UPDATE invoices SET created_at = datetime('now', '-7 days') WHERE id = 12;
   `);
 
 });

@@ -391,3 +391,33 @@ CREATE TABLE IF NOT EXISTS contract_items (
   FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
 );
 
+-- Coupa/Ariba-style AP payment proposal (batch ACH). Draft → execute once.
+-- Execute reuses mark-paid (status paid + shared payment_reference + PAID audit).
+-- Budget actuals are posted at Approve for Payment, not here — do not double-post.
+CREATE TABLE IF NOT EXISTS payment_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_number TEXT UNIQUE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'executed', 'cancelled')),
+  payment_date TEXT,
+  payment_reference TEXT,
+  actor_name TEXT NOT NULL,
+  billed_total_cents INTEGER NOT NULL DEFAULT 0,
+  payable_total_cents INTEGER NOT NULL DEFAULT 0,
+  invoice_count INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  executed_at DATETIME,
+  cancelled_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS payment_run_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL,
+  invoice_id INTEGER NOT NULL,
+  billed_total_cents INTEGER NOT NULL,
+  payable_total_cents INTEGER NOT NULL,
+  UNIQUE(run_id, invoice_id),
+  FOREIGN KEY (run_id) REFERENCES payment_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+);
+
