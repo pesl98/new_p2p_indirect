@@ -14,6 +14,7 @@ import goodsReceiptsRouter from './routes/goodsReceipts.js';
 import serviceEntrySheetsRouter from './routes/serviceEntrySheets.js';
 import invoicesRouter from './routes/invoices.js';
 import invoiceExceptionsRouter from './routes/invoiceExceptions.js';
+import invoiceDuplicatesRouter from './routes/invoiceDuplicates.js';
 import apAgingRouter from './routes/apAging.js';
 import analyticsRouter from './routes/analytics.js';
 import documentTrailRouter from './routes/documentTrail.js';
@@ -79,6 +80,7 @@ export function createApp(options = {}) {
   app.use('/api/service-entry-sheets', serviceEntrySheetsRouter);
   app.use('/api/invoices', invoicesRouter);
   app.use('/api/invoice-exceptions', invoiceExceptionsRouter);
+  app.use('/api/invoice-duplicates', invoiceDuplicatesRouter);
   app.use('/api/ap-aging', apAgingRouter);
   app.use('/api/payment-queue', apAgingRouter);
   app.use('/api/analytics', analyticsRouter);

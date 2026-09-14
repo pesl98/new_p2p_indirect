@@ -12,7 +12,8 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
         → Optional PO change order / revision (qty, unit price, delivery notes)
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice → dual match
-        → Exception workbench (hard failures only; optional return_to_buyer → Buyer Inbox → AP disposition; optional short-pay) → AP approve → AP Aging payables queue → Mark paid
+        → Exception workbench (hard failures only; optional return_to_buyer → Buyer Inbox → AP disposition; optional short-pay)
+        → Duplicate suspects (likely-duplicate soft hold) → AP approve → AP Aging payables queue → Mark paid
 ```
 
 | Stage | What happens |
@@ -24,10 +25,11 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 | Change order | Formal revision of an issued / partially received / received PO. Numbered `CO-YYYY-NNN` (MAX-suffix). Apply-on-confirm. Qty cannot drop below received (goods), accepted (services), or invoiced. Recalculates line and PO totals in integer cents. Linked-PR POs move `budgets.committed_amount` by the delta (floor 0); `actual_spent` is untouched. |
 | Goods receipt | Goods lines only. Increments `po_items.quantity_received`. Over-receipt is blocked unless `allow_over_receipt: true`. Numbered `GRN-YYYY-NNN`. Service lines are rejected (use SES). |
 | Service entry sheet | Service lines only. Draft → submitted → accepted/rejected. Accept increments `po_items.quantity_accepted`. Over-acceptance is blocked unless `allow_over_acceptance: true`. Numbered `SES-YYYY-NNN`. |
-| Invoice | Unique per `(supplier_id, invoice_number)`. Dual match: goods 3-way vs GRN; services SES-backed vs accepted SES. |
+| Invoice | Unique per `(supplier_id, invoice_number)`. Dual match: goods 3-way vs GRN; services SES-backed vs accepted SES. Likely-duplicate detection runs in the same create transaction (separate AP control). |
 | Exception workbench | Hard match failures (`variance_flagged`) require a structured AP disposition before approve/pay. `return_to_buyer` parks the invoice in the requester **Buyer Inbox**. `short_pay` is an optional AP disposition that rewrites payable below billed. |
-| AP approve | Relieves committed, increases `actual_spent` by **payable** cents (`payable_total_cents` when set, else billed `total_amount`). Refuses unresolved hard exceptions and rejected invoices. |
-| AP Aging | Inbox of invoices already `approved_for_payment`, bucketed by `due_date` vs today (UTC calendar date). Mark paid reuses the existing endpoint. |
+| Duplicate suspects | Soft hold when another non-rejected invoice for the same supplier has the same billed cents and an invoice date within ±7 UTC calendar days, **or** the same `po_id` and billed cents. Invoice is created; Approve / mark-paid refuse until AP confirms unique or confirms duplicate (voids the new invoice). |
+| AP approve | Relieves committed, increases `actual_spent` by **payable** cents (`payable_total_cents` when set, else billed `total_amount`). Refuses unresolved hard exceptions, open duplicate suspects, confirmed duplicates, and rejected invoices. |
+| AP Aging | Inbox of invoices already `approved_for_payment`, bucketed by `due_date` vs today (UTC calendar date). Mark paid reuses the existing endpoint. Open suspects are excluded from the optional ready-to-approve chip. |
 
 ## Money (integer cents)
 
@@ -319,6 +321,38 @@ Demo: **INV-TSG-11029** (`PO-2026-002`, total variance) is open for David/Elena 
 
 How to test short-pay: resolve INV-TSG-11029 (or a test invoice) with `short_pay` and `payable_total_cents` strictly below billed. Invoice `total_amount` stays the billed claim; `payable_total_cents` is set. Approve posts **payable** to `actual_spent` (and relieves committed by the same payable cents) when the invoice has a linked PR/department. Mark-paid uses the same payable amount.
 
+## Duplicate invoice detection
+
+World-class AP does not only reject exact invoice-number reuse. ProcureFlow also soft-holds *likely* duplicates at create time. This is a **separate AP control** from dual match — `server/src/match.js` still runs as today.
+
+**Hard uniqueness (unchanged):** `UNIQUE(supplier_id, invoice_number)` still fails create with HTTP 400.
+
+**Likely duplicate (soft hold)** when another **non-rejected** invoice exists for the same `supplier_id` (self excluded) with:
+
+| Rule | Match |
+| --- | --- |
+| Same billed amount + near date | `total_amount` equal (integer cents) **and** `invoice_date` within **±7 UTC calendar days** (inclusive) |
+| Same PO + same billed amount | same `po_id` **and** same `total_amount` (different invoice number is allowed; dates may be far apart) |
+
+Both rules may fire on one candidate (`match_rule = both`). Candidates include `pending_match` / `matched` / `variance_flagged` / `approved_for_payment` / `paid`. `rejected` invoices are ignored. Payable short-pay cents are **not** used — billed `total_amount` only.
+
+On hit, create **still succeeds**. The new invoice is flagged `duplicate_status = suspect`, rows are written to `invoice_duplicate_flags` (candidate link + rule + billed cents + dates), and `audit_logs` records `DUPLICATE_SUSPECTED`. Approve for Payment and mark-paid refuse until AP disposes.
+
+`invoices.duplicate_status`: `clear` | `suspect` | `confirmed_unique` | `confirmed_duplicate`. Existing invoices default `clear`.
+
+`POST /api/invoice-duplicates/:id/resolve` (demo-open, required `reason` + `actor_name`):
+
+| Disposition | Effect |
+| --- | --- |
+| `confirm_unique` | `duplicate_status → confirmed_unique`. Block cleared. Audit `DUPLICATE_CLEARED`. Approve may proceed if the invoice is `matched` and any hard exception is resolved. |
+| `confirm_duplicate` | Coupa-style void: `duplicate_status → confirmed_duplicate` **and** `status → rejected`. The candidate (original) is unchanged. Audit `DUPLICATE_CONFIRMED`. Approve and pay stay blocked. |
+
+Queue: `GET /api/invoice-duplicates?queue=open|resolved|all` (default `open` = `suspect`). Detail compares this invoice vs candidate(s). UI sidebar **Duplicate Suspects** for finance + admin (David / Elena). Badge on Invoices & Matching when suspect.
+
+This is not OCR intake, not fuzzy invoice-number typo matching, and not a payment-run engine.
+
+Demo: **INV-TSG-6610** (paid $99.00 on PO-2026-011) is the candidate. **INV-TSG-6611** (matched $99.00 on PO-2026-012, date within ±7 UTC days) is the open suspect. Do not reuse INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / INV-FCJ-8810 / INV-WED-3308 / INV-TSG-5508 for this walkthrough.
+
 ## AP payment aging / payables queue
 
 World-class P2P gives AP an aging inbox after Approve for Payment — not only a flat invoice list. ProcureFlow’s queue is `GET /api/ap-aging` (alias `GET /api/payment-queue`).
@@ -371,6 +405,7 @@ Response includes:
 - Invoices with `match_status`
 - AP approve / paid rows taken only from invoice `audit_logs` (`APPROVED_PAYMENT`, `APPROVED_FOR_PAYMENT`, `PAID`)
 - Exception dispositions, when present, from the same invoice `audit_logs` (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`, `EXCEPTION_BUYER_RESPONDED`)
+- Duplicate-suspect events, when present, from the same invoice `audit_logs` (`DUPLICATE_SUSPECTED`, `DUPLICATE_CLEARED`, `DUPLICATE_CONFIRMED`) — the trail does not invent them
 - PO change orders, when present, from purchase-order `audit_logs` (`CHANGE_ORDER_APPLIED`) — the trail does not invent a revision if no audit row exists
 
 The Document trail sidebar screen opens this payload as a stage strip + vertical timeline, with click-through to the existing PR / PO / GRN / SES / invoice tabs.
@@ -400,7 +435,7 @@ npm run dev
 npm start
 ```
 
-Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events, change-order audit when present), PO change orders (qty/price apply in integer cents; reject reduce below received/accepted/invoiced; budget committed delta floored at 0 and actual_spent untouched; empty/invalid payloads; closed PO rejected; increase confirm threshold; `CHANGE_ORDER_APPLIED` audit; GET/POST HTTP; document trail surfaces the event only when the audit row exists), the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents), and AP payment aging (UTC bucket classification including due-today and inclusive 7-day window; payable cents on rows; empty buckets; matched/paid/hard-exception seed numbers stay off the default pay queue; fail-closed mark-paid still requires `approved_for_payment`; mark-paid from the aging path writes the same `PAID` audit; GET `/api/ap-aging` HTTP).
+Tests cover money/match, sequential approvals, approval delegation (create/revoke, self-delegate rejected, inbox visibility for the delegate, decide by delegate, decide by non-delegate/non-owner 403, expired/inactive/future windows ignored, sequential waiting steps unchanged, stored `approver_id` not rewritten, `DELEGATION_*` and delegated-from audit), department-head mapping (mapping wins over role=approver; unmapped depts without a head fail closed; org-admin GET/PUT and audit; applySchema backfill of `approver_user_id`), budget fail/override, GRN over-receipt reject/override, SES numbering and over-acceptance reject/override, service SES-backed match pass/fail (including mixed POs), goods 3-way still working, document-number uniqueness, invoice-number uniqueness, multi-supplier PO split (single-supplier still one PO; N POs with correct lines/totals; missing supplier fail-closed; convert-time `supplier_mappings` remap/collapse; PR status only converts after success; inactive supplier convert fail-closed), supplier/catalog master-data PATCH and deactivate (unique sku/code 409, DELETE 405, inactive catalog list filter, inactive preferred-supplier assignment blocked), the document trail (complete goods chain shape, multi-PO branches, lookups by PR/PO/invoice, empty later stages, no invented events, change-order audit when present), PO change orders (qty/price apply in integer cents; reject reduce below received/accepted/invoiced; budget committed delta floored at 0 and actual_spent untouched; empty/invalid payloads; closed PO rejected; increase confirm threshold; `CHANGE_ORDER_APPLIED` audit; GET/POST HTTP; document trail surfaces the event only when the audit row exists), the invoice exception workbench (open queue excludes tolerated/perfect matches; accept unlocks approve; short-pay rewrites payable below billed and approve posts payable to actual_spent; reject blocks approve/pay; return-to-buyer stays open; buyer inbox lists only `return_to_buyer` parks, respond requires reason, wrong status 400, `EXCEPTION_BUYER_RESPONDED` audit, AP can still accept/short-pay/reject after the buyer note, requester/department scoping; audit rows; integer cents), AP payment aging (UTC bucket classification including due-today and inclusive 7-day window; payable cents on rows; empty buckets; matched/paid/hard-exception seed numbers stay off the default pay queue; fail-closed mark-paid still requires `approved_for_payment`; mark-paid from the aging path writes the same `PAID` audit; GET `/api/ap-aging` HTTP), and duplicate invoice detection (same supplier + billed cents + ±7 UTC calendar-day window inclusive, including the 8th-day miss; same PO + same amount with a different invoice number; rejected candidates excluded; self excluded; integer-cent miss; create still succeeds and flags `suspect`; approve/mark-paid refuse while suspect; `confirm_unique` unlocks approve; `confirm_duplicate` rejects/voids the new invoice; `DUPLICATE_SUSPECTED` / `DUPLICATE_CLEARED` / `DUPLICATE_CONFIRMED` audit rows; document trail surfaces those actions only when the audit row exists; GET `/api/invoice-duplicates` HTTP).
 
 ## Known demo limits (out of scope)
 
@@ -412,6 +447,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - `tolerated_match` invoices are not hard-queued; AP can still approve them from Invoices & Matching without a workbench disposition.
 - Change orders amend **existing PO lines only** (no new catalog lines, no supplier swap, no blanket/contract PO). Apply-on-confirm — there is no second sequential approval chain. Increases above $1,000 require `confirm_increase: true` only. A change-order increase does not re-run the remaining-budget fail-closed check used on final PR approve.
 - AP Aging is a **queue + due-date classification**, not a payment-run engine. No batch ACH / payment proposal, no early-pay discount calendar, no supplier portal remittance advice. The due-soon window defaults to **7 UTC calendar days** (inclusive of today). Due dates are compared as UTC `YYYY-MM-DD` only.
+- Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute. Payment runs / batch ACH remain out of scope.
 
 ## Local vs Vercel / Turso
 

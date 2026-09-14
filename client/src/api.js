@@ -316,6 +316,24 @@ export const api = {
     });
     return jsonOk(r, 'Failed to resolve invoice exception');
   },
+  getInvoiceDuplicates: (queue = 'open') => {
+    const params = new URLSearchParams();
+    if (queue) params.append('queue', queue);
+    return fetch(`${API_BASE}/invoice-duplicates?${params.toString()}`).then((r) =>
+      jsonOk(r, 'Failed to load duplicate-suspect queue')
+    );
+  },
+  getInvoiceDuplicateDetail: (id) =>
+    fetch(`${API_BASE}/invoice-duplicates/${id}`).then((r) => jsonOk(r, 'Failed to load duplicate detail')),
+  resolveInvoiceDuplicate: async (id, data) => {
+    const r = await fetch(`${API_BASE}/invoice-duplicates/${id}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to resolve duplicate suspect');
+  },
+
   getBuyerInbox: ({ requester_id, department_id } = {}) => {
     const params = new URLSearchParams();
     if (requester_id) params.append('requester_id', requester_id);

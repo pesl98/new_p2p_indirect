@@ -15,6 +15,12 @@ const EXCEPTION_AUDIT_ACTIONS = {
   EXCEPTION_BUYER_RESPONDED: 'Buyer responded'
 };
 
+const DUPLICATE_AUDIT_ACTIONS = {
+  DUPLICATE_SUSPECTED: 'Duplicate suspected',
+  DUPLICATE_CLEARED: 'Duplicate cleared',
+  DUPLICATE_CONFIRMED: 'Duplicate confirmed'
+};
+
 const CHANGE_ORDER_AUDIT_ACTIONS = {
   CHANGE_ORDER_APPLIED: 'Change order applied'
 };
@@ -28,7 +34,8 @@ const KIND_ORDER = {
   service_entry_sheet: 6,
   invoice: 7,
   exception: 8,
-  ap_event: 9
+  duplicate: 9,
+  ap_event: 10
 };
 
 export class DocumentTrailError extends Error {
@@ -221,6 +228,26 @@ async function loadExceptionEvents(db, invoiceId) {
     }));
 }
 
+async function loadDuplicateEvents(db, invoiceId) {
+  const rows = await db.prepare(`
+    SELECT id, entity_type, entity_id, action, actor_name, details, created_at
+    FROM audit_logs
+    WHERE entity_type = 'invoice' AND entity_id = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(invoiceId);
+  return rows
+    .filter((row) => Object.prototype.hasOwnProperty.call(DUPLICATE_AUDIT_ACTIONS, row.action))
+    .map((row) => ({
+      id: row.id,
+      invoice_id: invoiceId,
+      action: row.action,
+      title: DUPLICATE_AUDIT_ACTIONS[row.action],
+      actor_name: row.actor_name,
+      details: row.details,
+      created_at: toIsoTimestamp(row.created_at)
+    }));
+}
+
 async function loadInvoiceRows(db, poId) {
   const rows = await db.prepare(`
     SELECT
@@ -236,6 +263,7 @@ async function loadInvoiceRows(db, poId) {
       inv.payable_total_cents,
       inv.status,
       inv.match_status,
+      inv.duplicate_status,
       inv.payment_reference,
       inv.notes,
       inv.created_at,
@@ -259,11 +287,13 @@ async function loadInvoiceRows(db, poId) {
     payable_total_cents: row.payable_total_cents ?? null,
     status: row.status,
     match_status: row.match_status,
+    duplicate_status: row.duplicate_status || 'clear',
     payment_reference: row.payment_reference,
     notes: row.notes,
     created_at: toIsoTimestamp(row.created_at),
     ap_events: await loadApEvents(db, row.id),
-    exception_events: await loadExceptionEvents(db, row.id)
+    exception_events: await loadExceptionEvents(db, row.id),
+    duplicate_events: await loadDuplicateEvents(db, row.id)
   })));
 }
 
@@ -643,6 +673,29 @@ function buildTimeline({ requisition, approvals, purchaseOrders }) {
           supplier_name: invoice.supplier_name,
           source: 'audit',
           tab: exception.action === 'EXCEPTION_BUYER_RESPONDED' ? 'buyer_inbox' : 'exception_workbench'
+        }));
+      }
+
+      for (const duplicate of invoice.duplicate_events || []) {
+        events.push(timelineEvent({
+          id: `duplicate:${duplicate.id}`,
+          kind: 'duplicate',
+          entity_type: 'invoice',
+          entity_id: invoice.id,
+          number: invoice.invoice_number,
+          title: duplicate.title,
+          status: duplicate.action === 'DUPLICATE_CONFIRMED' ? 'rejected' : invoice.status,
+          at: duplicate.created_at,
+          actor_name: duplicate.actor_name,
+          details: duplicate.details,
+          amount_cents: invoice.total_amount,
+          payable_total_cents: invoice.payable_total_cents ?? null,
+          match_status: invoice.match_status,
+          po_id: po.id,
+          po_number: po.po_number,
+          supplier_name: invoice.supplier_name,
+          source: 'audit',
+          tab: 'duplicate_suspects'
         }));
       }
 

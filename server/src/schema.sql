@@ -266,6 +266,9 @@ CREATE TABLE IF NOT EXISTS invoices (
   total_amount INTEGER NOT NULL,
   -- NULL = pay billed total_amount. Set by short_pay; billed total is never rewritten.
   payable_total_cents INTEGER,
+  -- clear = no open suspect. suspect blocks approve/pay until AP disposes.
+  -- confirmed_unique clears the block. confirmed_duplicate voids this invoice.
+  duplicate_status TEXT NOT NULL DEFAULT 'clear' CHECK (duplicate_status IN ('clear', 'suspect', 'confirmed_unique', 'confirmed_duplicate')),
   status TEXT DEFAULT 'pending_match' CHECK (status IN ('pending_match', 'matched', 'variance_flagged', 'approved_for_payment', 'paid', 'rejected')),
   match_status TEXT DEFAULT 'pending' CHECK (match_status IN ('pending', 'perfect_match', 'tolerated_match', 'quantity_variance', 'price_variance', 'total_variance')),
   payment_reference TEXT,
@@ -305,6 +308,26 @@ CREATE TABLE IF NOT EXISTS match_results (
   FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
   FOREIGN KEY (po_item_id) REFERENCES po_items(id)
+);
+
+-- Likely-duplicate AP control (soft hold). Hard uniqueness remains
+-- UNIQUE(supplier_id, invoice_number) on invoices. One row per candidate.
+CREATE TABLE IF NOT EXISTS invoice_duplicate_flags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL,
+  candidate_invoice_id INTEGER NOT NULL,
+  match_rule TEXT NOT NULL CHECK (match_rule IN ('same_amount_near_date', 'same_po_same_amount', 'both')),
+  billed_total_cents INTEGER NOT NULL,
+  candidate_billed_total_cents INTEGER NOT NULL,
+  invoice_date TEXT NOT NULL,
+  candidate_invoice_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'confirmed_unique', 'confirmed_duplicate')),
+  reason TEXT,
+  actor_name TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  resolved_at DATETIME,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+  FOREIGN KEY (candidate_invoice_id) REFERENCES invoices(id)
 );
 
 CREATE TABLE IF NOT EXISTS invoice_exception_dispositions (

@@ -1,6 +1,11 @@
 import { asCents, formatCents, lineTotalCents, toQty } from './money.js';
 import { run3WayMatch } from './match.js';
 import { assertCanApprovePayment, assertCanMarkPaid, invoicePayableCents } from './invoiceExceptionsService.js';
+import {
+  assertDuplicateAllowsApprove,
+  assertDuplicateAllowsMarkPaid,
+  flagDuplicateSuspectsOnCreate
+} from './invoiceDuplicatesService.js';
 
 /**
  * Persist a vendor invoice, run 3-way match against prior cumulative invoiced
@@ -44,6 +49,8 @@ export async function createVendorInvoice(db, payload) {
   }
 
   const resolvedSupplierId = supplier_id || po.supplier_id;
+  const resolvedInvoiceDate = invoice_date || new Date().toISOString().split('T')[0];
+  const resolvedDueDate = due_date || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
 
   const invoiceTransaction = db.transaction(async () => {
     const insertInvoice = db.prepare(`
@@ -54,8 +61,8 @@ export async function createVendorInvoice(db, payload) {
       invoice_number,
       po_id,
       resolvedSupplierId,
-      invoice_date || new Date().toISOString().split('T')[0],
-      due_date || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      resolvedInvoiceDate,
+      resolvedDueDate,
       calculatedSubtotal,
       tax,
       totalAmount,
@@ -98,7 +105,18 @@ export async function createVendorInvoice(db, payload) {
       `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; services: PO+SES+invoice)`
     );
 
-    return { invoiceId, matchOutcome };
+    // Soft-hold likely duplicates after the invoice exists (same transaction).
+    // Dual match is unchanged — this is a separate AP control.
+    const duplicate = await flagDuplicateSuspectsOnCreate(db, {
+      invoiceId,
+      invoiceNumber: invoice_number,
+      supplierId: resolvedSupplierId,
+      poId: po_id,
+      totalAmountCents: totalAmount,
+      invoiceDate: resolvedInvoiceDate
+    });
+
+    return { invoiceId, matchOutcome, ...duplicate };
   });
 
   try {
@@ -137,8 +155,10 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
   }
 
   // Fail closed: free-text override_reason is a note only — it does not unlock
-  // variance_flagged invoices. Accept the exception first.
+  // variance_flagged invoices. Accept the exception first. Likely-duplicate
+  // suspects are a separate AP hold (Duplicate Suspects).
   assertCanApprovePayment(invoice);
+  assertDuplicateAllowsApprove(invoice);
 
   const billedCents = asCents(invoice.total_amount);
   const payableCents = invoicePayableCents(invoice);
@@ -193,6 +213,7 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name, a
     throw err;
   }
   assertCanMarkPaid(invoice);
+  assertDuplicateAllowsMarkPaid(invoice);
 
   const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
   const billedCents = asCents(invoice.total_amount);

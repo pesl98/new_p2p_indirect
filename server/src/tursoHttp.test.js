@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS users (
     const invoices = stmts.find((stmt) => /CREATE TABLE IF NOT EXISTS invoices\b/i.test(stmt));
     assert.ok(invoices, 'invoices CREATE must be present');
     assert.match(invoices, /payable_total_cents INTEGER/);
+    assert.match(invoices, /duplicate_status TEXT NOT NULL DEFAULT 'clear'/);
     assert.match(invoices, /UNIQUE\(supplier_id, invoice_number\)/);
     assert.ok(
       !stmts.some((stmt) => /^\s*billed total is never rewritten/i.test(stmt)),
@@ -155,7 +156,7 @@ CREATE TABLE IF NOT EXISTS users (
     const schema = fs.readFileSync(schemaPath, 'utf8');
     const stmts = splitSqlScript(schema);
     const creates = stmts.filter((stmt) => /^\s*CREATE TABLE/i.test(stmt));
-    assert.ok(creates.length >= 18, `expected all schema tables, got ${creates.length}`);
+    assert.ok(creates.length >= 19, `expected all schema tables, got ${creates.length}`);
     for (const stmt of creates) {
       assert.match(stmt, /\)\s*$/, `truncated CREATE TABLE: ${stmt.slice(0, 80)}`);
     }
@@ -165,6 +166,11 @@ CREATE TABLE IF NOT EXISTS users (
     assert.ok(dispositions);
     assert.match(dispositions, /'short_pay'/);
     assert.match(dispositions, /billed_total_cents INTEGER/);
+    const dupFlags = creates.find((stmt) =>
+      /CREATE TABLE IF NOT EXISTS invoice_duplicate_flags\b/i.test(stmt)
+    );
+    assert.ok(dupFlags);
+    assert.match(dupFlags, /same_amount_near_date/);
   });
 
   test('exec(schema.sql) sends invoices CREATE as a single pipeline statement', async () => {
@@ -179,6 +185,7 @@ CREATE TABLE IF NOT EXISTS users (
     const invoices = executed.find((sql) => /CREATE TABLE IF NOT EXISTS invoices\b/i.test(sql));
     assert.ok(invoices);
     assert.match(invoices, /payable_total_cents INTEGER/);
+    assert.match(invoices, /duplicate_status TEXT NOT NULL DEFAULT 'clear'/);
     assert.ok(!executed.some((sql) => /^\s*billed total is never rewritten/i.test(sql)));
   });
 
