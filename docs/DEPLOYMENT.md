@@ -105,21 +105,35 @@ First process start (`npm start` / Vercel cold start) also calls `applySchema` o
 
 ---
 
-## 4. Optional demo seed vs empty customer
+## 4. Load the customer’s people (bootstrap) vs demo seed
+
+`GET /api/users` and `GET /api/departments` are **read-only**. There is no POST to create the first department or user (SSO/onboarding APIs are out of scope). After migrate, a real tenant is initialized with a **JSON org file**, not with the API and not with `npm run seed`.
 
 | Goal | Command | Result |
 | --- | --- | --- |
-| Real customer | stop after `db:migrate` | Empty tables (0 users). Catalog, PRs, invoices are blank. |
-| Demo / training | `npm run seed` or `npm run db:migrate -- --seed` | **Destructive:** drops all app tables, reapplies schema, loads persona demo data |
+| Real customer | `db:migrate` then `db:bootstrap -- --file <org.json>` | Schema plus *their* departments, users, FY2026 budgets, optional step-1 approvers. **Non-destructive** (skips existing codes/emails). |
+| Schema only | stop after `db:migrate` | Empty tables (0 users). `GET /api/users` → `[]`. The persona picker is empty; PR/PO FKs cannot start until bootstrap (or seed). |
+| Demo / training | `npm run seed` or `npm run db:migrate -- --seed` | **Destructive:** drops all app tables, reapplies schema, loads Alice/Bob/Carol walkthrough data |
+
+Copy [`scripts/customer-org.example.json`](../scripts/customer-org.example.json), edit emails/names/codes/budget cents, then:
+
+```bash
+npm run db:bootstrap -- --file ./acme-org.json
+npm run db:status
+curl -s http://localhost:5000/api/users
+curl -s http://localhost:5000/api/departments
+```
+
+Re-running bootstrap against the same file skips rows that already exist (department `code`, user `email`, budget year). It will not overwrite an existing department-head mapping. Integer cents only (`total_budget_cents`, `approval_limit_cents`). Roles must be `requester` / `approver` / `procurement` / `finance` / `admin`. `approver_email` on a department must match a user in that file.
+
+**Do not** seed a production customer unless you intend to replace their data with the fictional walkthrough:
 
 ```bash
 # Demo only — wipes the database this env points at
 npm run seed
 ```
 
-Seed is the existing `server/src/seed.js` path. Do not seed a production customer unless you intend to replace their data with the fictional walkthrough.
-
-**Empty-customer UI caveat:** the React persona switcher expects seeded users (Alice, Bob, Carol, …). An empty DB is valid at the API (`GET /api/users` → `[]`) but the demo chrome will look broken until those rows exist or SSO lands. For a live demo, seed. For a real tenant, leave empty and load *their* departments / users via API (still demo-open; not an onboarding wizard).
+**Auth caveat:** bootstrap users appear in the header persona switcher the same way seeded personas do. That switcher is still **client-only demo auth**, not SSO. Anyone who can reach the API can send any user id.
 
 ---
 
@@ -162,8 +176,9 @@ curl -s http://localhost:5000/api/health
 # expect: { "status":"ok", "db":"sqlite" }  or  "db":"turso-http"
 
 curl -s http://localhost:5000/api/users
-# empty customer: []
-# demo seed: Alice / Bob / Carol / …
+# after migrate only: []
+# after db:bootstrap: the org file’s users
+# after npm run seed: Alice / Bob / Carol / …
 
 curl -s http://localhost:5000/api/catalog
 curl -s http://localhost:5000/api/departments
@@ -193,6 +208,7 @@ Also confirm:
 - [ ] `.env` / `.env.local` are gitignored (already)
 - [ ] Tokens are not in `vercel.json`, README, or screenshots
 - [ ] Seed was skipped for a real customer (or accepted as a wipe)
+- [ ] Real customer used `db:bootstrap -- --file` (not POST /api/users — that route does not exist)
 
 ---
 

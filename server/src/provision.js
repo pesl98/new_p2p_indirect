@@ -58,11 +58,15 @@ export const MIGRATE_HELP = `ProcureFlow customer database
 Usage:
   npm run db:migrate -- [--seed] [--turso] [--json]
   npm run db:status  -- [--turso] [--json]
+  npm run db:bootstrap -- --file scripts/customer-org.example.json
 
   --seed           After schema/migrations, run the demo seed (DESTRUCTIVE wipe).
                    Omit for a real customer (empty tables).
   --turso          Require Turso (fail if TURSO_* are unset). Same as --require-turso.
   --json           Machine-readable health object (no secrets).
+
+Real customers: db:migrate then db:bootstrap --file <org.json> (non-destructive).
+GET /api/users and GET /api/departments cannot create the first rows.
 
 Env:
   TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together)

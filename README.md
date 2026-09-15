@@ -4,7 +4,7 @@ A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application bui
 
 Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env, `npm run db:migrate` / `npm run db:status`, optional `npm run seed` for the persona demo only. Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. The header persona switcher is still **demo auth, not SSO**.
+**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env, `npm run db:migrate` / `npm run db:status`, then `npm run db:bootstrap -- --file <org.json>` for that customer’s departments and users (non-destructive). `npm run seed` remains the **destructive** persona demo. Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. The header persona switcher is still **demo auth, not SSO**. There is no POST to create users — bootstrap JSON is the supported path.
 
 ---
 
@@ -157,14 +157,19 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    ```
    See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** to stand up customer A vs customer B on two databases.
 
-4. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
+4. **Load a customer org** (non-destructive JSON import — departments, users, budgets). `GET /api/users` cannot create rows:
+   ```bash
+   npm run db:bootstrap -- --file scripts/customer-org.example.json
+   ```
+
+5. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
    ```bash
    npm run seed
    # or: node server/src/seed.js
    # or: npm run db:migrate -- --seed
    ```
 
-5. **Run unit tests** (`node --test`, SQLite in-memory):
+6. **Run unit tests** (`node --test`, SQLite in-memory):
    ```bash
    npm test
    ```

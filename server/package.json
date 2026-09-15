@@ -9,6 +9,7 @@
     "seed": "node src/seed.js",
     "db:migrate": "node scripts/db-migrate.js",
     "db:status": "node scripts/db-status.js",
+    "db:bootstrap": "node scripts/db-bootstrap.js",
     "dev": "node --watch src/index.js",
     "test": "node --test src/*.test.js"
   },

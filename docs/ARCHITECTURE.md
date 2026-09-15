@@ -541,6 +541,9 @@ cd server && npm install && cd ../client && npm install && cd ..
 npm run db:migrate
 npm run db:status
 
+# Real customer org (departments / users / budgets — does not wipe)
+npm run db:bootstrap -- --file scripts/customer-org.example.json
+
 # Seed sample data (destructive wipe — demo only)
 npm run seed
 # or: node server/src/seed.js
@@ -560,7 +563,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 
 ## Known demo limits (out of scope)
 
-- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary — including on a customer Vercel deploy. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` and `POST /api/approval-delegations` are still demo-open like catalog PATCH. Customer isolation is **database-per-tenant** ([docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy.
+- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary — including on a customer Vercel deploy. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` and `POST /api/approval-delegations` are still demo-open like catalog PATCH. There is **no** `POST /api/users` / create-department API; first org rows come from `npm run db:bootstrap -- --file` or the destructive demo seed. Customer isolation is **database-per-tenant** ([docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy.
 - Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
@@ -583,7 +586,9 @@ Customer B  →  TURSO_DATABASE_URL_B + token B  →  Vercel project B  (or PROC
 
 Pointing two deployments at the same URL merges those customers. Partial Turso credentials (URL xor token) are refused by `npm run db:migrate` / `db:status` (fail-closed; no silent local file).
 
-`db:migrate` runs `applySchema` (schema.sql + existing migrations) and does **not** seed unless `--seed`. `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users; the persona demo is optional and destructive.
+`db:migrate` runs `applySchema` (schema.sql + existing migrations) and does **not** seed unless `--seed`. `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users.
+
+`GET /api/users` and `GET /api/departments` are read-only. A real tenant’s first people are loaded with `npm run db:bootstrap -- --file <org.json>` (INSERT, skip existing unique keys — not a wipe). The persona demo remains optional and **destructive** (`npm run seed`).
 
 Install path, Vercel per-customer projects, secrets, smoke URLs, and rollback: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and [`scripts/provision-customer.md`](../scripts/provision-customer.md). SSO/JWT is still out of scope — header persona switching remains client-only demo auth.
 
@@ -599,4 +604,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production. Apply schema with `npm run db:migrate` (empty customer) or `npm run seed` from a laptop with those vars (demo wipe). See **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and the README deploy section.
+Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production. Apply schema with `npm run db:migrate` (empty customer), load people with `npm run db:bootstrap -- --file …` (non-destructive), or `npm run seed` from a laptop with those vars (demo wipe). See **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and the README deploy section.

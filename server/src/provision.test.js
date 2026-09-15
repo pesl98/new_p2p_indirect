@@ -379,17 +379,22 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(architecture, /docs\/DEPLOYMENT\.md/);
     assert.match(deployment, /npm run db:migrate/);
     assert.match(deployment, /npm run db:status/);
+    assert.match(deployment, /npm run db:bootstrap/);
     assert.match(deployment, /one project/);
     assert.match(deployment, /persona/i);
     assert.match(deployment, /no.*shared-row `org_id`/i);
+    assert.match(deployment, /GET \/api\/users/);
   });
 
   test('CLI entrypoints and npm scripts exist', () => {
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-migrate.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-status.js')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-bootstrap.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'scripts/provision-customer.md')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'scripts/customer-org.example.json')));
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
     assert.equal(pkg.scripts['db:status'], 'node server/scripts/db-status.js');
+    assert.equal(pkg.scripts['db:bootstrap'], 'node server/scripts/db-bootstrap.js');
   });
 });

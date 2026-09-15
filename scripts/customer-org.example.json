@@ -1,0 +1,74 @@
+{
+  "customer": "Example Customer",
+  "fiscal_year": 2026,
+  "departments": [
+    {
+      "code": "MKT",
+      "name": "Marketing",
+      "approver_email": "approver@example.com",
+      "total_budget_cents": 25000000
+    },
+    {
+      "code": "ITE",
+      "name": "Information Technology",
+      "approver_email": "it.head@example.com",
+      "total_budget_cents": 40000000
+    },
+    {
+      "code": "ADM",
+      "name": "Finance & Administration",
+      "approver_email": "cfo@example.com",
+      "total_budget_cents": 15000000
+    }
+  ],
+  "users": [
+    {
+      "name": "Pat Requester",
+      "email": "buyer@example.com",
+      "role": "requester",
+      "department_code": "MKT",
+      "title": "Buyer",
+      "approval_limit_cents": 0
+    },
+    {
+      "name": "Riley Approver",
+      "email": "approver@example.com",
+      "role": "approver",
+      "department_code": "MKT",
+      "title": "Department Head",
+      "approval_limit_cents": 1000000
+    },
+    {
+      "name": "Sam IT Head",
+      "email": "it.head@example.com",
+      "role": "approver",
+      "department_code": "ITE",
+      "title": "IT Director",
+      "approval_limit_cents": 1000000
+    },
+    {
+      "name": "Quinn Procurement",
+      "email": "procurement@example.com",
+      "role": "procurement",
+      "department_code": "ADM",
+      "title": "Strategic Sourcing",
+      "approval_limit_cents": 5000000
+    },
+    {
+      "name": "Drew Finance",
+      "email": "ap@example.com",
+      "role": "finance",
+      "department_code": "ADM",
+      "title": "AP Controller",
+      "approval_limit_cents": 15000000
+    },
+    {
+      "name": "Casey Admin",
+      "email": "cfo@example.com",
+      "role": "admin",
+      "department_code": "ADM",
+      "title": "CFO / Org Admin",
+      "approval_limit_cents": 50000000
+    }
+  ]
+}
