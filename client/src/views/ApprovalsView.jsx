@@ -169,7 +169,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                       "{item.justification}"
                     </div>
 
-                    {item.source_contract && item.contract_use_status !== 'none' && (
+                    {item.source_contract && item.contract_use_status !== 'none' && item.contract_use_status !== 'skipped' && (
                       <div className="p-3 rounded-lg text-xs border border-sky-200 bg-sky-50 text-sky-950">
                         <span className="font-semibold text-sky-700 text-[10px] uppercase block mb-0.5 flex items-center gap-1">
                           <FileCheck className="w-3 h-3" />

@@ -248,18 +248,21 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
     }
   };
 
+  const isAdHocContractStatus = (status) => status === 'none' || status === 'skipped' || !status;
+
   const contractUseLabel = (status) => {
     switch (status) {
       case 'proposed': return 'Proposed';
       case 'allowed': return 'Allowed';
       case 'refused': return 'Refused';
+      case 'skipped': return 'Ad-hoc (opted out)';
       default: return null;
     }
   };
 
   const ContractBadge = ({ pr }) => {
     const linked = pr?.source_contract || (pr?.source_contract_id ? { contract_number: 'Contract' } : null);
-    if (!linked || pr.contract_use_status === 'none') return null;
+    if (!linked || isAdHocContractStatus(pr.contract_use_status)) return null;
     const tone = pr.contract_use_status === 'allowed'
       ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
       : pr.contract_use_status === 'refused'
@@ -735,7 +738,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 </div>
               </div>
 
-              {selectedPR.source_contract && selectedPR.contract_use_status !== 'none' && (
+              {selectedPR.source_contract && !isAdHocContractStatus(selectedPR.contract_use_status) && (
                 <div className="rounded-xl p-4 border border-sky-200 bg-sky-50/60">
                   <div className="font-bold text-sky-900 uppercase tracking-wider text-[11px] mb-1 flex items-center gap-1">
                     <FileCheck className="w-3.5 h-3.5" />
@@ -773,10 +776,14 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 </div>
               )}
 
-              {selectedPR.status === 'draft' && (!selectedPR.source_contract || selectedPR.contract_use_status === 'none') && (
+              {selectedPR.status === 'draft' && (!selectedPR.source_contract || isAdHocContractStatus(selectedPR.contract_use_status)) && (
                 <div className="rounded-xl p-4 border border-slate-200 bg-slate-50">
                   <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">Linked contract</div>
-                  <p className="text-slate-500 mb-2">No contract assigned. Optionally pick one before submit.</p>
+                  <p className="text-slate-500 mb-2">
+                    {selectedPR.contract_use_status === 'skipped'
+                      ? 'You opted out of auto-match. Submit will not re-propose a contract unless you pick one here.'
+                      : 'No contract assigned. Optionally pick one before submit.'}
+                  </p>
                   <select
                     value="none"
                     onChange={(e) => handleDraftContractChange(selectedPR, e.target.value)}

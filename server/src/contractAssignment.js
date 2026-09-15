@@ -3,6 +3,9 @@
  *
  * Matching is best-effort and never blocks requisition create/submit.
  * A hit stores source_contract_id with contract_use_status = 'proposed'.
+ * Explicit opt-out (skip_contract_match or draft clear) stores 'skipped'
+ * so a later submit does not rematch. Status 'none' means unmatched so far
+ * and submit may still auto-match.
  * The approver must allow or refuse contract use on the first approve
  * of a proposed link; refuse does not reject the PR (it becomes ad-hoc).
  */
@@ -22,12 +25,14 @@ export const CONTRACT_USE_NONE = 'none';
 export const CONTRACT_USE_PROPOSED = 'proposed';
 export const CONTRACT_USE_ALLOWED = 'allowed';
 export const CONTRACT_USE_REFUSED = 'refused';
+export const CONTRACT_USE_SKIPPED = 'skipped';
 
 export const CONTRACT_USE_STATUSES = new Set([
   CONTRACT_USE_NONE,
   CONTRACT_USE_PROPOSED,
   CONTRACT_USE_ALLOWED,
-  CONTRACT_USE_REFUSED
+  CONTRACT_USE_REFUSED,
+  CONTRACT_USE_SKIPPED
 ]);
 
 const ASSIGNABLE_STATUSES = new Set(['active', 'expiring_soon']);
@@ -339,7 +344,7 @@ export async function writeProposedContractLink(db, {
 export async function writeClearedContractLink(db, { prId, actorName = 'System', previousContractNumber }) {
   await db.prepare(`
     UPDATE purchase_requisitions
-    SET source_contract_id = NULL, contract_use_status = 'none', updated_at = CURRENT_TIMESTAMP
+    SET source_contract_id = NULL, contract_use_status = 'skipped', updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(prId);
 
@@ -350,8 +355,8 @@ export async function writeClearedContractLink(db, { prId, actorName = 'System',
     prId,
     actorName,
     previousContractNumber
-      ? `Cleared contract link ${previousContractNumber}; requisition is ad-hoc.`
-      : 'Cleared contract link; requisition is ad-hoc.'
+      ? `Cleared contract link ${previousContractNumber}; requester opted out of auto-match.`
+      : 'Requester opted out of contract auto-match; requisition stays ad-hoc.'
   );
 }
 
@@ -395,17 +400,19 @@ export async function assignContractToRequisition(db, prId, {
     const existing = await db.prepare(
       `SELECT source_contract_id FROM purchase_requisitions WHERE id = ?`
     ).get(prId);
+    let previousNumber = null;
     if (existing?.source_contract_id) {
       const prev = await db.prepare(
         `SELECT contract_number FROM contracts WHERE id = ?`
       ).get(existing.source_contract_id);
-      await writeClearedContractLink(db, {
-        prId,
-        actorName: (typeof actor_name === 'string' && actor_name.trim()) || 'System',
-        previousContractNumber: prev?.contract_number
-      });
+      previousNumber = prev?.contract_number || null;
     }
-    return { source_contract_id: null, contract_use_status: CONTRACT_USE_NONE, match: null };
+    await writeClearedContractLink(db, {
+      prId,
+      actorName: (typeof actor_name === 'string' && actor_name.trim()) || 'System',
+      previousContractNumber: previousNumber
+    });
+    return { source_contract_id: null, contract_use_status: CONTRACT_USE_SKIPPED, match: null };
   }
 
   const actorName = (typeof actor_name === 'string' && actor_name.trim()) || 'System';
@@ -469,7 +476,7 @@ export async function updateDraftContractLink(db, prId, {
 
   if (source_contract_id === null || source_contract_id === '' || source_contract_id === 0) {
     await writeClearedContractLink(db, { prId, actorName, previousContractNumber: previousNumber });
-    return { source_contract_id: null, contract_use_status: CONTRACT_USE_NONE };
+    return { source_contract_id: null, contract_use_status: CONTRACT_USE_SKIPPED };
   }
 
   const contract = await loadAssignableContract(db, source_contract_id, { today });
