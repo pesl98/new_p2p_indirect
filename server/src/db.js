@@ -582,15 +582,21 @@ export async function openTursoDatabase(url, token, options = {}) {
   return client;
 }
 
-export async function openDatabase(config = loadDbConfig()) {
+/**
+ * Open SQLite or Turso using `config`.
+ * `options.migrate` (default true) applies schema.sql + existing migrations.
+ * Pass `migrate: false` for inspect-only (`npm run db:status` on an empty file).
+ */
+export async function openDatabase(config = loadDbConfig(), options = {}) {
+  const migrate = options.migrate !== false;
   assertDeployableConfig(config);
   if (config.useTurso) {
     const db = await openTursoDatabase(config.tursoUrl, config.tursoAuthToken);
-    await applySchema(db);
+    if (migrate) await applySchema(db);
     return db;
   }
   const db = await openSqlite(config.sqlitePath);
-  await applySchema(db);
+  if (migrate) await applySchema(db);
   return db;
 }
 

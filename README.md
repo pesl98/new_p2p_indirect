@@ -4,6 +4,8 @@ A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application bui
 
 Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
+**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env, `npm run db:migrate` / `npm run db:status`, optional `npm run seed` for the persona demo only. Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. The header persona switcher is still **demo auth, not SSO**.
+
 ---
 
 ## 🌟 Key Features Across the Complete Purchasing Lifecycle
@@ -148,13 +150,21 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    ```
    Open [http://localhost:3000](http://localhost:3000) (Vite proxies `/api` to `:5000`).
 
-3. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set):
+3. **Apply schema to an empty database** (no demo rows — the customer install path):
+   ```bash
+   npm run db:migrate
+   npm run db:status
+   ```
+   See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** to stand up customer A vs customer B on two databases.
+
+4. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
    ```bash
    npm run seed
    # or: node server/src/seed.js
+   # or: npm run db:migrate -- --seed
    ```
 
-4. **Run unit tests** (`node --test`, SQLite in-memory):
+5. **Run unit tests** (`node --test`, SQLite in-memory):
    ```bash
    npm test
    ```
@@ -180,6 +190,8 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 ---
 
 ## ☁️ Deploy: Vercel + Turso
+
+**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then run `npm run db:migrate` against that env. Full install, secrets, smoke URLs, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md).
 
 Local laptop default is **SQLite** at `server/data/procurement.db` (override with `PROCUREMENT_DB_PATH`). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, the same code uses Turso over **HTTP** (`POST /v2/pipeline`). No native libsql/`.so` is loaded — that crashes Vercel serverless.
 

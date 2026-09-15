@@ -537,9 +537,14 @@ Prerequisites: Node 18+, npm 9+.
 npm install
 cd server && npm install && cd ../client && npm install && cd ..
 
-# Seed sample data (SQLite locally; Turso when TURSO_* are set)
+# Schema only (empty customer DB; SQLite locally, Turso when TURSO_* are set)
+npm run db:migrate
+npm run db:status
+
+# Seed sample data (destructive wipe — demo only)
 npm run seed
 # or: node server/src/seed.js
+# or: npm run db:migrate -- --seed
 
 # Unit tests (node --test) — SQLite in-memory plus Turso HTTP mocks
 npm test
@@ -555,7 +560,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 
 ## Known demo limits (out of scope)
 
-- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` and `POST /api/approval-delegations` are still demo-open like catalog PATCH.
+- **Persona auth is client-only.** No JWT, sessions, or server identity. Do not treat this as an authorization boundary — including on a customer Vercel deploy. Org Admin (department heads) is gated in the UI to Elena; `PUT /api/departments/:id/approver` and `POST /api/approval-delegations` are still demo-open like catalog PATCH. Customer isolation is **database-per-tenant** ([docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy.
 - Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
@@ -566,6 +571,21 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Payment runs ship as a **draft proposal + one-shot execute** (`PAY-YYYY-NNN`, shared ACH reference, same mark-paid write). Still out of scope: bank NACHA/ACH file export, early-pay discount calendar, supplier remittance portal, and multi-currency.
 - Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute.
 - Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR with `source_contract_id` proposed. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT). Carrying `source_contract_id` onto the PO at convert time is out of scope.
+
+## Customer isolation = DB per tenant
+
+ProcureFlow isolates customers by giving each a **separate database** — a Turso (libSQL) database or a SQLite file. Schema and application code are shared; **data is not**. There is no shared-row `org_id` (or equivalent) multi-tenancy.
+
+```
+Customer A  →  TURSO_DATABASE_URL_A + token A  →  Vercel project A  (or PROCUREMENT_DB_PATH=acme.db)
+Customer B  →  TURSO_DATABASE_URL_B + token B  →  Vercel project B  (or PROCUREMENT_DB_PATH=beta.db)
+```
+
+Pointing two deployments at the same URL merges those customers. Partial Turso credentials (URL xor token) are refused by `npm run db:migrate` / `db:status` (fail-closed; no silent local file).
+
+`db:migrate` runs `applySchema` (schema.sql + existing migrations) and does **not** seed unless `--seed`. `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users; the persona demo is optional and destructive.
+
+Install path, Vercel per-customer projects, secrets, smoke URLs, and rollback: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and [`scripts/provision-customer.md`](../scripts/provision-customer.md). SSO/JWT is still out of scope — header persona switching remains client-only demo auth.
 
 ## Local vs Vercel / Turso
 
@@ -579,4 +599,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production, then `npm run seed` from a laptop with those vars. See the README deploy section.
+Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production. Apply schema with `npm run db:migrate` (empty customer) or `npm run seed` from a laptop with those vars (demo wipe). See **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and the README deploy section.
