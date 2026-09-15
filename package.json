@@ -8,6 +8,8 @@
   },
   "scripts": {
     "seed": "node server/src/seed.js",
+    "db:migrate": "node server/scripts/db-migrate.js",
+    "db:status": "node server/scripts/db-status.js",
     "start": "node server/src/index.js",
     "start:server": "node server/src/index.js",
     "dev:server": "node --watch server/src/index.js",
