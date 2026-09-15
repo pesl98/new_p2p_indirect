@@ -15,6 +15,9 @@ import {
   CONTRACT_ITEMS_TABLE_SQL,
   PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL,
   PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL,
+  PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL,
+  PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL,
+  purchaseRequisitionsContractUseNeedsSkippedRebuild,
   schemaPath
 } from './db.js';
 import { splitSqlScript } from './tursoHttp.js';
@@ -63,6 +66,9 @@ describe('Turso/SQLite schema migrations', () => {
     const prCols = raw.prepare(`PRAGMA table_info(purchase_requisitions)`).all().map((col) => col.name);
     assert.ok(prCols.includes('source_contract_id'));
     assert.ok(prCols.includes('contract_use_status'));
+    const prSql = raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'purchase_requisitions'`).get().sql;
+    assert.match(prSql, /contract_use_status TEXT NOT NULL DEFAULT 'none'/);
+    assert.match(prSql, /'skipped'/);
   });
 
   test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {
@@ -102,6 +108,43 @@ describe('Turso/SQLite schema migrations', () => {
     const statusSql = splitSqlScript(PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL);
     assert.equal(statusSql.length, 1);
     assert.match(statusSql[0], /ALTER TABLE purchase_requisitions ADD COLUMN contract_use_status TEXT NOT NULL DEFAULT 'none'/);
+  });
+
+  test('purchase_requisitions skipped CHECK rebuild SQL splits into four complete statements', () => {
+    const stmts = splitSqlScript(PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL);
+    assert.equal(stmts.length, 4);
+    assert.match(stmts[0], /CREATE TABLE purchase_requisitions_migrated/i);
+    assert.match(stmts[0], /CHECK \(contract_use_status IN \('none', 'proposed', 'allowed', 'refused', 'skipped'\)\)/);
+    assert.match(stmts[0], /\)\s*$/);
+    assert.match(stmts[1], /^INSERT INTO purchase_requisitions_migrated/i);
+    assert.match(stmts[2], /^DROP TABLE purchase_requisitions/i);
+    assert.match(stmts[3], /^ALTER TABLE purchase_requisitions_migrated RENAME TO purchase_requisitions/i);
+
+    const full = splitSqlScript(PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL);
+    assert.equal(full.length, 6);
+    assert.match(full[0], /PRAGMA foreign_keys = OFF/i);
+    assert.match(full[5], /PRAGMA foreign_keys = ON/i);
+  });
+
+  test('purchaseRequisitionsContractUseNeedsSkippedRebuild detects #26 CHECK only', () => {
+    assert.equal(
+      purchaseRequisitionsContractUseNeedsSkippedRebuild(
+        `CREATE TABLE purchase_requisitions (contract_use_status TEXT NOT NULL DEFAULT 'none' CHECK (contract_use_status IN ('none', 'proposed', 'allowed', 'refused')))`
+      ),
+      true
+    );
+    assert.equal(
+      purchaseRequisitionsContractUseNeedsSkippedRebuild(
+        `CREATE TABLE purchase_requisitions (contract_use_status TEXT NOT NULL DEFAULT 'none' CHECK (contract_use_status IN ('none', 'proposed', 'allowed', 'refused', 'skipped')))`
+      ),
+      false
+    );
+    assert.equal(
+      purchaseRequisitionsContractUseNeedsSkippedRebuild(
+        `CREATE TABLE purchase_requisitions (status TEXT CHECK (status IN ('draft')), contract_use_status TEXT NOT NULL DEFAULT 'none')`
+      ),
+      false
+    );
   });
 
   test('approval_delegations CREATE TABLE is a single Turso-split statement', () => {
@@ -304,6 +347,106 @@ describe('Turso/SQLite schema migrations', () => {
       db.prepare(`SELECT source_contract_id, contract_use_status FROM purchase_requisitions WHERE id = 1`).get().contract_use_status,
       'none'
     );
+  });
+
+  test('applySchema rebuilds purchase_requisitions CHECK so skipped opt-out works on #26-era tables', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+
+    db.exec(`
+      CREATE TABLE departments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL
+      );
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        role TEXT NOT NULL,
+        department_id INTEGER,
+        FOREIGN KEY (department_id) REFERENCES departments(id)
+      );
+      CREATE TABLE suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        code TEXT UNIQUE NOT NULL
+      );
+      CREATE TABLE purchase_requisitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pr_number TEXT UNIQUE NOT NULL,
+        requester_id INTEGER NOT NULL,
+        department_id INTEGER NOT NULL,
+        status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending_approval', 'approved', 'rejected', 'converted_to_po')),
+        total_amount INTEGER DEFAULT 0,
+        justification TEXT,
+        needed_by_date TEXT,
+        priority TEXT DEFAULT 'Medium' CHECK (priority IN ('Low', 'Medium', 'High', 'Urgent')),
+        source_contract_id INTEGER,
+        contract_use_status TEXT NOT NULL DEFAULT 'none' CHECK (contract_use_status IN ('none', 'proposed', 'allowed', 'refused')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (requester_id) REFERENCES users(id),
+        FOREIGN KEY (department_id) REFERENCES departments(id)
+      );
+      CREATE TABLE requisition_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requisition_id INTEGER NOT NULL,
+        catalog_item_id INTEGER,
+        item_description TEXT NOT NULL,
+        category TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price INTEGER NOT NULL,
+        total_price INTEGER NOT NULL,
+        estimated_supplier_id INTEGER,
+        FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id) ON DELETE CASCADE
+      );
+      CREATE TABLE purchase_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_number TEXT UNIQUE NOT NULL,
+        requisition_id INTEGER,
+        supplier_id INTEGER NOT NULL,
+        created_by INTEGER NOT NULL,
+        status TEXT DEFAULT 'issued',
+        total_amount INTEGER NOT NULL,
+        issue_date TEXT NOT NULL,
+        FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id)
+      );
+    `);
+
+    db.exec(`
+      INSERT INTO departments (id, code, name) VALUES (1, 'MKT', 'Marketing');
+      INSERT INTO users (id, name, email, role, department_id) VALUES (1, 'Alice', 'a@example.com', 'requester', 1);
+      INSERT INTO suppliers (id, name, code) VALUES (1, 'Vendor Co', 'SUP-1');
+      INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, justification, contract_use_status)
+        VALUES (1, 'PR-OLD-26', 1, 1, 'draft', 54000, 'Figma seat', 'none');
+      INSERT INTO requisition_items (id, requisition_id, item_description, category, quantity, unit_price, total_price)
+        VALUES (1, 1, 'Figma seat', 'Software & Cloud', 1, 54000, 54000);
+      INSERT INTO purchase_orders (id, po_number, requisition_id, supplier_id, created_by, status, total_amount, issue_date)
+        VALUES (1, 'PO-OLD-26', 1, 1, 1, 'issued', 54000, '2026-09-01');
+    `);
+
+    assert.throws(
+      () => db.prepare(`UPDATE purchase_requisitions SET contract_use_status = 'skipped' WHERE id = 1`).run(),
+      /CHECK/i
+    );
+
+    await applySchema(db);
+
+    const sql = tableSql(db, 'purchase_requisitions');
+    assert.match(sql, /'skipped'/);
+    assert.equal(purchaseRequisitionsContractUseNeedsSkippedRebuild(sql), false);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM requisition_items WHERE requisition_id = 1`).get().n, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE requisition_id = 1`).get().n, 1);
+
+    db.prepare(`UPDATE purchase_requisitions SET contract_use_status = 'skipped' WHERE id = 1`).run();
+    assert.equal(
+      db.prepare(`SELECT contract_use_status FROM purchase_requisitions WHERE id = 1`).get().contract_use_status,
+      'skipped'
+    );
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM requisition_items`).get().n, 1);
+    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders`).get().n, 1);
   });
 
   test('applySchema rebuilds dispositions CHECK to add buyer_response on short_pay-era tables', async () => {

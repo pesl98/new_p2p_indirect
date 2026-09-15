@@ -289,11 +289,20 @@ router.post('/:id/submit', async (req, res) => {
         VALUES ('requisition', ?, 'SUBMITTED', 'Requester', 'Submitted for approval routing')
       `).run(id);
 
-      const alreadyLinked = pr.source_contract_id && pr.contract_use_status && pr.contract_use_status !== 'none';
+      const alreadyLinked = pr.source_contract_id && pr.contract_use_status
+        && pr.contract_use_status !== 'none'
+        && pr.contract_use_status !== 'skipped';
       if (alreadyLinked && source_contract_id == null && !skip_contract_match) {
         return {
           source_contract_id: pr.source_contract_id,
           contract_use_status: pr.contract_use_status
+        };
+      }
+      // Explicit ad-hoc (create skip or draft clear) must survive submit without rematch.
+      if (pr.contract_use_status === 'skipped' && source_contract_id == null && !skip_contract_match) {
+        return {
+          source_contract_id: null,
+          contract_use_status: 'skipped'
         };
       }
       return assignContractToRequisition(db, id, {

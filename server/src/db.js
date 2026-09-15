@@ -399,14 +399,61 @@ async function migrateContracts(database) {
 /**
  * Existing DBs need a durable PR → contract link plus the approver's
  * allow/refuse decision. Not a SQLite FK (contracts is created after
- * purchase_requisitions). CHECK is on schema.sql for new DBs; ALTER
- * cannot add CHECK, so application code still validates the enum.
+ * purchase_requisitions). ALTER ADD COLUMN cannot attach CHECK.
+ * DBs created from the first contract-link release already have
+ * contract_use_status with CHECK (none|proposed|allowed|refused);
+ * those must be rebuilt so `skipped` opt-out can persist.
  */
 export const PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL =
   `ALTER TABLE purchase_requisitions ADD COLUMN source_contract_id INTEGER`;
 
 export const PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL =
   `ALTER TABLE purchase_requisitions ADD COLUMN contract_use_status TEXT NOT NULL DEFAULT 'none'`;
+
+/** True when sqlite_master still has the #26-era CHECK that rejects `skipped`. */
+export function purchaseRequisitionsContractUseNeedsSkippedRebuild(sql) {
+  const text = String(sql || '');
+  if (text.includes("'skipped'")) return false;
+  return /contract_use_status\s+TEXT\b[^,]*CHECK\s*\(\s*contract_use_status\s+IN\s*\(/i.test(text);
+}
+
+/**
+ * Parent-table rebuild. Child FKs (requisition_items, approval_requests,
+ * purchase_orders) must not CASCADE on DROP, so PRAGMA foreign_keys is
+ * toggled in the same script — Turso closes the HTTP stream after exec,
+ * so OFF/rebuild/ON cannot be separate round-trips.
+ */
+export const PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL = `
+    CREATE TABLE purchase_requisitions_migrated (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pr_number TEXT UNIQUE NOT NULL,
+      requester_id INTEGER NOT NULL,
+      department_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'pending_approval', 'approved', 'rejected', 'converted_to_po')),
+      total_amount INTEGER DEFAULT 0,
+      justification TEXT,
+      needed_by_date TEXT,
+      priority TEXT DEFAULT 'Medium' CHECK (priority IN ('Low', 'Medium', 'High', 'Urgent')),
+      source_contract_id INTEGER,
+      contract_use_status TEXT NOT NULL DEFAULT 'none' CHECK (contract_use_status IN ('none', 'proposed', 'allowed', 'refused', 'skipped')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (requester_id) REFERENCES users(id),
+      FOREIGN KEY (department_id) REFERENCES departments(id)
+    );
+    INSERT INTO purchase_requisitions_migrated
+      (id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, source_contract_id, contract_use_status, created_at, updated_at)
+      SELECT id, pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, source_contract_id, contract_use_status, created_at, updated_at
+      FROM purchase_requisitions;
+    DROP TABLE purchase_requisitions;
+    ALTER TABLE purchase_requisitions_migrated RENAME TO purchase_requisitions;
+  `;
+
+export const PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL = `
+    PRAGMA foreign_keys = OFF;
+    ${PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL}
+    PRAGMA foreign_keys = ON;
+  `;
 
 async function migratePurchaseRequisitionContractLink(database) {
   const tables = (await maybe(
@@ -420,6 +467,19 @@ async function migratePurchaseRequisitionContractLink(database) {
   }
   if (!(await tableHasColumn(database, 'purchase_requisitions', 'contract_use_status'))) {
     await maybe(database.exec(PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL));
+  }
+
+  const table = await maybe(
+    database.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'purchase_requisitions'`
+    ).get()
+  );
+  if (!purchaseRequisitionsContractUseNeedsSkippedRebuild(table?.sql)) return;
+
+  try {
+    await maybe(database.exec(PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL));
+  } finally {
+    await maybe(database.pragma('foreign_keys = ON'));
   }
 }
 
