@@ -1,4 +1,5 @@
 import { applySchema, getDb } from './db.js';
+import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
 
 const db = await getDb();
 
@@ -29,6 +30,7 @@ const allTables = [
   'contracts',
   'suppliers',
   'budgets',
+  'user_credentials',
   'users',
   'departments',
   'audit_logs'
@@ -45,6 +47,8 @@ try {
   // sqlite_sequence is absent until AUTOINCREMENT tables exist
 }
 await applySchema(db);
+
+const demoPasswordHash = await hashPassword(DEMO_SEED_PASSWORD, 10);
 
 await db.transaction(async () => {
   // 1. Departments
@@ -68,6 +72,11 @@ await db.transaction(async () => {
   await insertUser.run(6, 'Priya Nair', 'priya.nair@company.com', 'approver', 2, 'VP of Information Technology', 1000000, 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=120&h=120&fit=crop&crop=faces');
   await insertUser.run(7, 'James Okonkwo', 'james.okonkwo@company.com', 'approver', 3, 'Director of Facilities & Operations', 1000000, 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=120&h=120&fit=crop&crop=faces');
   await insertUser.run(8, 'Sofia Berg', 'sofia.berg@company.com', 'approver', 4, 'VP of People & Talent', 1000000, 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=120&h=120&fit=crop&crop=faces');
+
+  const insertCred = db.prepare(`INSERT INTO user_credentials (user_id, password_hash) VALUES (?, ?)`);
+  for (const userId of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    await insertCred.run(userId, demoPasswordHash);
+  }
 
   // Map each cost center to its step-1 department head (org admin can change this).
   const setDeptApprover = db.prepare(`UPDATE departments SET approver_user_id = ? WHERE id = ?`);
@@ -1185,3 +1194,5 @@ await db.transaction(async () => {
 });
 
 console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
+console.log(`   Demo login (local only): alice.chen@company.com / ${DEMO_SEED_PASSWORD}`);
+console.log('   Same password for Bob, Carol, David, Elena, Priya, James, Sofia. Never use this in a customer DB.');

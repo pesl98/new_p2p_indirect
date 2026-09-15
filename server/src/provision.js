@@ -17,7 +17,7 @@ import { openDatabase } from './db.js';
 
 export { TURSO_REQUIRED_MSG, TursoConfigError };
 
-/** Tables created by schema.sql (CREATE TABLE IF NOT EXISTS). Migrations add columns, not extra tables. */
+/** Tables created by schema.sql (CREATE TABLE IF NOT EXISTS). Extra columns come from db.js migrations. */
 export const EXPECTED_TABLES = [
   'approval_delegations',
   'approval_requests',
@@ -45,6 +45,7 @@ export const EXPECTED_TABLES = [
   'service_entry_sheet_items',
   'service_entry_sheets',
   'suppliers',
+  'user_credentials',
   'users'
 ];
 
@@ -69,6 +70,7 @@ Env:
   PROCUREMENT_DB_PATH                     Local SQLite file (default server/data/procurement.db)
 
 Isolation: one Turso database or SQLite file per customer. No org_id row tenancy.
+Empty tenant: after migrate, create the first admin (UI or npm run bootstrap-admin).
 See docs/DEPLOYMENT.md and scripts/provision-customer.md.
 `;
 

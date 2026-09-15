@@ -451,6 +451,35 @@ async function migratePaymentRuns(database) {
   await maybe(database.exec(PAYMENT_RUN_ITEMS_TABLE_SQL));
 }
 
+/**
+ * Existing DBs need users.status (soft-deactivate, same pattern as catalog)
+ * plus user_credentials for hashed passwords. ALTER cannot attach CHECK;
+ * new DBs get the CHECK from schema.sql.
+ */
+export const USERS_STATUS_COLUMN_SQL =
+  `ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`;
+
+export const USER_CREDENTIALS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS user_credentials (
+    user_id INTEGER PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    password_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`;
+
+async function migrateUsersAuth(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('users') && !(await tableHasColumn(database, 'users', 'status'))) {
+    await maybe(database.exec(USERS_STATUS_COLUMN_SQL));
+  }
+
+  await maybe(database.exec(USER_CREDENTIALS_TABLE_SQL));
+}
+
 /** True when sqlite_master still has the #26-era CHECK that rejects `skipped`. */
 export function purchaseRequisitionsContractUseNeedsSkippedRebuild(sql) {
   const text = String(sql || '');
@@ -555,6 +584,7 @@ export async function applySchema(database) {
   await migrateContracts(database);
   await migratePurchaseRequisitionContractLink(database);
   await migratePaymentRuns(database);
+  await migrateUsersAuth(database);
   return database;
 }
 

@@ -22,9 +22,11 @@ import documentTrailRouter from './routes/documentTrail.js';
 import departmentsRouter from './routes/departments.js';
 import delegationsRouter from './routes/delegations.js';
 import contractsRouter from './routes/contracts.js';
+import authRouter from './routes/auth.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
+import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,13 +55,17 @@ export function createApp(options = {}) {
     return startupErrorApp(new TursoConfigError(TURSO_REQUIRED_MSG));
   }
 
+  const authConfig = options.authConfig || loadAuthConfig();
+  warnIfInsecureSessionSecret(authConfig);
+
   const app = express();
-  app.use(cors());
+  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
 
   app.use(async (req, res, next) => {
     try {
       req.db = options.db || await getDb();
+      req.authConfig = authConfig;
       next();
     } catch (error) {
       if (config.onVercel || error instanceof TursoConfigError) {
@@ -69,6 +75,9 @@ export function createApp(options = {}) {
     }
   });
 
+  app.use(attachSession);
+
+  app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/departments', departmentsRouter);
   app.use('/api/approval-delegations', delegationsRouter);

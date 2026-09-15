@@ -17,8 +17,87 @@ async function jsonOk(response, fallbackMessage) {
 }
 
 export const api = {
+  // Auth (httpOnly session cookie; credentials included so the cookie is sent)
+  getAuthConfig: () =>
+    fetch(`${API_BASE}/auth/config`, { credentials: 'include' }).then((r) =>
+      jsonOk(r, 'Failed to load auth config')
+    ),
+  getMe: async () => {
+    const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+    if (r.status === 401) return { user: null };
+    return jsonOk(r, 'Failed to load session');
+  },
+  login: async (email, password) => {
+    const r = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    return jsonOk(r, 'Login failed');
+  },
+  logout: async () => {
+    const r = await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    return jsonOk(r, 'Logout failed');
+  },
+  bootstrapAdmin: async (data) => {
+    const r = await fetch(`${API_BASE}/auth/bootstrap`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to create the first admin');
+  },
+
   // Users & Roles
-  getUsers: () => fetch(`${API_BASE}/users`).then(r => r.json()),
+  getUsers: (status = '') => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    const qs = params.toString();
+    return fetch(`${API_BASE}/users${qs ? `?${qs}` : ''}`, { credentials: 'include' }).then((r) =>
+      jsonOk(r, 'Failed to load users')
+    );
+  },
+  createUser: async (data) => {
+    const r = await fetch(`${API_BASE}/users`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to create user');
+  },
+  updateUser: async (id, data) => {
+    const r = await fetch(`${API_BASE}/users/${id}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to update user');
+  },
+  updateUserStatus: async (id, status) => {
+    const r = await fetch(`${API_BASE}/users/${id}/status`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    return jsonOk(r, 'Failed to update user status');
+  },
+  setUserPassword: async (id, password) => {
+    const r = await fetch(`${API_BASE}/users/${id}/password`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    return jsonOk(r, 'Failed to set password');
+  },
   getDepartments: () => fetch(`${API_BASE}/departments`).then(r => r.json()),
   getEligibleApprovers: () => fetch(`${API_BASE}/departments/eligible-approvers`).then(r => r.json()),
   setDepartmentApprover: async (id, data) => {

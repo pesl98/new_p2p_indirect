@@ -18,6 +18,8 @@ import ContractsView from './views/ContractsView';
 import VendorsCatalogView from './views/VendorsCatalogView';
 import DocumentTrailView from './views/DocumentTrailView';
 import AdminDepartmentsView from './views/AdminDepartmentsView';
+import AdminUsersView from './views/AdminUsersView';
+import LoginView from './views/LoginView';
 import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
 import { api } from './api';
 
@@ -26,6 +28,8 @@ export default function App() {
   const [navFocus, setNavFocus] = useState(null);
   const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [sessionUser, setSessionUser] = useState(null);
+  const [authConfig, setAuthConfig] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [buyerInboxCount, setBuyerInboxCount] = useState(0);
   const [apAgingOverdueCount, setApAgingOverdueCount] = useState(0);
@@ -33,17 +37,27 @@ export default function App() {
   const [duplicateSuspectCount, setDuplicateSuspectCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const fetchCoreData = async () => {
+  const demoSwitcher = Boolean(authConfig?.demoPersonaSwitcher);
+  const bootstrapNeeded = Boolean(authConfig?.bootstrapNeeded) && !sessionUser;
+  const needsLogin = Boolean(authConfig) && !sessionUser && !demoSwitcher;
+
+  const fetchCoreData = async ({ preferUser } = {}) => {
     try {
       const [uList, metrics] = await Promise.all([
-        api.getUsers(),
-        api.getAnalytics()
+        api.getUsers('all').catch(() => []),
+        api.getAnalytics().catch(() => null)
       ]);
-      setUsers(uList);
-      if (!currentUser && uList.length > 0) {
-        setCurrentUser(uList[0]); // Default to Alice Chen (Requester)
+      const list = Array.isArray(uList) ? uList : [];
+      setUsers(list);
+      if (preferUser) {
+        setCurrentUser(preferUser);
+      } else if (sessionUser) {
+        const fresh = list.find((u) => u.id === sessionUser.id) || sessionUser;
+        setCurrentUser(fresh);
+      } else if (demoSwitcher && list.length > 0) {
+        setCurrentUser((prev) => prev || list.find((u) => u.status !== 'inactive') || list[0]);
       }
-      setAnalytics(metrics);
+      if (metrics) setAnalytics(metrics);
     } catch (err) {
       console.error('Failed to load initial data:', err);
     } finally {
@@ -52,8 +66,35 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchCoreData();
+    let cancelled = false;
+    (async () => {
+      try {
+        const [cfg, me] = await Promise.all([
+          api.getAuthConfig(),
+          api.getMe()
+        ]);
+        if (cancelled) return;
+        setAuthConfig(cfg);
+        if (me?.user) {
+          setSessionUser(me.user);
+          setCurrentUser(me.user);
+        }
+      } catch (err) {
+        console.error('Failed to load auth config:', err);
+        if (!cancelled) setAuthConfig({ demoPersonaSwitcher: false, bootstrapNeeded: false });
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!authConfig) return;
+    if (!sessionUser && !demoSwitcher) {
+      setLoading(false);
+      return;
+    }
+    fetchCoreData({ preferUser: sessionUser || undefined });
+  }, [authConfig, sessionUser, demoSwitcher]);
 
   useEffect(() => {
     if (!['finance', 'admin'].includes(currentUser?.role)) {
@@ -105,7 +146,7 @@ export default function App() {
 
   const handleSelectUser = (user) => {
     setCurrentUser(user);
-    if (user?.role !== 'admin' && activeTab === 'org_admin') {
+    if (user?.role !== 'admin' && (activeTab === 'org_admin' || activeTab === 'user_admin')) {
       setActiveTab('dashboard');
     }
     if (user?.role !== 'requester' && activeTab === 'buyer_inbox') {
@@ -130,14 +171,55 @@ export default function App() {
     setNavFocus(focus);
   };
 
+  const handleAuthenticated = (user) => {
+    setSessionUser(user);
+    setCurrentUser(user);
+    setAuthConfig((prev) => prev ? { ...prev, bootstrapNeeded: false } : prev);
+    setLoading(true);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch {
+      // still clear local session
+    }
+    setSessionUser(null);
+    if (!demoSwitcher) {
+      setCurrentUser(null);
+      setUsers([]);
+      setActiveTab('dashboard');
+    }
+  };
+
+  if (!authConfig || (loading && !needsLogin && !bootstrapNeeded && !currentUser)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm text-slate-500">
+        Loading ProcureFlow…
+      </div>
+    );
+  }
+
+  if (bootstrapNeeded || needsLogin) {
+    return (
+      <LoginView
+        bootstrapNeeded={bootstrapNeeded}
+        onAuthenticated={handleAuthenticated}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       {/* Top Navbar with Persona Bar */}
       <Header
-        users={users}
+        users={users.filter((u) => u.status !== 'inactive')}
         currentUser={currentUser}
+        sessionUser={sessionUser}
+        demoPersonaSwitcher={demoSwitcher}
         onSelectUser={handleSelectUser}
         onRefreshData={fetchCoreData}
+        onLogout={handleLogout}
       />
 
       {/* Main Layout: Sidebar + Viewport */}
@@ -285,6 +367,10 @@ export default function App() {
 
           {activeTab === 'org_admin' && (
             <AdminDepartmentsView currentUser={currentUser} />
+          )}
+
+          {activeTab === 'user_admin' && (
+            <AdminUsersView currentUser={currentUser} sessionUser={sessionUser} />
           )}
         </main>
       </div>

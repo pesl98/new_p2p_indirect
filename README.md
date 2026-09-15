@@ -2,9 +2,9 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules, **per-tenant session auth + admin user CRUD**): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. Customer bootstrap and `SESSION_SECRET`: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
-**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env, `npm run db:migrate` / `npm run db:status`, optional `npm run seed` for the persona demo only. Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. The header persona switcher is still **demo auth, not SSO**.
+**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env (`SESSION_SECRET` plus Turso or `PROCUREMENT_DB_PATH`), `npm run db:migrate` / `npm run db:status`, then first-admin bootstrap (UI or `npm run bootstrap-admin`). Optional `npm run seed` for the persona demo only. Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
 
 ---
 
@@ -22,9 +22,10 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
      - **≤ \$1,000**: Department Head (mapped user, else `role=approver` in the requisition’s department)
      - **> \$1,000 and ≤ \$10,000**: Department Head, then Strategic Sourcing (`role=procurement`)
      - **> \$10,000**: Department Head, then Procurement, then Finance Controller (`role=finance`) or CFO (`role=admin`) if no finance user exists
-   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. APIs are demo-open like supplier/catalog master-data (no JWT). Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
+   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. Department-head APIs stay demo-open like supplier/catalog master-data. Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
+   - **Users (Elena / session admin):** list, create, edit, and **soft-deactivate** employees (`users.status` active/inactive). Unique email, role in the existing CHECK, department, title, approval limit in integer cents, optional password (bcrypt in `user_credentials`). Mutating `/api/users` routes require a logged-in admin (`req.user`); `DELETE` is 405. Sidebar **Users** sits next to Department Approvers.
    - Steps are **sequential**, not parallel: only the current step is `pending`; later steps stay `waiting` until the previous step is approved. Waiting steps do not appear in the approver inbox. Rejecting a step skips remaining `waiting`/`pending` rows.
-   - The decide API requires `approver_id` matching the current pending step **or an active delegate** covering now for that mapped approver. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. **Persona auth is client-only demo** (header switcher; no JWT/sessions).
+   - The decide API requires `approver_id` matching the current pending step **or an active delegate** covering now for that mapped approver. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. **Login is a real httpOnly session** for admin user routes; most other P2P routes still accept body persona ids (phased cut — see ARCHITECTURE).
    - **Approval delegation (OOO):** an approver (or Elena as org admin) assigns a temporary substitute (`approval_delegations`: window, reason, soft-revoke). The delegate sees the current pending step in their inbox (badge “Delegated from …”) and may decide it. Waiting steps stay waiting. Cannot delegate to self; expired/inactive windows are ignored. Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED`, plus delegated_from on decide.
    - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved — not when a PO is issued. Final approve **fails closed** if remaining budget (`total − committed − actual`, cents) is less than the PR total.
    - **Contract use gate:** if a contract is proposed, the current approver (Bob / Priya as delegate) must **Allow contract use** or **Refuse contract use** as part of approve. Refuse does **not** reject the PR — it continues as ad-hoc. Omitting the choice is HTTP 400 (no silent force).
@@ -114,16 +115,12 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
    - Numbered `CNT-YYYY-NNN`. Sidebar **Contracts & Renewals** is visible to all demo personas (no JWT). APIs stay demo-open like catalog PATCH.
    - Seed: **CNT-2026-001** Figma (Marketing / CloudCore, 10 seats × $540.00 = $5,400.00 ACV) is the expiring-soon walkthrough. **PR-2026-010** is a new Figma seat already proposed against that contract so Bob/Priya can allow or refuse. **CNT-2026-002** Slack (IT, active). **CNT-2026-003** FacilityCare janitorial (Facilities, expiring soon). **CNT-2026-004** Apex retainer (Marketing, active, no auto-renew).
 
-14. **Multi-Persona Testing Switcher (demo only — not real auth)**
-   - Instant live switcher in the header to alternate between:
-     - **Alice Chen** (Requester - Marketing)
-     - **Bob Martinez** (Approver / Dept Head - Marketing)
-     - **Carol Zhang** (Procurement Officer - Strategic Sourcing)
-     - **David Miller** (Finance & Accounts Payable Controller)
-     - **Elena Rostova** (Executive / CFO — Org Admin for department heads)
-     - **Priya Nair** (IT department head)
-     - **James Okonkwo** (Facilities department head)
-     - **Sofia Berg** (HR department head)
+14. **Sign-in (per customer DB) + optional demo persona switcher**
+    - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`).
+    - Empty tenant: UI or `node server/src/bootstrapAdmin.js` creates the first admin. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+    - **Elena** (admin) manages users under Administration → Users.
+    - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. Default customer deploy shows the login page.
+    - Local seed demo password (README only, never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
 
 ---
 
@@ -136,6 +133,8 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 ### Running the Application
 
 From the repo root (`npm install` plus `npm install --prefix server` and `npm install --prefix client` on a fresh clone):
+
+**Local demo login** (after `npm run seed`): `alice.chen@company.com` / `ProcureFlow!demo` (same password for every seeded persona). To keep the old header switcher for walkthroughs: `export DEMO_PERSONA_SWITCHER=1`.
 
 1. **Start the Production Application (Single Port)**:
    ```bash
@@ -227,6 +226,7 @@ In the Vercel project → Settings → Environment Variables, set **both** for *
 | --- | --- |
 | `TURSO_DATABASE_URL` | URL from `turso db show … --url` (often `libsql://…`) |
 | `TURSO_AUTH_TOKEN` | Token from `turso db tokens create …` |
+| `SESSION_SECRET` | Long random string (signs the httpOnly session cookie). Required for customer deploys. |
 
 Redeploy after saving. Env changes do not apply to an already-built Preview.
 
@@ -277,7 +277,8 @@ Local default is SQLite (`better-sqlite3`). Production on Vercel is Turso via SQ
 
 Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, match price variance, etc.) are stored as **integer cents**. The API returns cents; the client formats dollars for display. Quantities are whole units. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for lifecycle, match rules, sequential approvals, and receiving/budget controls.
 - `departments`: Cost centers & organizational units, plus nullable `approver_user_id` (step-1 department head). Maintain via Org Admin / `PUT /api/departments/:id/approver`.
-- `users`: Employees with roles and authorization limits
+- `users`: Employees with roles, authorization limits, and `status` (`active` | `inactive`). Soft-deactivate via admin Users UI / `PATCH /api/users/:id/status`.
+- `user_credentials`: bcrypt password hashes (never returned by the API). Auth is local to this DB.
 - `budgets`: Fiscal year budgets, commitments, and actual expenditures
 - `suppliers`: Approved vendor repository with payment terms, ratings, and `status` (`active` | `inactive` | `under_review`). Edit via `PATCH /api/suppliers/:id`; deactivate via status — never hard-delete.
 - `catalog_items`: Non-production items and pre-negotiated pricing (`line_type` goods|service, `status` active|inactive). Edit via `PATCH /api/catalog/:id`. Requisition browse defaults to active items.
