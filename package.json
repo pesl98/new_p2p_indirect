@@ -11,6 +11,8 @@
     "db:migrate": "node server/scripts/db-migrate.js",
     "db:status": "node server/scripts/db-status.js",
     "bootstrap-admin": "node server/src/bootstrapAdmin.js",
+    "provision:customer": "node server/scripts/provision-customer.js",
+    "smoke": "node server/scripts/smoke.js",
     "start": "node server/src/index.js",
     "start:server": "node server/src/index.js",
     "dev:server": "node --watch server/src/index.js",
