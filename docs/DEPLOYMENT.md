@@ -2,7 +2,9 @@
 
 ProcureFlow is installed **one database per customer**. Customer A and customer B never share a SQLite file or Turso database. There is **no** shared-row `org_id` multi-tenancy. Authentication is therefore **local to that database** — a login on tenant A cannot see users in tenant B.
 
-This is the human install path. Operator copy-paste lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged.
+This is the human install path. Operator copy-paste lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
+
+**Real customer sequence:** `npm run db:migrate` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (optional `--email` / `--password`; **never seeds**). Demo wipe stays opt-in: `npm run seed`.
 
 **Auth (this phase):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie, admin user CRUD on `req.user`. SSO / SAML / OIDC is **out of scope** (next). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**). Legacy P2P routes still accept body `requester_id` / `approver_id` — that is not a full authorization boundary.
 
@@ -89,6 +91,8 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `PROCUREMENT_DB_PATH` | No | Override local SQLite path. |
 | `DEMO_PERSONA_SWITCHER` | No | Set to `1` to show the header persona switcher (demo only). Default **off** — customer deploys use login. |
 | `BCRYPT_ROUNDS` | No | bcrypt cost (default 10). |
+| `BASE_URL` | Smoke only | Origin for `npm run smoke` (`http://127.0.0.1:5000` or the customer Vercel URL). |
+| `SMOKE_EMAIL` / `SMOKE_PASSWORD` | Smoke only | Optional login check after bootstrap. |
 
 ---
 
@@ -119,7 +123,7 @@ First process start (`npm start` / Vercel cold start) also calls `applySchema` o
 
 ## 4. First admin bootstrap (empty tenant)
 
-After `db:migrate`, the customer DB has **0 users**. Until a user exists, `GET /api/auth/config` returns `{ bootstrapNeeded: true }` and the UI shows **Create the first admin**.
+After `db:migrate`, the customer DB has **0 users**. Until a user exists, `GET /api/auth/config` returns `{ bootstrapNeeded: true }` and the UI shows **Create the first admin**. `npm run provision:customer` is migrate plus this step when `--email` and `--password` are passed; it still **does not seed**.
 
 ### Option A — UI
 
@@ -143,13 +147,21 @@ npm run bootstrap-admin -- --email ada@customer.com --password '…'
 
 The CLI **refuses** if any users already exist (exit 2). After that, sign in as that admin and use **Administration → Users** to create more people.
 
+One-shot empty tenant (still no demo data):
+
+```bash
+npm run provision:customer -- \
+  --email ada@customer.com \
+  --password 'choose-a-long-password'
+```
+
 ---
 
 ## 5. Optional demo seed vs empty customer
 
 | Goal | Command | Result |
 | --- | --- | --- |
-| Real customer | `db:migrate` then bootstrap | Empty tables until first admin. Catalog, PRs, invoices stay blank. |
+| Real customer | `db:migrate` then `bootstrap-admin` (or `provision:customer`) then `smoke` | Empty tables until first admin. Catalog, PRs, invoices stay blank. |
 | Demo / training | `npm run seed` or `npm run db:migrate -- --seed` | **Destructive:** drops all app tables, reapplies schema, loads persona demo data + demo password |
 
 ```bash
@@ -165,21 +177,28 @@ Seed is the existing `server/src/seed.js` path. Do **not** run `npm run seed` ag
 
 ## 6. Vercel: one project (or clone) per customer
 
-Same git repo, **separate Vercel projects**, each with its own Turso pair.
+Same git repo, **separate Vercel projects**, each with its own Turso pair. Never paste customer A’s `TURSO_DATABASE_URL` into customer B.
 
-1. Vercel → Add New Project → import `pesl98/new_p2p_indirect` (or your fork).
-2. Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json).
-3. Settings → Environment Variables (Production **and** Preview):
+### Per-customer checklist
 
-   | Variable | Value |
-   | --- | --- |
-   | `TURSO_DATABASE_URL` | This customer’s `turso db show … --url` |
-   | `TURSO_AUTH_TOKEN` | This customer’s database token |
-   | `SESSION_SECRET` | Long random string (signs the httpOnly session cookie) |
+- [ ] **New Vercel project** for this customer (Add New Project → import `pesl98/new_p2p_indirect` or your fork). Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json).
+- [ ] **Dedicated Turso DB** (`turso db create procureflow-<customer>`). Do **not** reuse another customer’s URL or token.
+- [ ] Settings → Environment Variables — set **Production and Preview** (or All Environments). Preview URLs stay broken if vars are Production-only:
 
-4. Deploy. Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) as one Node Function (`includeFiles` keeps `schema.sql`), rewrites `/api/*` to that function, and serves `public/` on the CDN. There is **no cron**.
-5. Repeat for customer B as a **second project** (or duplicate). Do not share env vars across customers.
-6. After deploy: open the app and bootstrap the first admin (or run `npm run bootstrap-admin` against the same Turso env from a laptop).
+  | Variable | Value |
+  | --- | --- |
+  | `TURSO_DATABASE_URL` | This customer’s `turso db show … --url` |
+  | `TURSO_AUTH_TOKEN` | This customer’s database token |
+  | `SESSION_SECRET` | Long random string (signs the httpOnly session cookie) |
+
+- [ ] Leave `DEMO_PERSONA_SWITCHER` unset (login, not the demo header switcher).
+- [ ] **Redeploy** after saving env. Env changes do not apply to an already-built Preview.
+- [ ] From a laptop with the same `TURSO_*`: `npm run db:migrate` then `npm run bootstrap-admin` (or `npm run provision:customer -- --email … --password …`). Do **not** `npm run seed`.
+- [ ] Smoke the hostname: `BASE_URL=https://<customer-project>.vercel.app npm run smoke`
+
+Deploy itself: Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) as one Node Function (`includeFiles` keeps `schema.sql`), rewrites `/api/*` to that function, and serves `public/` on the CDN. There is **no cron**.
+
+Repeat as a **second project** (or duplicate) for customer B. To clone: duplicate the project, **replace** both Turso variables and `SESSION_SECRET`, Redeploy. Leaving the old URL in place would serve customer A’s data as customer B.
 
 Entrypoints (unchanged):
 
@@ -189,33 +208,28 @@ Entrypoints (unchanged):
 | [`server/src/app.js`](../server/src/app.js) | Express factory (API + lazy DB init). Does not `listen`. |
 | [`server/src/index.js`](../server/src/index.js) | Local listen on `PORT` (default 5000) |
 
-To clone an existing Vercel project: duplicate it, **replace** both Turso variables and `SESSION_SECRET`, Redeploy. Leaving the old URL in place would serve customer A’s data as customer B.
-
 ---
 
-## 7. Smoke URLs
+## 7. Smoke (`npm run smoke`)
 
-After migrate (laptop against the customer DB, or the Vercel hostname):
+After migrate (and usually bootstrap), verify the running app — laptop or Vercel. The script checks `/api/health`, `/api/auth/config`, `/api/users`, unauthenticated `/api/auth/me` (401), plus departments/catalog. Exit 1 on failure.
 
 ```bash
-# Laptop
+# Laptop (app must be listening)
 npm start
-curl -s http://localhost:5000/api/health
-# expect: { "status":"ok", "db":"sqlite" }  or  "db":"turso-http"
+npm run smoke
+# or: BASE_URL=http://127.0.0.1:5000 npm run smoke
 
-curl -s http://localhost:5000/api/auth/config
-# empty customer: bootstrapNeeded true
-# after bootstrap or seed: bootstrapNeeded false
+# After bootstrap, optional login check:
+npm run smoke -- --email ada@customer.com --password 'choose-a-long-password'
 
-curl -s http://localhost:5000/api/users
-# empty customer: []
-# demo seed: Alice / Bob / Carol / …
-
-curl -s http://localhost:5000/api/catalog
-curl -s http://localhost:5000/api/departments
+# Vercel customer hostname
+BASE_URL=https://<customer-project>.vercel.app npm run smoke
 ```
 
-On Vercel, same paths on `https://<customer-project>.vercel.app/api/health` (and `/api/auth/config`, `/api/users`, `/api/catalog`). Missing Turso on Vercel is **503** with a setup page (HTML) or JSON `{ "error": "TursoConfigError" }` for `/api/*`.
+Empty customer: `bootstrapNeeded: true` and `/api/users` → `[]`. After bootstrap or seed: `bootstrapNeeded: false`. Machine-readable: `npm run smoke -- --json`.
+
+Missing Turso on Vercel is **503** with a setup page (HTML) or JSON `{ "error": "TursoConfigError" }` for `/api/*`. Smoke prints a Production+Preview / Redeploy hint in that case.
 
 A 401 from Turso usually means an **org JWT** was pasted instead of `turso db tokens create`.
 
@@ -274,6 +288,7 @@ Also confirm:
 - [ ] Tokens are not in `vercel.json`, README, or screenshots
 - [ ] Seed was skipped for a real customer (or accepted as a wipe)
 - [ ] First admin was created via bootstrap (UI or `npm run bootstrap-admin`), not by sharing the demo password
+- [ ] `BASE_URL=https://<this-customer>.vercel.app npm run smoke` passed after Redeploy
 
 ---
 
@@ -328,6 +343,6 @@ npm run dev           # API :5000 + Vite :3000
 npm test
 ```
 
-Customer path: empty DB → `npm run db:migrate` → bootstrap admin → login → create users. Leave `DEMO_PERSONA_SWITCHER` unset.
+Customer path: empty DB → `npm run db:migrate` → `npm run bootstrap-admin` → `npm start` → `npm run smoke`. Leave `DEMO_PERSONA_SWITCHER` unset. Env template: [`.env.example`](../.env.example).
 
 See [README.md](../README.md) walkthroughs and [ARCHITECTURE.md](ARCHITECTURE.md) for the P2P control model.

@@ -4,7 +4,7 @@ A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application bui
 
 Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules, **per-tenant session auth + admin user CRUD**): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. Customer bootstrap and `SESSION_SECRET`: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
-**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env (`SESSION_SECRET` plus Turso or `PROCUREMENT_DB_PATH`), `npm run db:migrate` / `npm run db:status`, then first-admin bootstrap (UI or `npm run bootstrap-admin`). Optional `npm run seed` for the persona demo only. Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
+**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env from [`.env.example`](.env.example) (`SESSION_SECRET` plus Turso or `PROCUREMENT_DB_PATH`), then `npm run db:migrate` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
 
 ---
 
@@ -117,7 +117,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 
 14. **Sign-in (per customer DB) + optional demo persona switcher**
     - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`).
-    - Empty tenant: UI or `node server/src/bootstrapAdmin.js` creates the first admin. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+    - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
     - **Elena** (admin) manages users under Administration → Users.
     - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. Default customer deploy shows the login page.
     - Local seed demo password (README only, never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
@@ -154,7 +154,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    npm run db:migrate
    npm run db:status
    ```
-   See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** to stand up customer A vs customer B on two databases.
+   See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** to stand up customer A vs customer B on two databases. Wrapper (migrate, optional first admin, no seed): `npm run provision:customer`.
 
 4. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
    ```bash
@@ -163,7 +163,13 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    # or: npm run db:migrate -- --seed
    ```
 
-5. **Run unit tests** (`node --test`, SQLite in-memory):
+5. **Smoke a running deploy** (laptop or Vercel URL) — health, auth/config, users, session gate:
+   ```bash
+   npm run smoke
+   BASE_URL=https://<customer>.vercel.app npm run smoke
+   ```
+
+6. **Run unit tests** (`node --test`, SQLite in-memory):
    ```bash
    npm test
    ```
@@ -190,7 +196,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 ## ☁️ Deploy: Vercel + Turso
 
-**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then run `npm run db:migrate` against that env. Full install, secrets, smoke URLs, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md).
+**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then run `npm run db:migrate` → `npm run bootstrap-admin` → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Full install, secrets, Vercel checklist, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
 
 Local laptop default is **SQLite** at `server/data/procurement.db` (override with `PROCUREMENT_DB_PATH`). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, the same code uses Turso over **HTTP** (`POST /v2/pipeline`). No native libsql/`.so` is loaded — that crashes Vercel serverless.
 
@@ -238,18 +244,13 @@ export TURSO_AUTH_TOKEN=…
 npm run seed
 ```
 
-Then verify a read/write path (still on your laptop against Turso, or on the Preview URL after deploy):
+Then verify the deploy (laptop against Turso, or the Preview URL):
 
 ```bash
 # with the same TURSO_* env:
 npm start
-curl -s http://localhost:5000/api/health
-# expect: { "status":"ok", "db":"turso-http", ... }
-
-curl -s http://localhost:5000/api/users | head
-curl -s -X POST http://localhost:5000/api/catalog \
-  -H 'Content-Type: application/json' \
-  -d '{"sku":"SKU-SMOKE-1","name":"Smoke item","category":"Office Supplies","unit_price":199}'
+npm run smoke
+# or: BASE_URL=https://<customer>.vercel.app npm run smoke
 ```
 
 Omit the Turso vars to keep using local `server/data/procurement.db`.

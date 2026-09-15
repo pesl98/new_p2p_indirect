@@ -379,12 +379,17 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(architecture, /docs\/DEPLOYMENT\.md/);
     assert.match(deployment, /npm run db:migrate/);
     assert.match(deployment, /npm run db:status/);
+    assert.match(deployment, /npm run smoke/);
     assert.match(deployment, /one project/);
     assert.match(deployment, /persona/i);
     assert.match(deployment, /no.*shared-row `org_id`/i);
     assert.match(deployment, /SESSION_SECRET/);
     assert.match(deployment, /bootstrap-admin/);
+    assert.match(deployment, /Production and Preview/);
+    assert.match(deployment, /Redeploy/);
     assert.match(readme, /bootstrap-admin/);
+    assert.match(readme, /npm run smoke/);
+    assert.match(readme, /\.env\.example/);
   });
 
   test('CLI entrypoints and npm scripts exist', () => {
@@ -395,5 +400,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
     assert.equal(pkg.scripts['db:status'], 'node server/scripts/db-status.js');
     assert.equal(pkg.scripts['bootstrap-admin'], 'node server/src/bootstrapAdmin.js');
+    assert.equal(pkg.scripts.smoke, 'node server/scripts/smoke.js');
+    assert.equal(pkg.scripts['provision:customer'], 'node server/scripts/provision-customer.js');
   });
 });
