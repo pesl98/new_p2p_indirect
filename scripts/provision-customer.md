@@ -2,7 +2,7 @@
 
 Full narrative: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`).
 
-Persona switcher is **demo auth, not SSO**. Empty DB after migrate has no Alice/Bob users.
+Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users — bootstrap the first admin next.
 
 ## Customer A (Turso + Vercel)
 
@@ -13,11 +13,14 @@ export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-acme)"
 
 npm run db:migrate
 npm run db:status
-# Real tenant: stop here. Demo only: npm run seed   (WIPES this DB)
+# Real tenant: bootstrap first admin (do not seed)
+npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-password'
+# Demo only: npm run seed   (WIPES this DB)
 
 # Vercel project "procureflow-acme": set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN
-# on Production and Preview, deploy, then:
+# + SESSION_SECRET on Production and Preview, deploy, then:
 curl -s https://<acme>.vercel.app/api/health
+curl -s https://<acme>.vercel.app/api/auth/config
 curl -s https://<acme>.vercel.app/api/users
 ```
 
@@ -30,8 +33,9 @@ export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-beta)"
 
 npm run db:migrate
 npm run db:status
+npm run bootstrap-admin -- --email admin@beta.test --password 'choose-a-long-password'
 
-# Second Vercel project (or clone). Do not paste Acme’s URL/token.
+# Second Vercel project (or clone). Do not paste Acme’s URL/token. Also set SESSION_SECRET.
 curl -s https://<beta>.vercel.app/api/health
 ```
 

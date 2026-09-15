@@ -382,6 +382,9 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(deployment, /one project/);
     assert.match(deployment, /persona/i);
     assert.match(deployment, /no.*shared-row `org_id`/i);
+    assert.match(deployment, /SESSION_SECRET/);
+    assert.match(deployment, /bootstrap-admin/);
+    assert.match(readme, /bootstrap-admin/);
   });
 
   test('CLI entrypoints and npm scripts exist', () => {
@@ -391,5 +394,6 @@ describe('schema and docs stay aligned with provision', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
     assert.equal(pkg.scripts['db:status'], 'node server/scripts/db-status.js');
+    assert.equal(pkg.scripts['bootstrap-admin'], 'node server/src/bootstrapAdmin.js');
   });
 });

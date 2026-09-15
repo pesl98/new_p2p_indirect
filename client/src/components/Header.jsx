@@ -1,8 +1,8 @@
 import React from 'react';
-import { ShieldCheck, UserCheck, RefreshCw, Building2, Wallet } from 'lucide-react';
+import { RefreshCw, Building2, LogOut } from 'lucide-react';
 import { formatMoney } from '../money';
 
-export default function Header({ users, currentUser, onSelectUser, onRefreshData }) {
+export default function Header({ users, currentUser, sessionUser, demoPersonaSwitcher, onSelectUser, onRefreshData, onLogout }) {
   const getRoleBadge = (role) => {
     switch (role) {
       case 'requester':
@@ -35,6 +35,11 @@ export default function Header({ users, currentUser, onSelectUser, onRefreshData
                 <span className="bg-slate-100 text-slate-600 text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded border border-slate-200">
                   Indirect P2P
                 </span>
+                {demoPersonaSwitcher && (
+                  <span className="bg-amber-50 text-amber-800 text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded border border-amber-200">
+                    Demo mode
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 hidden sm:block">
                 Non-Production Procurement & 3-Way Match System
@@ -72,28 +77,42 @@ export default function Header({ users, currentUser, onSelectUser, onRefreshData
                 </div>
               </div>
 
-              {/* Persona Selector Dropdown */}
-              <div className="relative">
-                <select
-                  value={currentUser?.id || ''}
-                  onChange={(e) => {
-                    const selected = users.find(u => u.id === Number(e.target.value));
-                    if (selected) onSelectUser(selected);
-                  }}
-                  className="bg-white text-xs font-medium text-slate-800 border border-slate-300 rounded-lg py-1.5 px-2.5 pr-7 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer shadow-sm"
-                >
-                  {users.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.name} ({u.role.toUpperCase()}) - {u.department_code}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Persona Selector Dropdown (demo only) */}
+              {demoPersonaSwitcher && (
+                <div className="relative">
+                  <select
+                    value={currentUser?.id || ''}
+                    onChange={(e) => {
+                      const selected = users.find(u => u.id === Number(e.target.value));
+                      if (selected) onSelectUser(selected);
+                    }}
+                    className="bg-white text-xs font-medium text-slate-800 border border-slate-300 rounded-lg py-1.5 px-2.5 pr-7 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer shadow-sm"
+                    title="Demo persona switcher — not server identity"
+                  >
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.role.toUpperCase()}) - {u.department_code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {currentUser && (
                 <div className="hidden sm:block">
                   {getRoleBadge(currentUser.role)}
                 </div>
+              )}
+
+              {sessionUser && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  title="Sign out"
+                  className="p-2 text-slate-500 hover:text-rose-600 hover:bg-white rounded-lg transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>

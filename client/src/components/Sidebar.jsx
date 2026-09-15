@@ -18,7 +18,8 @@ import {
   Banknote,
   UserCog,
   UserCheck,
-  FileCheck
+  FileCheck,
+  Users
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -172,6 +173,11 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
         label: 'Department Approvers',
         icon: UserCog,
         desc: 'Assign step-1 department heads'
+      }, {
+        id: 'user_admin',
+        label: 'Users',
+        icon: Users,
+        desc: 'Create, edit, and deactivate users'
       }]
     : [];
 

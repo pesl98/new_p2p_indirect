@@ -17,6 +17,8 @@ import {
   PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL,
   PAYMENT_RUNS_TABLE_SQL,
   PAYMENT_RUN_ITEMS_TABLE_SQL,
+  USERS_STATUS_COLUMN_SQL,
+  USER_CREDENTIALS_TABLE_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL,
   purchaseRequisitionsContractUseNeedsSkippedRebuild,
@@ -77,6 +79,13 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(payCols.includes('run_number'));
     assert.ok(payCols.includes('payable_total_cents'));
     assert.ok(payCols.includes('payment_reference'));
+    const userCols = raw.prepare(`PRAGMA table_info(users)`).all().map((col) => col.name);
+    assert.ok(userCols.includes('status'));
+    assert.ok(userCols.includes('approval_limit'));
+    assert.ok(raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'user_credentials'`).get());
+    const credCols = raw.prepare(`PRAGMA table_info(user_credentials)`).all().map((col) => col.name);
+    assert.ok(credCols.includes('password_hash'));
+    assert.ok(credCols.includes('user_id'));
   });
 
   test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {
@@ -119,6 +128,16 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(items.length, 1);
     assert.match(items[0], /CREATE TABLE IF NOT EXISTS payment_run_items/i);
     assert.match(items[0], /UNIQUE\(run_id, invoice_id\)/);
+  });
+
+  test('user auth ALTER/CREATE statements are each a single Turso-split statement', () => {
+    const statusSql = splitSqlScript(USERS_STATUS_COLUMN_SQL);
+    assert.equal(statusSql.length, 1);
+    assert.match(statusSql[0], /ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'/);
+    const creds = splitSqlScript(USER_CREDENTIALS_TABLE_SQL);
+    assert.equal(creds.length, 1);
+    assert.match(creds[0], /CREATE TABLE IF NOT EXISTS user_credentials/i);
+    assert.match(creds[0], /password_hash TEXT NOT NULL/);
   });
 
   test('purchase_requisitions contract-link ALTER statements are single Turso-split statements', () => {
@@ -370,6 +389,12 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(columnNames(db, 'payment_runs').includes('run_number'));
     assert.ok(columnNames(db, 'payment_run_items').includes('invoice_id'));
     assert.ok(columnNames(db, 'payment_run_items').includes('payable_total_cents'));
+    assert.ok(columnNames(db, 'users').includes('status'));
+    assert.equal(
+      db.prepare(`SELECT status FROM users WHERE id = 1`).get().status,
+      'active'
+    );
+    assert.ok(columnNames(db, 'user_credentials').includes('password_hash'));
   });
 
   test('applySchema rebuilds purchase_requisitions CHECK so skipped opt-out works on #26-era tables', async () => {

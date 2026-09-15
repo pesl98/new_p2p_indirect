@@ -10,6 +10,7 @@
     "seed": "node server/src/seed.js",
     "db:migrate": "node server/scripts/db-migrate.js",
     "db:status": "node server/scripts/db-status.js",
+    "bootstrap-admin": "node server/src/bootstrapAdmin.js",
     "start": "node server/src/index.js",
     "start:server": "node server/src/index.js",
     "dev:server": "node --watch server/src/index.js",
@@ -19,6 +20,7 @@
     "build": "npm --prefix client install && npm --prefix client run build && rm -rf public && mkdir -p public && cp -r client/dist/. public/"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2"
   },

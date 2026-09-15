@@ -9,10 +9,12 @@
     "seed": "node src/seed.js",
     "db:migrate": "node scripts/db-migrate.js",
     "db:status": "node scripts/db-status.js",
+    "bootstrap-admin": "node src/bootstrapAdmin.js",
     "dev": "node --watch src/index.js",
     "test": "node --test src/*.test.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
     "express": "^4.19.2"

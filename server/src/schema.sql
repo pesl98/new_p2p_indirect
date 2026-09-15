@@ -19,7 +19,16 @@ CREATE TABLE IF NOT EXISTS users (
   title TEXT,
   approval_limit INTEGER DEFAULT 0,
   avatar TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
   FOREIGN KEY (department_id) REFERENCES departments(id)
+);
+
+-- Password hashes live here, never on users and never in API responses.
+CREATE TABLE IF NOT EXISTS user_credentials (
+  user_id INTEGER PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  password_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS budgets (

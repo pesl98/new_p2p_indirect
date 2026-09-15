@@ -142,5 +142,8 @@ export function uniqueConflictMessage(error, fallback) {
   if (/catalog_items\.sku/i.test(msg) || /UNIQUE constraint failed: catalog_items\.sku/i.test(msg)) {
     return 'Catalog SKU already exists';
   }
+  if (/users\.email/i.test(msg) || /UNIQUE constraint failed: users\.email/i.test(msg)) {
+    return 'A user with that email already exists';
+  }
   return fallback;
 }
