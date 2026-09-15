@@ -205,6 +205,41 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
   };
 }
 
+/**
+ * Shared mark-paid write: status → paid, payment_reference, PAID audit.
+ * Does **not** post budget actuals — those move at Approve for Payment.
+ * Call inside an existing transaction (payment-run execute) or wrap via markInvoicePaid.
+ */
+export async function applyInvoicePaid(db, invoice, { payment_reference, actor } = {}) {
+  const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
+  const billedCents = asCents(invoice.total_amount);
+  const payableCents = invoicePayableCents(invoice);
+  const isShortPay = invoice.payable_total_cents != null && invoice.payable_total_cents !== '';
+  const amountNote = isShortPay
+    ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
+    : `$${formatCents(payableCents)}`;
+  const actorName = actor || 'Finance Lead';
+
+  await db.prepare(`
+    UPDATE invoices
+    SET status = 'paid', payment_reference = ?
+    WHERE id = ?
+  `).run(ref, invoice.id);
+
+  await db.prepare(`
+    INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+    VALUES ('invoice', ?, 'PAID', ?, ?)
+  `).run(invoice.id, actorName, `Marked as paid with reference ${ref} (${amountNote})`);
+
+  return {
+    payment_reference: ref,
+    billed_total_cents: billedCents,
+    payable_total_cents: payableCents,
+    is_short_pay: isShortPay,
+    amount_note: amountNote
+  };
+}
+
 export async function markInvoicePaid(db, id, { payment_reference, payer_name, actor_name } = {}) {
   const invoice = await db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(id);
   if (!invoice) {
@@ -216,34 +251,19 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name, a
   assertDuplicateAllowsMarkPaid(invoice);
 
   const ref = payment_reference || `ACH-${Date.now().toString().slice(-6)}`;
-  const billedCents = asCents(invoice.total_amount);
-  const payableCents = invoicePayableCents(invoice);
-  const isShortPay = invoice.payable_total_cents != null && invoice.payable_total_cents !== '';
-  const amountNote = isShortPay
-    ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
-    : `$${formatCents(payableCents)}`;
   const actor = payer_name || actor_name || 'Finance Lead';
 
   const payTransaction = db.transaction(async () => {
-    await db.prepare(`
-      UPDATE invoices
-      SET status = 'paid', payment_reference = ?
-      WHERE id = ?
-    `).run(ref, id);
-
-    await db.prepare(`
-      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-      VALUES ('invoice', ?, 'PAID', ?, ?)
-    `).run(id, actor, `Marked as paid with reference ${ref} (${amountNote})`);
+    return applyInvoicePaid(db, invoice, { payment_reference: ref, actor });
   });
 
-  await payTransaction();
+  const paid = await payTransaction();
   return {
-    message: isShortPay
-      ? `Invoice marked as paid. Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}.`
+    message: paid.is_short_pay
+      ? `Invoice marked as paid. Billed $${formatCents(paid.billed_total_cents)} → Pay $${formatCents(paid.payable_total_cents)}.`
       : 'Invoice marked as paid.',
-    payment_reference: ref,
-    billed_total_cents: billedCents,
-    payable_total_cents: payableCents
+    payment_reference: paid.payment_reference,
+    billed_total_cents: paid.billed_total_cents,
+    payable_total_cents: paid.payable_total_cents
   };
 }

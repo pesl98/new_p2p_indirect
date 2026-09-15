@@ -14,7 +14,8 @@ import {
   AlertCircle,
   FileEdit,
   Copy,
-  FileCheck
+  FileCheck,
+  Banknote
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
@@ -113,6 +114,8 @@ function eventIcon(kind) {
       return FileSpreadsheet;
     case 'duplicate':
       return Copy;
+    case 'payment_run':
+      return Banknote;
     case 'ap_event':
       return CreditCard;
     default:
@@ -181,7 +184,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ }) {
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">P2P Document Trail</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            One chronological chain for a buying journey: PR → approvals → PO(s) → GRN / SES → invoice → AP.
+            One chronological chain for a buying journey: PR → approvals → PO(s) → GRN / SES → invoice → AP / payment run.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

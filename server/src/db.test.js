@@ -15,6 +15,8 @@ import {
   CONTRACT_ITEMS_TABLE_SQL,
   PURCHASE_REQUISITIONS_SOURCE_CONTRACT_ID_SQL,
   PURCHASE_REQUISITIONS_CONTRACT_USE_STATUS_SQL,
+  PAYMENT_RUNS_TABLE_SQL,
+  PAYMENT_RUN_ITEMS_TABLE_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL,
   purchaseRequisitionsContractUseNeedsSkippedRebuild,
@@ -69,6 +71,12 @@ describe('Turso/SQLite schema migrations', () => {
     const prSql = raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'purchase_requisitions'`).get().sql;
     assert.match(prSql, /contract_use_status TEXT NOT NULL DEFAULT 'none'/);
     assert.match(prSql, /'skipped'/);
+    assert.ok(raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'payment_runs'`).get());
+    assert.ok(raw.prepare(`SELECT sql FROM sqlite_master WHERE name = 'payment_run_items'`).get());
+    const payCols = raw.prepare(`PRAGMA table_info(payment_runs)`).all().map((col) => col.name);
+    assert.ok(payCols.includes('run_number'));
+    assert.ok(payCols.includes('payable_total_cents'));
+    assert.ok(payCols.includes('payment_reference'));
   });
 
   test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {
@@ -99,6 +107,18 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(items.length, 1);
     assert.match(items[0], /CREATE TABLE IF NOT EXISTS contract_items/i);
     assert.match(items[0], /unit_price INTEGER NOT NULL/);
+  });
+
+  test('payment_runs CREATE TABLE statements are each a single Turso-split statement', () => {
+    const header = splitSqlScript(PAYMENT_RUNS_TABLE_SQL);
+    assert.equal(header.length, 1);
+    assert.match(header[0], /CREATE TABLE IF NOT EXISTS payment_runs/i);
+    assert.match(header[0], /run_number TEXT UNIQUE NOT NULL/);
+    assert.match(header[0], /payable_total_cents INTEGER NOT NULL DEFAULT 0/);
+    const items = splitSqlScript(PAYMENT_RUN_ITEMS_TABLE_SQL);
+    assert.equal(items.length, 1);
+    assert.match(items[0], /CREATE TABLE IF NOT EXISTS payment_run_items/i);
+    assert.match(items[0], /UNIQUE\(run_id, invoice_id\)/);
   });
 
   test('purchase_requisitions contract-link ALTER statements are single Turso-split statements', () => {
@@ -347,6 +367,9 @@ describe('Turso/SQLite schema migrations', () => {
       db.prepare(`SELECT source_contract_id, contract_use_status FROM purchase_requisitions WHERE id = 1`).get().contract_use_status,
       'none'
     );
+    assert.ok(columnNames(db, 'payment_runs').includes('run_number'));
+    assert.ok(columnNames(db, 'payment_run_items').includes('invoice_id'));
+    assert.ok(columnNames(db, 'payment_run_items').includes('payable_total_cents'));
   });
 
   test('applySchema rebuilds purchase_requisitions CHECK so skipped opt-out works on #26-era tables', async () => {

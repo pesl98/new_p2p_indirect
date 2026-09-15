@@ -349,6 +349,45 @@ export const api = {
     );
   },
 
+  getPaymentRuns: (status = '') => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    const qs = params.toString();
+    return fetch(`${API_BASE}/payment-runs${qs ? `?${qs}` : ''}`).then((r) =>
+      jsonOk(r, 'Failed to load payment runs')
+    );
+  },
+  getPaymentRunDetail: (id) =>
+    fetch(`${API_BASE}/payment-runs/${id}`).then((r) => jsonOk(r, 'Failed to load payment run')),
+  getEligiblePaymentRunInvoices: () =>
+    fetch(`${API_BASE}/payment-runs/eligible-invoices`).then((r) =>
+      jsonOk(r, 'Failed to load eligible invoices')
+    ),
+  createPaymentRun: async (data) => {
+    const r = await fetch(`${API_BASE}/payment-runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to create payment run');
+  },
+  executePaymentRun: async (id, data) => {
+    const r = await fetch(`${API_BASE}/payment-runs/${id}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to execute payment run');
+  },
+  cancelPaymentRun: async (id, data) => {
+    const r = await fetch(`${API_BASE}/payment-runs/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to cancel payment run');
+  },
+
   getInvoiceExceptions: (queue = 'open') => {
     const params = new URLSearchParams();
     if (queue) params.append('queue', queue);

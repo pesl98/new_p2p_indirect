@@ -412,4 +412,34 @@ describe('document trail — edge lookups', () => {
     assert.equal(buyerEvent.tab, 'buyer_inbox');
     assert.equal(buyerEvent.actor_name, 'Alice Chen');
   });
+
+  test('payment-run execute appears on the trail only when the audit row exists', async () => {
+    const db = await createTestDb();
+    await seedStandalonePo(db);
+    await db.exec(`
+      INSERT INTO invoices
+        (id, invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, created_at)
+      VALUES
+        (30, 'INV-PAY-1', 2, 1, '2026-09-05', '2026-10-05', 7200, 0, 7200, 'paid', 'perfect_match', '2026-09-05 11:00:00');
+    `);
+
+    const before = await getDocumentTrail(db, { po_number: 'PO-2026-002' });
+    assert.equal((before.purchase_orders[0].invoices[0].payment_run_events || []).length, 0);
+    assert.ok(!before.timeline.some((event) => event.kind === 'payment_run'));
+
+    await db.exec(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
+      VALUES
+        ('invoice', 30, 'PAID', 'David Miller', 'Marked as paid with reference ACH-PAY-4419 ($72.00)', '2026-09-14 10:00:00'),
+        ('invoice', 30, 'PAYMENT_RUN_EXECUTED', 'David Miller', 'Paid on payment run PAY-2026-001 with shared ACH reference ACH-PAY-4419 ($72.00)', '2026-09-14 10:00:01');
+    `);
+
+    const after = await getDocumentTrail(db, { po_number: 'PO-2026-002' });
+    assert.equal(after.purchase_orders[0].invoices[0].payment_run_events[0].action, 'PAYMENT_RUN_EXECUTED');
+    const event = after.timeline.find((row) => row.kind === 'payment_run');
+    assert.ok(event);
+    assert.equal(event.title, 'Payment run executed');
+    assert.equal(event.tab, 'payment_runs');
+    assert.match(event.details, /PAY-2026-001/);
+  });
 });

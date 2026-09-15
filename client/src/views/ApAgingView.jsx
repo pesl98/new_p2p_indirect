@@ -8,6 +8,7 @@ import {
   GitBranch,
   ShieldAlert,
   Wallet,
+  Banknote,
   X
 } from 'lucide-react';
 import { api } from '../api';
@@ -104,12 +105,14 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
   const [paying, setPaying] = useState(null);
   const [paymentReference, setPaymentReference] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
   const loadQueue = async (nextBucket = bucket) => {
     setLoading(true);
     try {
       const data = await api.getApAging({ bucket: nextBucket, days: 7 });
       setPayload(data);
+      setSelectedIds([]);
     } catch (err) {
       console.error(err);
     } finally {
@@ -130,6 +133,12 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
 
   const counts = payload?.counts || {};
   const invoices = payload?.invoices || [];
+
+  const toggleSelected = (id) => {
+    setSelectedIds((current) => (
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    ));
+  };
 
   const chipCount = (id) => {
     if (id === 'all') return counts.open_payable ?? 0;
@@ -178,9 +187,20 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">AP Aging / Payables</h2>
           <p className="text-xs text-slate-500 mt-0.5 max-w-3xl">{subtitle}</p>
         </div>
-        <div className="text-[11px] font-semibold text-slate-500 bg-slate-100 rounded-lg px-3 py-1.5 inline-flex items-center space-x-1.5">
-          <CalendarClock className="w-3.5 h-3.5" />
-          <span>{counts.open_payable || 0} open payable</span>
+        <div className="flex items-center gap-2">
+          {selectedIds.length > 0 && (
+            <button
+              onClick={() => onNavigate?.('payment_runs', { invoiceIds: selectedIds })}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1.5"
+            >
+              <Banknote className="w-3.5 h-3.5" />
+              <span>Create payment run ({selectedIds.length})</span>
+            </button>
+          )}
+          <div className="text-[11px] font-semibold text-slate-500 bg-slate-100 rounded-lg px-3 py-1.5 inline-flex items-center space-x-1.5">
+            <CalendarClock className="w-3.5 h-3.5" />
+            <span>{counts.open_payable || 0} open payable</span>
+          </div>
         </div>
       </div>
 
@@ -214,6 +234,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
+                <th className="py-3 px-4 w-8"></th>
                 <th className="py-3 px-4">Invoice #</th>
                 <th className="py-3 px-4">Supplier</th>
                 <th className="py-3 px-4">PO / Requester</th>
@@ -227,11 +248,11 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading payables queue...</td>
+                  <td colSpan="9" className="py-8 text-center text-slate-400">Loading payables queue...</td>
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">
+                  <td colSpan="9" className="py-8 text-center text-slate-400">
                     {bucket === 'ready_to_approve'
                       ? 'No matched invoices waiting to approve. Approve from Invoices & Matching.'
                       : bucket === 'paid'
@@ -242,6 +263,16 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
               ) : (
                 invoices.map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50/70 transition-colors">
+                    <td className="py-3 px-4">
+                      {inv.status === 'approved_for_payment' ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(inv.id)}
+                          onChange={() => toggleSelected(inv.id)}
+                          aria-label={`Select ${inv.invoice_number} for payment run`}
+                        />
+                      ) : null}
+                    </td>
                     <td className="py-3 px-4 font-mono font-bold text-slate-900">{inv.invoice_number}</td>
                     <td className="py-3 px-4 font-medium text-slate-900">{inv.supplier_name}</td>
                     <td className="py-3 px-4">
