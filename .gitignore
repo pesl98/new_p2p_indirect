@@ -16,6 +16,7 @@ server/data/
 # Environment and local configurations
 .env
 .env.local
+.vercel/
 
 # Logs
 *.log

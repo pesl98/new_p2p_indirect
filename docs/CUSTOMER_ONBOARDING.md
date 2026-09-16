@@ -4,7 +4,7 @@ This is the operator runbook. Follow it top to bottom for **one new customer**. 
 
 Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the real customer slug, display name, and first-admin email.
 
-**Happy path:** Turso database → Vercel project → env → migrate → bootstrap → smoke → first login.
+**Happy path:** Turso database → export secrets → Vercel project + `vercel link` → `npm run vercel:customer -- --apply` → migrate → bootstrap → smoke → first login.
 
 | Next | Where |
 | --- | --- |
@@ -39,12 +39,18 @@ Do this once on the operator laptop before the first customer.
 - [ ] **Vercel account** that can create a new project from that repo
 - [ ] **Turso account** (create at [turso.tech](https://turso.tech) if needed)
 - [ ] **Turso CLI**
+- [ ] **Vercel CLI** (`npm i -g vercel`, then `vercel login`) — used by `npm run vercel:customer -- --apply`
 - [ ] A **password manager** for URL, database token, `SESSION_SECRET`, and the first-admin password. Never commit `.env`, tokens, or `*.db`.
 
 ```bash
 # Turso CLI (macOS / Linux)
 curl -sSfL https://get.tur.so/install.sh | bash
 turso --version
+
+# Vercel CLI (needed for npm run vercel:customer -- --apply)
+npm i -g vercel
+vercel login
+vercel --version
 
 # Repo
 git clone https://github.com/pesl98/new_p2p_indirect.git
@@ -122,9 +128,9 @@ Store the 64-character hex string. You will paste it into Vercel and export it o
 
 ---
 
-## 5. Create a **new Vercel project**
+## 5. Create a **new Vercel project** (human, once)
 
-Same git repo, **new project** — do not add this customer as a second domain on an existing ProcureFlow project.
+Same git repo, **new project** — do not add this customer as a second domain on an existing ProcureFlow project. This step stays in the dashboard (the env script will **not** create a project).
 
 1. Vercel dashboard → **Add New… → Project**.
 2. **Import** `pesl98/new_p2p_indirect` (or your fork). Grant GitHub access if Vercel asks.
@@ -132,6 +138,17 @@ Same git repo, **new project** — do not add this customer as a second domain o
 4. Framework: leave as detected / Other. **Do not** invent a build command — [`vercel.json`](../vercel.json) already sets `buildCommand` to `npm run build`.
 5. Suggested project name: `procureflow-acme`.
 6. Create the project. The first deploy may 503 until env vars exist — that is expected.
+
+On the laptop (once per operator / clone), link that project so later commands know the target:
+
+```bash
+# Once per laptop
+npm i -g vercel
+vercel login
+vercel link --yes --project procureflow-acme
+```
+
+`vercel link` binds this checkout to the **existing** dashboard project. If the project is missing, create it in the dashboard first — do not invent a second customer on an existing ProcureFlow project.
 
 What Vercel does on each deploy:
 
@@ -146,7 +163,17 @@ There is **no cron**.
 
 ## 6. Set environment variables (Production **and** Preview)
 
-Vercel project → **Settings → Environment Variables**. Set all three for **Production and Preview** (or **All Environments**). Preview URLs stay broken if the vars are Production-only.
+Keep the **same** `TURSO_*` / `SESSION_SECRET` already exported in this shell (steps 3–4). The script **refuses to invent secrets**.
+
+```bash
+# See the Production+Preview checklist + exact commands (no Vercel network, no mutation)
+npm run vercel:customer -- --slug acme
+
+# Set/update the three vars on Production and Preview, then redeploy
+npm run vercel:customer -- --slug acme --apply
+```
+
+`--slug acme` targets project `procureflow-acme` (override with `--project <name>`). `--apply` requires the Vercel CLI, `vercel login`, and `vercel link`. Help: `npm run vercel:customer -- --help`.
 
 | Variable | Value | Production | Preview |
 | --- | --- | --- | --- |
@@ -154,7 +181,7 @@ Vercel project → **Settings → Environment Variables**. Set all three for **P
 | `TURSO_AUTH_TOKEN` | Output of `turso db tokens create procureflow-acme` | ✓ | ✓ |
 | `SESSION_SECRET` | The hex string from step 4 | ✓ | ✓ |
 
-Leave **unset** (do not add):
+Leave **unset** (the script will not add this):
 
 | Variable | Why |
 | --- | --- |
@@ -162,17 +189,20 @@ Leave **unset** (do not add):
 
 Do **not** set `PROCUREMENT_DB_PATH` on Vercel. Local SQLite is not available in serverless.
 
-Save. **Env changes do not apply to an already-built deployment.**
+**Env changes do not apply to an already-built deployment** — `--apply` redeploys so they take effect.
+
+Dashboard fallback (if you cannot use the CLI): Settings → Environment Variables → set all three for **Production and Preview** (or **All Environments**), then Redeploy. Preview URLs stay broken if the vars are Production-only.
 
 ---
 
 ## 7. Deploy / Redeploy after env change
 
-1. Deployments → ⋮ on the latest deployment → **Redeploy** (or push a no-op if you prefer a fresh git deploy).
-2. Wait until Ready.
-3. Copy the Production URL (`https://procureflow-acme.vercel.app` or the project’s alias).
+`npm run vercel:customer -- --slug acme --apply` already rebuilds the latest Production deployment (`vercel redeploy`). If there is no Production deployment yet, it falls back to `vercel deploy --prod --yes`.
 
-Opening the URL before Redeploy often still shows the 503 Turso setup page. Redeploy, then continue.
+1. Wait until Ready.
+2. Copy the Production URL (`https://procureflow-acme.vercel.app` or the project’s alias).
+
+Opening the URL before Redeploy often still shows the 503 Turso setup page. If you set env in the dashboard instead of the script, Redeploy there, then continue.
 
 ---
 
@@ -319,7 +349,7 @@ npm run provision:customer -- \
   --password 'choose-a-long-password'
 ```
 
-Then: **new** Vercel project (or duplicate Acme’s project), **replace** both Turso variables and `SESSION_SECRET`, Production + Preview, Redeploy, smoke `BASE_URL=https://<beta>.vercel.app`.
+Then: **new** Vercel project `procureflow-beta` (or duplicate Acme’s project), `vercel link --yes --project procureflow-beta`, then `npm run vercel:customer -- --slug beta --apply` (replaces Turso URL/token + `SESSION_SECRET` on Production + Preview and redeploys). Smoke `BASE_URL=https://procureflow-beta.vercel.app`.
 
 Leaving Acme’s URL in place would serve Acme’s data as Beta.
 
@@ -345,9 +375,9 @@ Copy this into the ticket and tick as you go.
 - [ ] `turso db tokens create procureflow-acme` stored (**database token**, not org JWT)
 - [ ] New `SESSION_SECRET` generated and stored
 - [ ] **New** Vercel project; root = repo root; build from `vercel.json`
-- [ ] Env on **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`
+- [ ] `vercel link --yes --project procureflow-acme`
+- [ ] `npm run vercel:customer -- --slug acme` (dry-run) then `--apply` (Production + Preview env + redeploy)
 - [ ] `DEMO_PERSONA_SWITCHER` left unset
-- [ ] **Redeploy** after saving env
 - [ ] Laptop `export` of the same `TURSO_*` (+ `SESSION_SECRET`)
 - [ ] `npm run db:migrate` then `npm run bootstrap-admin` (or `npm run provision:customer -- --email … --password …`)
 - [ ] **Did not** `npm run seed`
@@ -394,7 +424,7 @@ Do not paste the demo password onto a live tenant you intend to keep.
 
 The HTML setup page or JSON `{ "error": "TursoConfigError" }` means `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are not both visible to that deployment.
 
-- Set both on **Production and Preview**, then **Redeploy**.
+- Re-run `npm run vercel:customer -- --slug <customer> --apply` (or set both on **Production and Preview** in the dashboard, then **Redeploy**).
 - Smoke prints a Production+Preview / Redeploy hint in this case.
 - Partial credentials (URL xor token) are fail-closed — the CLI will not silently open a local SQLite file.
 
@@ -406,11 +436,11 @@ The token is the wrong kind (org/platform JWT, or a token for a **different** da
 turso db tokens create procureflow-acme
 ```
 
-Paste that into `TURSO_AUTH_TOKEN` (Production + Preview) and Redeploy. Do not use `turso auth token`.
+Export it and re-run `npm run vercel:customer -- --slug acme --apply` (or paste into `TURSO_AUTH_TOKEN` on Production + Preview and Redeploy). Do not use `turso auth token`.
 
 ### Preview URL broken; Production works
 
-Preview is missing env. Add the three variables to Preview (or All Environments) and Redeploy **that** Preview. Env edits do not retrofit an old Preview deployment.
+Preview is missing env. Re-run `npm run vercel:customer -- --slug <customer> --apply` (it sets Preview as well as Production) and Redeploy **that** Preview. Env edits do not retrofit an old Preview deployment.
 
 ### `SESSION_SECRET` missing / sessions die after Redeploy
 
@@ -444,7 +474,7 @@ npm run db:migrate
 ```bash
 turso db destroy procureflow-acme --yes
 turso db create procureflow-acme
-# new URL + new database token → update Vercel env → Redeploy
+# new URL + new database token → npm run vercel:customer -- --slug acme --apply
 export TURSO_DATABASE_URL="$(turso db show procureflow-acme --url)"
 export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-acme)"
 npm run db:migrate

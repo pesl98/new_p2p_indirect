@@ -1,6 +1,6 @@
 # ProcureFlow customer deployment
 
-> **Operators:** the step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (Turso → Vercel project → env → migrate → bootstrap → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
+> **Operators:** the step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (Turso → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → bootstrap → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
 
 ProcureFlow is installed **one database per customer**. Customer A and customer B never share a SQLite file or Turso database. There is **no** shared-row `org_id` multi-tenancy. Authentication is therefore **local to that database** — a login on tenant A cannot see users in tenant B.
 
@@ -84,7 +84,7 @@ export TURSO_AUTH_TOKEN='…'              # from `turso db tokens create …`
 export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
 ```
 
-On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Production and Preview** (or All Environments). Preview URLs stay broken if the vars are Production-only. Env changes do not apply to an already-built Preview — Redeploy.
+On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Production and Preview** (or All Environments) with `npm run vercel:customer -- --slug <customer> --apply` (dry-run first; secrets stay in the shell). Preview URLs stay broken if the vars are Production-only. Env changes do not apply to an already-built Preview — Redeploy.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -183,9 +183,18 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 
 ### Per-customer checklist
 
-- [ ] **New Vercel project** for this customer (Add New Project → import `pesl98/new_p2p_indirect` or your fork). Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json).
+- [ ] **New Vercel project** for this customer (Add New Project → import `pesl98/new_p2p_indirect` or your fork). Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json). Suggested name: `procureflow-<customer>`.
 - [ ] **Dedicated Turso DB** (`turso db create procureflow-<customer>`). Do **not** reuse another customer’s URL or token.
-- [ ] Settings → Environment Variables — set **Production and Preview** (or All Environments). Preview URLs stay broken if vars are Production-only:
+- [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` already exported (the script **refuses to invent secrets**):
+
+  ```bash
+  vercel login                                          # once
+  vercel link --yes --project procureflow-<customer>    # once per clone
+  npm run vercel:customer -- --slug <customer>          # dry-run (no network)
+  npm run vercel:customer -- --slug <customer> --apply  # Production + Preview env + redeploy
+  ```
+
+  `--apply` sets/updates:
 
   | Variable | Value |
   | --- | --- |
@@ -193,14 +202,18 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
   | `TURSO_AUTH_TOKEN` | This customer’s database token |
   | `SESSION_SECRET` | Long random string (signs the httpOnly session cookie) |
 
+  on **Production and Preview**. It never sets `DEMO_PERSONA_SWITCHER`. `--project <name>` overrides the default `procureflow-<slug>`. If the directory is not linked, the script prints `vercel link` / dashboard next steps and exits — it does **not** create Vercel projects.
+
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (login, not the demo header switcher).
-- [ ] **Redeploy** after saving env. Env changes do not apply to an already-built Preview.
+- [ ] `--apply` **redeploys** Production so env takes effect (`vercel redeploy` of the latest production deployment, or `vercel deploy --prod --yes` if none exists). Env changes do not apply to an already-built Preview.
 - [ ] From a laptop with the same `TURSO_*`: `npm run db:migrate` then `npm run bootstrap-admin` (or `npm run provision:customer -- --email … --password …`). Do **not** `npm run seed`.
 - [ ] Smoke the hostname: `BASE_URL=https://<customer-project>.vercel.app npm run smoke`
 
+Dashboard fallback: Settings → Environment Variables → Production and Preview (or All Environments) → Redeploy. Prefer the CLI so operators do not hunt the dashboard for every customer.
+
 Deploy itself: Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) as one Node Function (`includeFiles` keeps `schema.sql`), rewrites `/api/*` to that function, and serves `public/` on the CDN. There is **no cron**.
 
-Repeat as a **second project** (or duplicate) for customer B. To clone: duplicate the project, **replace** both Turso variables and `SESSION_SECRET`, Redeploy. Leaving the old URL in place would serve customer A’s data as customer B.
+Repeat as a **second project** (or duplicate) for customer B. To clone: duplicate the project, `vercel link --yes --project procureflow-<b>`, export B’s Turso pair + a new `SESSION_SECRET`, then `npm run vercel:customer -- --slug <b> --apply`. Leaving the old URL in place would serve customer A’s data as customer B.
 
 Entrypoints (unchanged):
 
@@ -287,7 +300,7 @@ Store these in Vercel env / a password manager. **Never commit** `.env`, tokens,
 Also confirm:
 
 - [ ] Customer A and B have **different** Turso URLs (or different SQLite paths)
-- [ ] Preview **and** Production env vars are set (`TURSO_*` and `SESSION_SECRET`)
+- [ ] Preview **and** Production env vars are set (`TURSO_*` and `SESSION_SECRET`) — `npm run vercel:customer -- --slug <customer> --apply`
 - [ ] `.env` / `.env.local` are gitignored (already)
 - [ ] Tokens are not in `vercel.json`, README, or screenshots
 - [ ] Seed was skipped for a real customer (or accepted as a wipe)
@@ -312,7 +325,7 @@ npm run db:migrate
 # Destroy is irreversible. Recreate a new empty DB, then migrate.
 turso db destroy procureflow-acme --yes
 turso db create procureflow-acme
-# new URL + token → update env / Vercel → Redeploy
+# new URL + token → npm run vercel:customer -- --slug acme --apply
 npm run db:migrate
 ```
 

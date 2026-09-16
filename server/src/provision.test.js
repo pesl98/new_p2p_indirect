@@ -394,7 +394,8 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(deployment, /no.*shared-row `org_id`/i);
     assert.match(deployment, /SESSION_SECRET/);
     assert.match(deployment, /bootstrap-admin/);
-    assert.match(deployment, /Production and Preview/);
+    assert.match(deployment, /vercel:customer/);
+    assert.match(deployment, /--apply/);
     assert.match(deployment, /Redeploy/);
     assert.match(onboarding, /turso db create procureflow-/);
     assert.match(onboarding, /--tursodb/);
@@ -405,6 +406,8 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(onboarding, /npm run db:migrate/);
     assert.match(onboarding, /bootstrap-admin/);
     assert.match(onboarding, /provision:customer/);
+    assert.match(onboarding, /vercel:customer/);
+    assert.match(onboarding, /--apply/);
     assert.match(onboarding, /Do not seed/);
     assert.match(onboarding, /npm run smoke/);
     assert.match(onboarding, /SESSION_SECRET/);
@@ -420,11 +423,13 @@ describe('schema and docs stay aligned with provision', () => {
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-status.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'scripts/provision-customer.md')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'docs/CUSTOMER_ONBOARDING.md')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/vercel-customer.js')));
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
     assert.equal(pkg.scripts['db:status'], 'node server/scripts/db-status.js');
     assert.equal(pkg.scripts['bootstrap-admin'], 'node server/src/bootstrapAdmin.js');
     assert.equal(pkg.scripts.smoke, 'node server/scripts/smoke.js');
     assert.equal(pkg.scripts['provision:customer'], 'node server/scripts/provision-customer.js');
+    assert.equal(pkg.scripts['vercel:customer'], 'node server/scripts/vercel-customer.js');
   });
 });

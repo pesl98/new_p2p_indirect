@@ -172,6 +172,7 @@ describe('scripts and env template', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     assert.equal(pkg.scripts.smoke, 'node server/scripts/smoke.js');
     assert.equal(pkg.scripts['provision:customer'], 'node server/scripts/provision-customer.js');
+    assert.equal(pkg.scripts['vercel:customer'], 'node server/scripts/vercel-customer.js');
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/smoke.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/provision-customer.js')));
     const envExample = fs.readFileSync(path.join(repoRoot, '.env.example'), 'utf8');
@@ -182,6 +183,7 @@ describe('scripts and env template', () => {
     assert.match(envExample, /DEMO_PERSONA_SWITCHER/);
     assert.match(envExample, /BASE_URL/);
     assert.match(envExample, /CUSTOMER_ONBOARDING/);
+    assert.match(envExample, /vercel:customer/);
     assert.doesNotMatch(envExample, /libsql:\/\/.+\.(turso|io).+=/);
   });
 });

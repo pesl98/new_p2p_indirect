@@ -1,6 +1,7 @@
 /**
  * Empty-customer provision: migrate schema, optionally bootstrap the first
- * admin. Never seeds. Turso/Vercel CLIs stay human (interactive auth).
+ * admin. Never seeds. Turso CLI stays human (interactive auth). Vercel
+ * Production+Preview env + redeploy: `npm run vercel:customer`.
  */
 
 import { runProvisionCli } from './provision.js';
@@ -28,7 +29,8 @@ Env (same as db:migrate / bootstrap-admin):
   PROCUREMENT_DB_PATH                     Local SQLite file
   SESSION_SECRET                          Customer / Vercel session cookie key
 
-Turso db create / Vercel project still need human CLI login.
+Turso db create still needs human CLI login.
+Vercel env + redeploy: npm run vercel:customer -- --slug <customer> [--apply]
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
 

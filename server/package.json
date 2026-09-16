@@ -11,6 +11,7 @@
     "db:status": "node scripts/db-status.js",
     "bootstrap-admin": "node src/bootstrapAdmin.js",
     "provision:customer": "node scripts/provision-customer.js",
+    "vercel:customer": "node scripts/vercel-customer.js",
     "smoke": "node scripts/smoke.js",
     "dev": "node --watch src/index.js",
     "test": "node --test src/*.test.js"

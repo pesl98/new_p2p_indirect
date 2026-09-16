@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Empty-customer path: schema migrate, optional first-admin bootstrap.
- * Never seeds. Turso/Vercel CLIs stay human.
+ * Never seeds. Turso CLI stays human; Vercel env + redeploy is
+ * `npm run vercel:customer`.
  *
  *   npm run provision:customer
  *   npm run provision:customer -- --email admin@acme.test --password '…'
