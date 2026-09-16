@@ -1,8 +1,10 @@
 # Provision a ProcureFlow customer (operator checklist)
 
-Full narrative: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`).
+Full narrative: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
 
-Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users — bootstrap the first admin next.
+Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users — bootstrap the first admin next. **Do not seed** a live tenant.
+
+Real-customer sequence: **migrate → bootstrap-admin → smoke**. Wrapper (no Turso/Vercel CLI): `npm run provision:customer`.
 
 ## Customer A (Turso + Vercel)
 
@@ -10,18 +12,31 @@ Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switch
 turso db create procureflow-acme
 export TURSO_DATABASE_URL="$(turso db show procureflow-acme --url)"
 export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-acme)"
+export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
 
+# Empty tenant — no demo personas
 npm run db:migrate
 npm run db:status
-# Real tenant: bootstrap first admin (do not seed)
 npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-password'
-# Demo only: npm run seed   (WIPES this DB)
+# equivalent: npm run provision:customer -- --email admin@acme.test --password 'choose-a-long-password'
 
-# Vercel project "procureflow-acme": set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN
-# + SESSION_SECRET on Production and Preview, deploy, then:
-curl -s https://<acme>.vercel.app/api/health
-curl -s https://<acme>.vercel.app/api/auth/config
-curl -s https://<acme>.vercel.app/api/users
+# Demo only (WIPES this DB): npm run seed
+```
+
+### Vercel project `procureflow-acme`
+
+- [ ] New Vercel project (do not share this project with another customer)
+- [ ] Env **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET` (this customer’s values only)
+- [ ] Leave `DEMO_PERSONA_SWITCHER` unset
+- [ ] **Redeploy** after saving env (old Previews keep stale env)
+- [ ] Never paste another customer’s Turso URL here
+
+```bash
+# After deploy — replace the hostname
+export BASE_URL=https://<acme>.vercel.app
+npm run smoke
+# optional login check:
+npm run smoke -- --email admin@acme.test --password 'choose-a-long-password'
 ```
 
 ## Customer B (must be a different database)
@@ -30,13 +45,13 @@ curl -s https://<acme>.vercel.app/api/users
 turso db create procureflow-beta
 export TURSO_DATABASE_URL="$(turso db show procureflow-beta --url)"
 export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-beta)"
+export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
 
-npm run db:migrate
-npm run db:status
-npm run bootstrap-admin -- --email admin@beta.test --password 'choose-a-long-password'
+npm run provision:customer -- --email admin@beta.test --password 'choose-a-long-password'
 
-# Second Vercel project (or clone). Do not paste Acme’s URL/token. Also set SESSION_SECRET.
-curl -s https://<beta>.vercel.app/api/health
+# Second Vercel project (or clone). Replace Turso URL/token + SESSION_SECRET.
+# Production + Preview, then Redeploy. Do not paste Acme’s URL.
+BASE_URL=https://<beta>.vercel.app npm run smoke
 ```
 
 ## Local SQLite pair (no Turso)
@@ -45,8 +60,11 @@ curl -s https://<beta>.vercel.app/api/health
 unset TURSO_DATABASE_URL TURSO_AUTH_TOKEN
 
 export PROCUREMENT_DB_PATH="$PWD/server/data/acme.db"
-npm run db:migrate && npm run db:status
+npm run provision:customer -- --email admin@acme.test --password 'choose-a-long-password'
+npm start
+BASE_URL=http://127.0.0.1:5000 npm run smoke
 
+# Other terminal / later: customer B is a different file
 export PROCUREMENT_DB_PATH="$PWD/server/data/beta.db"
 npm run db:migrate && npm run db:status
 ```
@@ -57,6 +75,7 @@ npm run db:migrate && npm run db:status
 npm run db:migrate -- --seed     # demo wipe + personas
 npm run db:migrate -- --turso    # fail-closed if TURSO_* missing
 npm run db:status -- --json
+npm run smoke -- --json
 ```
 
 ## Wipe / rollback

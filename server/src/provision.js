@@ -71,6 +71,7 @@ Env:
 
 Isolation: one Turso database or SQLite file per customer. No org_id row tenancy.
 Empty tenant: after migrate, create the first admin (UI or npm run bootstrap-admin).
+Then: BASE_URL=http://127.0.0.1:5000 npm run smoke
 See docs/DEPLOYMENT.md and scripts/provision-customer.md.
 `;
 
