@@ -31,7 +31,7 @@ Env:
   SMOKE_TIMEOUT_MS         Per-request timeout (default ${DEFAULT_TIMEOUT_MS})
 
 Does not seed. Real customer: db:migrate → bootstrap-admin → smoke.
-See docs/DEPLOYMENT.md and scripts/provision-customer.md.
+See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
 
 function write(stream, text) {

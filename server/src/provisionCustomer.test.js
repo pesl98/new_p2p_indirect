@@ -181,6 +181,7 @@ describe('scripts and env template', () => {
     assert.match(envExample, /PROCUREMENT_DB_PATH/);
     assert.match(envExample, /DEMO_PERSONA_SWITCHER/);
     assert.match(envExample, /BASE_URL/);
+    assert.match(envExample, /CUSTOMER_ONBOARDING/);
     assert.doesNotMatch(envExample, /libsql:\/\/.+\.(turso|io).+=/);
   });
 });

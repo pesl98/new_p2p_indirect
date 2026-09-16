@@ -1,8 +1,10 @@
 # ProcureFlow customer deployment
 
+> **Operators:** the step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (Turso → Vercel project → env → migrate → bootstrap → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
+
 ProcureFlow is installed **one database per customer**. Customer A and customer B never share a SQLite file or Turso database. There is **no** shared-row `org_id` multi-tenancy. Authentication is therefore **local to that database** — a login on tenant A cannot see users in tenant B.
 
-This is the human install path. Operator copy-paste lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
+Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
 
 **Real customer sequence:** `npm run db:migrate` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (optional `--email` / `--password`; **never seeds**). Demo wipe stays opt-in: `npm run seed`.
 
@@ -233,6 +235,8 @@ Missing Turso on Vercel is **503** with a setup page (HTML) or JSON `{ "error": 
 
 A 401 from Turso usually means an **org JWT** was pasted instead of `turso db tokens create`.
 
+Operator troubleshooting (login with users but no passwords, Preview-only env, missing `SESSION_SECRET`, deprovision): **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md#troubleshooting)**.
+
 ---
 
 ## 8. Auth API
@@ -345,4 +349,4 @@ npm test
 
 Customer path: empty DB → `npm run db:migrate` → `npm run bootstrap-admin` → `npm start` → `npm run smoke`. Leave `DEMO_PERSONA_SWITCHER` unset. Env template: [`.env.example`](../.env.example).
 
-See [README.md](../README.md) walkthroughs and [ARCHITECTURE.md](ARCHITECTURE.md) for the P2P control model.
+New-customer walkthrough: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). See [README.md](../README.md) walkthroughs and [ARCHITECTURE.md](ARCHITECTURE.md) for the P2P control model.
