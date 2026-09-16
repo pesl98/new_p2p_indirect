@@ -1,6 +1,6 @@
 # Provision a ProcureFlow customer (operator checklist)
 
-Full narrative: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
+**Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) (Turso → Vercel → env → migrate → bootstrap → smoke → first login). Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
 
 Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users — bootstrap the first admin next. **Do not seed** a live tenant.
 
@@ -26,10 +26,13 @@ npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-pas
 ### Vercel project `procureflow-acme`
 
 - [ ] New Vercel project (do not share this project with another customer)
+- [ ] Root directory = repo root; build comes from `vercel.json` (`npm run build`)
 - [ ] Env **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET` (this customer’s values only)
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset
 - [ ] **Redeploy** after saving env (old Previews keep stale env)
 - [ ] Never paste another customer’s Turso URL here
+- [ ] `TURSO_AUTH_TOKEN` is from `turso db tokens create` (database token, **not** an org JWT)
+- [ ] Database is classic libSQL (`turso db create`, **not** `--tursodb`)
 
 ```bash
 # After deploy — replace the hostname
@@ -38,6 +41,8 @@ npm run smoke
 # optional login check:
 npm run smoke -- --email admin@acme.test --password 'choose-a-long-password'
 ```
+
+First login: open the Production URL, sign in as the bootstrap admin, then **Administration → Users** for everyone else. Optional departments / department heads: [CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md#11-optional-departments-and-department-approvers) (no create-department UI; insert SQL then map heads).
 
 ## Customer B (must be a different database)
 

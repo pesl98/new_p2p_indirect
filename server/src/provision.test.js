@@ -307,6 +307,7 @@ describe('db:migrate / db:status against isolated SQLite files', () => {
       stderr: captureStreams().stderr
     });
     assert.equal(code, 0);
+    assert.match(stdout.text, /docs\/CUSTOMER_ONBOARDING.md/);
     assert.match(stdout.text, /docs\/DEPLOYMENT.md/);
     assert.equal(stdout.text, MIGRATE_HELP);
   });
@@ -370,13 +371,21 @@ describe('schema and docs stay aligned with provision', () => {
     assert.deepEqual(created, [...EXPECTED_TABLES].sort());
   });
 
-  test('README and ARCHITECTURE point at DEPLOYMENT.md', () => {
+  test('README points operators at CUSTOMER_ONBOARDING.md first; ARCHITECTURE keeps DEPLOYMENT.md', () => {
     const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
     const architecture = fs.readFileSync(path.join(repoRoot, 'docs/ARCHITECTURE.md'), 'utf8');
     const deployment = fs.readFileSync(path.join(repoRoot, 'docs/DEPLOYMENT.md'), 'utf8');
-    assert.match(readme, /docs\/DEPLOYMENT\.md/);
+    const onboarding = fs.readFileSync(path.join(repoRoot, 'docs/CUSTOMER_ONBOARDING.md'), 'utf8');
+    const onboardIdx = readme.indexOf('docs/CUSTOMER_ONBOARDING.md');
+    const deployIdx = readme.indexOf('docs/DEPLOYMENT.md');
+    assert.ok(onboardIdx !== -1, 'README must link CUSTOMER_ONBOARDING.md');
+    assert.ok(deployIdx !== -1, 'README must still link DEPLOYMENT.md');
+    assert.ok(onboardIdx < deployIdx, 'README must point at CUSTOMER_ONBOARDING.md before DEPLOYMENT.md');
+    assert.match(readme, /Onboard a new customer/);
     assert.match(architecture, /Customer isolation = DB per tenant/);
     assert.match(architecture, /docs\/DEPLOYMENT\.md/);
+    assert.match(architecture, /CUSTOMER_ONBOARDING\.md/);
+    assert.match(deployment, /CUSTOMER_ONBOARDING\.md/);
     assert.match(deployment, /npm run db:migrate/);
     assert.match(deployment, /npm run db:status/);
     assert.match(deployment, /npm run smoke/);
@@ -387,6 +396,20 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(deployment, /bootstrap-admin/);
     assert.match(deployment, /Production and Preview/);
     assert.match(deployment, /Redeploy/);
+    assert.match(onboarding, /turso db create procureflow-/);
+    assert.match(onboarding, /--tursodb/);
+    assert.match(onboarding, /database token/);
+    assert.match(onboarding, /org JWT/i);
+    assert.match(onboarding, /Production and Preview/);
+    assert.match(onboarding, /DEMO_PERSONA_SWITCHER/);
+    assert.match(onboarding, /npm run db:migrate/);
+    assert.match(onboarding, /bootstrap-admin/);
+    assert.match(onboarding, /provision:customer/);
+    assert.match(onboarding, /Do not seed/);
+    assert.match(onboarding, /npm run smoke/);
+    assert.match(onboarding, /SESSION_SECRET/);
+    assert.match(onboarding, /second Turso DB/i);
+    assert.match(onboarding, /legacy seed/i);
     assert.match(readme, /bootstrap-admin/);
     assert.match(readme, /npm run smoke/);
     assert.match(readme, /\.env\.example/);
@@ -396,6 +419,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-migrate.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-status.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'scripts/provision-customer.md')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'docs/CUSTOMER_ONBOARDING.md')));
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
     assert.equal(pkg.scripts['db:status'], 'node server/scripts/db-status.js');

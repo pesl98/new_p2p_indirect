@@ -4,7 +4,7 @@ Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite 
 
 This document describes the control model implemented in code.
 
-**Authentication (this phase):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Admin user CRUD uses `req.user` (session), not spoofable body ids. See [DEPLOYMENT.md](DEPLOYMENT.md) for first-admin bootstrap, `SESSION_SECRET`, and `npm run smoke`.
+**Authentication (this phase):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Admin user CRUD uses `req.user` (session), not spoofable body ids. Operator runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md) (first-admin bootstrap, `SESSION_SECRET`, `npm run smoke`).
 
 **Phased cut — legacy persona ids:** most existing P2P mutating routes still trust body fields (`approver_id`, `received_by`, `requester_id`, `actor_name`). Anyone who can reach those APIs can still send any persona id. That is **not** a full SoD rewrite. Follow-up work should require login on those routes and prefer `req.user`. The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`); default customer deploy uses login.
 
@@ -574,7 +574,7 @@ npm run seed
 # or: npm run db:migrate -- --seed
 # Demo login: alice.chen@company.com / ProcureFlow!demo
 # Optional header switcher: DEMO_PERSONA_SWITCHER=1
-# Customer: SESSION_SECRET=… and first-admin bootstrap — see DEPLOYMENT.md
+# Customer: SESSION_SECRET=… and first-admin bootstrap — see docs/CUSTOMER_ONBOARDING.md
 
 # Unit tests (node --test) — SQLite in-memory plus Turso HTTP mocks
 npm test
@@ -590,7 +590,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 
 ## Known demo limits (out of scope)
 
-- **Auth is per-tenant session cookies, not a full SoD rewrite.** Login, logout, `/api/auth/me`, and admin user CRUD (`req.user.role === 'admin'`) are enforced. Legacy P2P routes still accept body persona ids (`approver_id`, `requester_id`, `actor_name`, …) until a follow-up. Org Admin department-head `PUT` and catalog PATCH stay demo-open like before. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default). Customer isolation is **database-per-tenant** ([docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy. Do not treat remaining unauthenticated routes as an authorization boundary.
+- **Auth is per-tenant session cookies, not a full SoD rewrite.** Login, logout, `/api/auth/me`, and admin user CRUD (`req.user.role === 'admin'`) are enforced. Legacy P2P routes still accept body persona ids (`approver_id`, `requester_id`, `actor_name`, …) until a follow-up. Org Admin department-head `PUT` and catalog PATCH stay demo-open like before. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default). Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy. Do not treat remaining unauthenticated routes as an authorization boundary.
 - Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
@@ -616,7 +616,7 @@ Pointing two deployments at the same URL merges those customers. Partial Turso c
 
 `db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
 
-Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and [`scripts/provision-customer.md`](../scripts/provision-customer.md). Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
+Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (operator runbook) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md). Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
 
 ## Local vs Vercel / Turso
 
@@ -630,4 +630,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production. Apply schema with `npm run db:migrate` (empty customer) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[docs/DEPLOYMENT.md](DEPLOYMENT.md)** and the README deploy section.
+Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production. Apply schema with `npm run db:migrate` (empty customer) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.

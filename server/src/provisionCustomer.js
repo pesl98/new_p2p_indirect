@@ -29,7 +29,7 @@ Env (same as db:migrate / bootstrap-admin):
   SESSION_SECRET                          Customer / Vercel session cookie key
 
 Turso db create / Vercel project still need human CLI login.
-See docs/DEPLOYMENT.md and scripts/provision-customer.md.
+See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
 
 function write(stream, text) {

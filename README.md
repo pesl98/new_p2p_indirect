@@ -2,9 +2,13 @@
 
 A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application built with **React**, **Node.js / Express**, and **SQLite** locally (`better-sqlite3`) or **Turso** (libSQL over HTTP) on Vercel. Specifically designed for non-production goods and services (IT hardware/software, office furniture, facilities/MRO, consulting, SaaS subscriptions, and operational expenses).
 
-Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules, **per-tenant session auth + admin user CRUD**): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. Customer bootstrap and `SESSION_SECRET`: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules, **per-tenant session auth + admin user CRUD**): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-**Customer install (one database per customer):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — create an empty Turso DB or SQLite file, set env from [`.env.example`](.env.example) (`SESSION_SECRET` plus Turso or `PROCUREMENT_DB_PATH`), then `npm run db:migrate` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
+## Onboard a new customer
+
+**[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — the operator runbook: Turso database → Vercel project → env → `db:migrate` → `bootstrap-admin` → smoke → first login. One database and one Vercel project per customer.
+
+Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Wrapper: `npm run provision:customer` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
 
 ---
 
@@ -117,7 +121,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 
 14. **Sign-in (per customer DB) + optional demo persona switcher**
     - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`).
-    - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+    - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md).
     - **Elena** (admin) manages users under Administration → Users.
     - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. Default customer deploy shows the login page.
     - Local seed demo password (README only, never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
@@ -154,7 +158,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    npm run db:migrate
    npm run db:status
    ```
-   See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** to stand up customer A vs customer B on two databases. Wrapper (migrate, optional first admin, no seed): `npm run provision:customer`.
+   See **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** to stand up customer A vs customer B on two databases. Wrapper (migrate, optional first admin, no seed): `npm run provision:customer`. Technical reference: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 4. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
    ```bash
@@ -196,7 +200,9 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 ## ☁️ Deploy: Vercel + Turso
 
-**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then run `npm run db:migrate` → `npm run bootstrap-admin` → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Full install, secrets, Vercel checklist, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
+**Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — Turso create → Vercel project → Production+Preview env → migrate → bootstrap → smoke → first login.
+
+**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then run `npm run db:migrate` → `npm run bootstrap-admin` → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Technical reference, secrets, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
 
 Local laptop default is **SQLite** at `server/data/procurement.db` (override with `PROCUREMENT_DB_PATH`). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, the same code uses Turso over **HTTP** (`POST /v2/pipeline`). No native libsql/`.so` is loaded — that crashes Vercel serverless.
 
