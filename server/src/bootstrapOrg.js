@@ -37,16 +37,16 @@ Usage:
   npm run provision:customer -- --with-org [--email … --password …]
 
   Applies schema first (same as npm run db:migrate), then inserts the
-  default five cost centers by code. Existing department rows are skipped
-  (never renamed or wiped). Missing FY budgets are inserted; existing
-  budget totals are left alone unless --force-budget.
+  default five cost centers by code. Idempotent: never wipes. Existing
+  department rows are skipped (never renamed). Missing FY budgets are
+  inserted; existing budget totals are left alone unless --force-budget.
 
   Does NOT create users, credentials, suppliers, catalog, PRs, or demo
   personas. Never pass --seed (that is the destructive demo wipe).
 
   Default skeleton:
     MKT Marketing, ITE IT, FAC Facilities, HRP HR, ADM Finance
-    FY ${DEFAULT_FISCAL_YEAR} total_budget = ${DEFAULT_BUDGET_CENTS} cents ($${formatCents(DEFAULT_BUDGET_CENTS)})
+    FY ${DEFAULT_FISCAL_YEAR} total_budget = ${DEFAULT_BUDGET_CENTS} cents (${formatUsdFromCents(DEFAULT_BUDGET_CENTS)})
     committed_amount / actual_spent = 0
     approver_user_id left unset (map heads in Admin → Department Approvers)
 
@@ -70,6 +70,13 @@ Three tiers:
 
 See docs/CUSTOMER_ONBOARDING.md §11 and docs/DEPLOYMENT.md.
 `;
+
+function formatUsdFromCents(cents) {
+  return `$${Number(formatCents(cents)).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
 
 function write(stream, text) {
   if (!stream) return;
@@ -185,7 +192,7 @@ export function formatOrgSummary(result) {
   const lines = [
     'ProcureFlow org skeleton',
     `  fiscal year:   ${result.fiscalYear}`,
-    `  budget cents:  ${result.budgetCents} ($${formatCents(result.budgetCents)}; ${forceNote})`,
+    `  budget cents:  ${result.budgetCents} (${formatUsdFromCents(result.budgetCents)}; ${forceNote})`,
     `  departments:   inserted ${list(result.departments.inserted)}`,
     `  departments:   skipped  ${list(result.departments.skipped)}`,
     `  budgets:       created  ${list(result.budgets.created)}`,
