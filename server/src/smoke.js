@@ -30,7 +30,7 @@ Env:
   SMOKE_EMAIL / SMOKE_PASSWORD   Optional login check after bootstrap
   SMOKE_TIMEOUT_MS         Per-request timeout (default ${DEFAULT_TIMEOUT_MS})
 
-Does not seed. Real customer: db:migrate → bootstrap-admin → smoke.
+Does not seed. Real customer: vercel:customer --apply → db:migrate → bootstrap-admin → smoke.
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
 

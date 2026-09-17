@@ -6,9 +6,9 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 
 ## Onboard a new customer
 
-**[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — the operator runbook: Turso database → Vercel project → env → `db:migrate` → `bootstrap-admin` → smoke → first login. One database and one Vercel project per customer.
+**[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — the operator runbook: Turso database → export secrets → Vercel project → `npm run vercel:customer -- --apply` → `db:migrate` → `bootstrap-admin` → smoke → first login. One database and one Vercel project per customer.
 
-Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Wrapper: `npm run provision:customer` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
+Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Vercel Production+Preview env: `npm run vercel:customer` (dry-run default; `--apply` to mutate). Wrapper: `npm run provision:customer` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
 
 ---
 
@@ -158,7 +158,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    npm run db:migrate
    npm run db:status
    ```
-   See **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** to stand up customer A vs customer B on two databases. Wrapper (migrate, optional first admin, no seed): `npm run provision:customer`. Technical reference: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+   See **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** to stand up customer A vs customer B on two databases. Vercel env + redeploy: `npm run vercel:customer -- --slug <customer> [--apply]`. Wrapper (migrate, optional first admin, no seed): `npm run provision:customer`. Technical reference: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 4. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
    ```bash
@@ -200,9 +200,9 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 ## ☁️ Deploy: Vercel + Turso
 
-**Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — Turso create → Vercel project → Production+Preview env → migrate → bootstrap → smoke → first login.
+**Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — Turso create → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → bootstrap → smoke → first login.
 
-**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then run `npm run db:migrate` → `npm run bootstrap-admin` → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Technical reference, secrets, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
+**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then `npm run vercel:customer -- --slug <customer> --apply` → `npm run db:migrate` → `npm run bootstrap-admin` → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Technical reference, secrets, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
 
 Local laptop default is **SQLite** at `server/data/procurement.db` (override with `PROCUREMENT_DB_PATH`). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, the same code uses Turso over **HTTP** (`POST /v2/pipeline`). No native libsql/`.so` is loaded — that crashes Vercel serverless.
 
@@ -232,7 +232,16 @@ turso db tokens create procureflow
 
 ### Vercel environment variables
 
-In the Vercel project → Settings → Environment Variables, set **both** for **Production and Preview** (or All Environments). Preview URLs stay broken if the vars are Production-only:
+Export this customer’s `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` in the shell, then:
+
+```bash
+npm run vercel:customer -- --slug <customer>            # dry-run (no Vercel network)
+npm run vercel:customer -- --slug <customer> --apply    # Production + Preview + redeploy
+```
+
+The script **refuses to invent secrets**, never sets `DEMO_PERSONA_SWITCHER`, and does not create a Turso DB. Project name defaults to `procureflow-<slug>` (`--project` to override). The directory must already be linked (`vercel link --yes --project procureflow-<slug>`); if not, it prints dashboard / `vercel link` next steps.
+
+Dashboard fallback: project → Settings → Environment Variables, set **both** Turso vars and `SESSION_SECRET` for **Production and Preview** (or All Environments). Preview URLs stay broken if the vars are Production-only.
 
 | Variable | Value |
 | --- | --- |
@@ -240,7 +249,7 @@ In the Vercel project → Settings → Environment Variables, set **both** for *
 | `TURSO_AUTH_TOKEN` | Token from `turso db tokens create …` |
 | `SESSION_SECRET` | Long random string (signs the httpOnly session cookie). Required for customer deploys. |
 
-Redeploy after saving. Env changes do not apply to an already-built Preview.
+`--apply` redeploys after saving. Env changes do not apply to an already-built Preview.
 
 ### Seed against Turso (from your laptop)
 

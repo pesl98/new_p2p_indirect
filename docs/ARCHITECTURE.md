@@ -566,6 +566,7 @@ npm run db:migrate
 npm run db:status
 # First admin (empty tenant only): npm run bootstrap-admin -- --email … --password …
 # Wrapper: npm run provision:customer -- --email … --password …
+# Vercel env + redeploy: npm run vercel:customer -- --slug <customer> [--apply]
 # Verify a running app: npm run smoke   (BASE_URL=https://<customer>.vercel.app npm run smoke)
 
 # Seed sample data (destructive wipe — demo only)
@@ -630,4 +631,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` on Preview **and** Production. Apply schema with `npm run db:migrate` (empty customer) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Export those plus `SESSION_SECRET`, then `npm run vercel:customer -- --slug <customer> --apply` to set Production **and** Preview and redeploy. Apply schema with `npm run db:migrate` (empty customer) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.
