@@ -11,6 +11,7 @@
     "db:migrate": "node server/scripts/db-migrate.js",
     "db:status": "node server/scripts/db-status.js",
     "bootstrap-admin": "node server/src/bootstrapAdmin.js",
+    "bootstrap-org": "node server/scripts/bootstrap-org.js",
     "provision:customer": "node server/scripts/provision-customer.js",
     "vercel:customer": "node server/scripts/vercel-customer.js",
     "smoke": "node server/scripts/smoke.js",

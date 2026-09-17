@@ -1,10 +1,12 @@
 # Provision a ProcureFlow customer (operator checklist)
 
-**Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) (Turso → export secrets → Vercel project → `vercel:customer --apply` → migrate → bootstrap → smoke → first login). Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
+**Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) (Turso → export secrets → Vercel project → `vercel:customer --apply` → migrate → bootstrap-org → bootstrap-admin → smoke → first login). Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
 
-Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users — bootstrap the first admin next. **Do not seed** a live tenant.
+Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users and 0 departments — bootstrap the org skeleton, then the first admin. **Do not seed** a live tenant.
 
-Real-customer sequence: **Turso create → vercel:customer --apply → migrate → bootstrap-admin → smoke**. Wrapper for migrate + optional admin (no Turso CLI): `npm run provision:customer`. Vercel Production+Preview env + redeploy: `npm run vercel:customer`.
+Real-customer sequence: **Turso create → vercel:customer --apply → migrate → bootstrap-org → bootstrap-admin → smoke**. Wrapper for migrate + optional org + optional admin (no Turso CLI): `npm run provision:customer -- --with-org`. Vercel Production+Preview env + redeploy: `npm run vercel:customer`.
+
+Three tiers: empty schema (`db:migrate`) → org skeleton (`bootstrap-org`, non-destructive) → destructive demo (`seed`).
 
 ## Customer A (Turso + Vercel)
 
@@ -23,8 +25,9 @@ npm run vercel:customer -- --slug acme --apply        # Production + Preview env
 # Empty tenant — no demo personas
 npm run db:migrate
 npm run db:status
+npm run bootstrap-org
 npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-password'
-# equivalent: npm run provision:customer -- --email admin@acme.test --password 'choose-a-long-password'
+# equivalent: npm run provision:customer -- --with-org --email admin@acme.test --password 'choose-a-long-password'
 
 # Demo only (WIPES this DB): npm run seed
 ```
@@ -49,7 +52,7 @@ npm run smoke
 npm run smoke -- --email admin@acme.test --password 'choose-a-long-password'
 ```
 
-First login: open the Production URL, sign in as the bootstrap admin, then **Administration → Users** for everyone else. Optional departments / department heads: [CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md#11-optional-departments-and-department-approvers) (no create-department UI; insert SQL then map heads).
+First login: open the Production URL, sign in as the bootstrap admin, then **Administration → Users** for everyone else. Cost centers: [CUSTOMER_ONBOARDING.md §11](../docs/CUSTOMER_ONBOARDING.md#11-cost-centers-and-department-approvers-bootstrap-org) (`npm run bootstrap-org`; no create-department UI; map heads after users exist).
 
 ## Customer B (must be a different database)
 
@@ -62,7 +65,7 @@ export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).
 # Second Vercel project (or clone). Do not paste Acme’s URL.
 vercel link --yes --project procureflow-beta
 npm run vercel:customer -- --slug beta --apply
-npm run provision:customer -- --email admin@beta.test --password 'choose-a-long-password'
+npm run provision:customer -- --with-org --email admin@beta.test --password 'choose-a-long-password'
 
 BASE_URL=https://procureflow-beta.vercel.app npm run smoke
 ```
@@ -73,7 +76,7 @@ BASE_URL=https://procureflow-beta.vercel.app npm run smoke
 unset TURSO_DATABASE_URL TURSO_AUTH_TOKEN
 
 export PROCUREMENT_DB_PATH="$PWD/server/data/acme.db"
-npm run provision:customer -- --email admin@acme.test --password 'choose-a-long-password'
+npm run provision:customer -- --with-org --email admin@acme.test --password 'choose-a-long-password'
 npm start
 BASE_URL=http://127.0.0.1:5000 npm run smoke
 
@@ -82,9 +85,11 @@ export PROCUREMENT_DB_PATH="$PWD/server/data/beta.db"
 npm run db:migrate && npm run db:status
 ```
 
-`db:migrate` applies schema + existing migrations only. `--seed` is opt-in and destructive.
+`db:migrate` applies schema + existing migrations only. `bootstrap-org` inserts the default five cost centers + FY budgets (idempotent). `--seed` is opt-in and destructive.
 
 ```bash
+npm run bootstrap-org
+npm run bootstrap-org -- --json
 npm run db:migrate -- --seed     # demo wipe + personas
 npm run db:migrate -- --turso    # fail-closed if TURSO_* missing
 npm run db:status -- --json

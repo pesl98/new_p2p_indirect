@@ -3,7 +3,7 @@ import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
 
 console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
 console.warn('Do not run this against a live customer database.');
-console.warn('Real tenant: npm run db:migrate && npm run bootstrap-admin && npm run smoke');
+console.warn('Real tenant: npm run db:migrate && npm run bootstrap-org && npm run bootstrap-admin && npm run smoke');
 
 const db = await getDb();
 

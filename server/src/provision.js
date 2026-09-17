@@ -70,7 +70,8 @@ Env:
   PROCUREMENT_DB_PATH                     Local SQLite file (default server/data/procurement.db)
 
 Isolation: one Turso database or SQLite file per customer. No org_id row tenancy.
-Empty tenant: after migrate, create the first admin (UI or npm run bootstrap-admin).
+Empty tenant: after migrate, optional npm run bootstrap-org (cost centers + FY
+budgets; not seed), then first admin (UI or npm run bootstrap-admin).
 Then: BASE_URL=http://127.0.0.1:5000 npm run smoke
 See docs/CUSTOMER_ONBOARDING.md (operator runbook) and docs/DEPLOYMENT.md.
 `;

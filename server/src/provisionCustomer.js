@@ -1,30 +1,38 @@
 /**
- * Empty-customer provision: migrate schema, optionally bootstrap the first
- * admin. Never seeds. Turso CLI stays human (interactive auth). Vercel
+ * Empty-customer provision: migrate schema, optionally org skeleton, optionally
+ * first admin. Never seeds. Turso CLI stays human (interactive auth). Vercel
  * Production+Preview env + redeploy: `npm run vercel:customer`.
  */
 
 import { runProvisionCli } from './provision.js';
 import { runBootstrapAdminCli } from './bootstrapAdmin.js';
+import { runBootstrapOrgCli } from './bootstrapOrg.js';
 
 export const DEFAULT_SMOKE_BASE_URL = 'http://127.0.0.1:5000';
 
 export const PROVISION_CUSTOMER_HELP = `ProcureFlow empty-customer provision (no demo seed)
 
 Usage:
-  npm run provision:customer -- [--email admin@customer.com --password '…'] [--turso]
+  npm run provision:customer -- [--email admin@customer.com --password '…'] [--with-org] [--turso]
 
   1. Apply schema (same as npm run db:migrate). Does NOT load demo data.
-  2. If --email and --password are set, create the first admin
+  2. If --with-org, insert default cost centers + FY budgets
+     (same as npm run bootstrap-org). Idempotent; never wipes or renames.
+  3. If --email and --password are set, create the first admin
      (same as npm run bootstrap-admin). Skipped when omitted.
-  3. Print the smoke command. Start the app (or use the Vercel URL), then:
+  4. Print the smoke command. Start the app (or use the Vercel URL), then:
 
        BASE_URL=http://127.0.0.1:5000 npm run smoke
 
+  Org skeleton only: npm run bootstrap-org
   Demo wipe (destructive, opt-in): npm run seed
   Never pass --seed to this command.
 
-Env (same as db:migrate / bootstrap-admin):
+  Three tiers: empty schema (migrate) → org skeleton (bootstrap-org) →
+  destructive demo (seed). Department heads are mapped later in
+  Admin → Department Approvers after users exist.
+
+Env (same as db:migrate / bootstrap-admin / bootstrap-org):
   TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together)
   PROCUREMENT_DB_PATH                     Local SQLite file
   SESSION_SECRET                          Customer / Vercel session cookie key
@@ -66,6 +74,10 @@ export function parseCustomerProvisionArgs(argv = []) {
       flags.add('requireTurso');
       continue;
     }
+    if (arg === '--with-org') {
+      flags.add('withOrg');
+      continue;
+    }
     if (arg === '--json') {
       flags.add('json');
       continue;
@@ -98,6 +110,7 @@ export function parseCustomerProvisionArgs(argv = []) {
   return {
     seed: flags.has('seed'),
     requireTurso: flags.has('requireTurso'),
+    withOrg: flags.has('withOrg'),
     json: flags.has('json'),
     help: flags.has('help'),
     email: values.email ? String(values.email).trim() : null,
@@ -111,6 +124,7 @@ export function parseCustomerProvisionArgs(argv = []) {
 
 export function nextStepsText({
   bootstrapped = false,
+  orgBootstrapped = false,
   baseUrl = DEFAULT_SMOKE_BASE_URL
 } = {}) {
   const lines = [''];
@@ -121,6 +135,21 @@ export function nextStepsText({
     );
   } else {
     lines.push('First admin created. Sign in at /login with that email and password.');
+  }
+  if (orgBootstrapped) {
+    lines.push(
+      '',
+      'Org skeleton is in place (default cost centers + FY budgets).',
+      'Map department heads in Admin → Department Approvers after users exist.',
+      'There is no create-department UI yet — bootstrap-org is the operator path.'
+    );
+  } else {
+    lines.push(
+      '',
+      'Cost centers are still empty until you run the org skeleton (non-destructive):',
+      '  npm run bootstrap-org',
+      'Then map department heads in Admin → Department Approvers after users exist.'
+    );
   }
   lines.push(
     '',
@@ -138,7 +167,8 @@ export async function runCustomerProvisionCli({
   stdout = process.stdout,
   stderr = process.stderr,
   runMigrateFn,
-  runBootstrapFn
+  runBootstrapFn,
+  runOrgFn
 } = {}) {
   const args = parseCustomerProvisionArgs(argv);
   if (args.help) {
@@ -175,6 +205,23 @@ export async function runCustomerProvisionCli({
   });
   if (migrateCode !== 0) return migrateCode;
 
+  let orgBootstrapped = false;
+  if (args.withOrg) {
+    const orgArgv = [];
+    if (args.requireTurso) orgArgv.push('--turso');
+    if (args.json) orgArgv.push('--json');
+    const bootstrapOrg = runOrgFn || runBootstrapOrgCli;
+    const orgCode = await bootstrapOrg({
+      argv: orgArgv,
+      env,
+      stdout,
+      stderr,
+      skipMigrate: true
+    });
+    if (orgCode !== 0) return orgCode;
+    orgBootstrapped = true;
+  }
+
   let bootstrapped = false;
   if (args.email && args.password) {
     const bootstrapArgv = ['--email', args.email, '--password', args.password];
@@ -193,7 +240,7 @@ export async function runCustomerProvisionCli({
 
   const baseUrl = args.baseUrl || String(env.BASE_URL || '').trim() || DEFAULT_SMOKE_BASE_URL;
   if (!args.json) {
-    write(stdout, nextStepsText({ bootstrapped, baseUrl }));
+    write(stdout, nextStepsText({ bootstrapped, orgBootstrapped, baseUrl }));
   }
   return 0;
 }

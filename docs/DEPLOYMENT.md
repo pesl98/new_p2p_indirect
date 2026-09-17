@@ -6,7 +6,7 @@ ProcureFlow is installed **one database per customer**. Customer A and customer 
 
 Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
 
-**Real customer sequence:** `npm run db:migrate` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (optional `--email` / `--password`; **never seeds**). Demo wipe stays opt-in: `npm run seed`.
+**Real customer sequence:** `npm run db:migrate` → `npm run bootstrap-org` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (optional `--with-org`, optional `--email` / `--password`; **never seeds**). Demo wipe stays opt-in: `npm run seed`.
 
 **Auth (this phase):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie, admin user CRUD on `req.user`. SSO / SAML / OIDC is **out of scope** (next). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**). Legacy P2P routes still accept body `requester_id` / `approver_id` — that is not a full authorization boundary.
 
@@ -27,7 +27,7 @@ The application code and schema are identical. Isolation is the **connection str
 | Turso HTTP | **both** URL and token set | `POST /v2/pipeline` (no native libsql `.so`) |
 | Vercel | `VERCEL` / `VERCEL_ENV` | Turso **required**. Missing pair → HTML/JSON 503, not a local file |
 
-Partial Turso credentials (URL xor token) are **fail-closed** on `npm run db:migrate` / `db:status`. The CLI will not silently create a local SQLite file.
+Partial Turso credentials (URL xor token) are **fail-closed** on `npm run db:migrate` / `db:status` / `bootstrap-org`. The CLI will not silently create a local SQLite file.
 
 ---
 
@@ -107,7 +107,9 @@ npm run db:migrate
 npm run db:status
 ```
 
-`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). It does **not** load Alice/Bob/Carol sample PRs unless you pass `--seed`.
+`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
+
+Empty schema still has **0 departments**. PR submit fails closed until cost centers + a FY 2026 budget exist — that is `npm run bootstrap-org` (next), not migrate.
 
 `db:status` prints mode (`sqlite` / `turso-http`), table count vs expected, and user count. It does **not** apply schema, so you can tell an empty file from a migrated one. It never prints `TURSO_AUTH_TOKEN`.
 
@@ -125,7 +127,7 @@ First process start (`npm start` / Vercel cold start) also calls `applySchema` o
 
 ## 4. First admin bootstrap (empty tenant)
 
-After `db:migrate`, the customer DB has **0 users**. Until a user exists, `GET /api/auth/config` returns `{ bootstrapNeeded: true }` and the UI shows **Create the first admin**. `npm run provision:customer` is migrate plus this step when `--email` and `--password` are passed; it still **does not seed**.
+After `db:migrate`, the customer DB has **0 users** and, unless you ran `bootstrap-org`, **0 departments**. Until a user exists, `GET /api/auth/config` returns `{ bootstrapNeeded: true }` and the UI shows **Create the first admin**. `npm run provision:customer` is migrate plus optional `--with-org` plus this step when `--email` and `--password` are passed; it still **does not seed**.
 
 ### Option A — UI
 
@@ -152,19 +154,34 @@ The CLI **refuses** if any users already exist (exit 2). After that, sign in as 
 One-shot empty tenant (still no demo data):
 
 ```bash
-npm run provision:customer -- \
+npm run provision:customer -- --with-org \
   --email ada@customer.com \
   --password 'choose-a-long-password'
 ```
 
+Omit `--with-org` if you only want schema + first admin.
+
 ---
 
-## 5. Optional demo seed vs empty customer
+## 5. Org skeleton vs empty schema vs demo seed
+
+Three tiers — do not confuse the skeleton with seed:
 
 | Goal | Command | Result |
 | --- | --- | --- |
-| Real customer | `db:migrate` then `bootstrap-admin` (or `provision:customer`) then `smoke` | Empty tables until first admin. Catalog, PRs, invoices stay blank. |
+| Empty schema | `npm run db:migrate` | Tables exist. `departments` / `budgets` empty. PR submit fails closed. |
+| Org skeleton | `npm run bootstrap-org` or `provision:customer -- --with-org` | Five cost centers (MKT / ITE / FAC / HRP / ADM) + FY **2026** budgets at `10000000` cents. **Idempotent** (skip existing codes; do not overwrite live totals unless `--force-budget`). No users, catalog, or PRs. |
+| Real customer login | then `bootstrap-admin` (or `provision:customer -- --email …`) then `smoke` | First admin only. Catalog, PRs, invoices stay blank. |
 | Demo / training | `npm run seed` or `npm run db:migrate -- --seed` | **Destructive:** drops all app tables, reapplies schema, loads persona demo data + demo password |
+
+```bash
+# Same TURSO_* / PROCUREMENT_DB_PATH as migrate
+npm run bootstrap-org
+npm run bootstrap-org -- --json
+# optional: --fiscal-year 2026 --budget-cents 10000000 --force-budget --turso
+```
+
+`bootstrap-org` applies schema first (same as `db:migrate`), then inserts missing department **codes**. It never sets `approver_user_id` — map heads in **Administration → Department Approvers** after users exist. There is **no create-department UI**; this CLI is the operator path.
 
 ```bash
 # Demo only — wipes the database this env points at
@@ -206,7 +223,7 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (login, not the demo header switcher).
 - [ ] `--apply` **redeploys** Production so env takes effect (`vercel redeploy` of the latest production deployment, or `vercel deploy --prod --yes` if none exists). Env changes do not apply to an already-built Preview.
-- [ ] From a laptop with the same `TURSO_*`: `npm run db:migrate` then `npm run bootstrap-admin` (or `npm run provision:customer -- --email … --password …`). Do **not** `npm run seed`.
+- [ ] From a laptop with the same `TURSO_*`: `npm run db:migrate` then `npm run bootstrap-org` then `npm run bootstrap-admin` (or `npm run provision:customer -- --with-org --email … --password …`). Do **not** `npm run seed`.
 - [ ] Smoke the hostname: `BASE_URL=https://<customer-project>.vercel.app npm run smoke`
 
 Dashboard fallback: Settings → Environment Variables → Production and Preview (or All Environments) → Redeploy. Prefer the CLI so operators do not hunt the dashboard for every customer.
@@ -360,6 +377,6 @@ npm run dev           # API :5000 + Vite :3000
 npm test
 ```
 
-Customer path: empty DB → `npm run db:migrate` → `npm run bootstrap-admin` → `npm start` → `npm run smoke`. Leave `DEMO_PERSONA_SWITCHER` unset. Env template: [`.env.example`](../.env.example).
+Customer path: empty DB → `npm run db:migrate` → `npm run bootstrap-org` → `npm run bootstrap-admin` → `npm start` → `npm run smoke`. Leave `DEMO_PERSONA_SWITCHER` unset. Env template: [`.env.example`](../.env.example).
 
 New-customer walkthrough: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). See [README.md](../README.md) walkthroughs and [ARCHITECTURE.md](ARCHITECTURE.md) for the P2P control model.
