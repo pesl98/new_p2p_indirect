@@ -4,9 +4,10 @@ A full-lifecycle **Indirect Procurement (Procure-to-Pay / P2P)** application bui
 
 Control model (integer cents, sequential approvals, approval delegation / OOO substitute, dual invoice match, invoice exception workbench, buyer inbox for `return_to_buyer`, **duplicate invoice detection**, **AP payment aging / payables queue**, **AP payment run / batch ACH proposal**, **SaaS & vendor contract renewals**, **PR → contract auto-assignment**, GRN/SES receiving, multi-supplier PO split, **PO change orders / revisions**, budget fail-closed rules, **per-tenant session auth + admin user CRUD**): see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-## Onboard a new customer
+## Start here
 
-**[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — the operator runbook: Turso database → export secrets → Vercel project → `npm run vercel:customer -- --apply` → `db:migrate` → `bootstrap-org` → `bootstrap-admin` → smoke → first login. One database and one Vercel project per customer.
+- **[System manual → `docs/SYSTEM_MANUAL.md`](docs/SYSTEM_MANUAL.md)** — every shipped capability (honest limits) and how to stand up a new customer. Hand this to an operator/owner.
+- **[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — click-by-click runbook: Turso database → export secrets → Vercel project → `npm run vercel:customer -- --apply` → `db:migrate` → `bootstrap-org` → `bootstrap-admin` → smoke → first login. One database and one Vercel project per customer.
 
 Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Vercel Production+Preview env: `npm run vercel:customer` (dry-run default; `--apply` to mutate). Wrapper: `npm run provision:customer -- --with-org` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
 
@@ -200,7 +201,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 ## ☁️ Deploy: Vercel + Turso
 
-**Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — Turso create → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → bootstrap-org → bootstrap-admin → smoke → first login.
+**System manual** (capabilities + this sequence): **[docs/SYSTEM_MANUAL.md](docs/SYSTEM_MANUAL.md)**. **Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — Turso create → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → bootstrap-org → bootstrap-admin → smoke → first login.
 
 **Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then `npm run vercel:customer -- --slug <customer> --apply` → `npm run db:migrate` → `npm run bootstrap-org` → `npm run bootstrap-admin` → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Technical reference, secrets, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
 

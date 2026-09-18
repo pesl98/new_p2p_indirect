@@ -8,6 +8,7 @@ Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the r
 
 | Next | Where |
 | --- | --- |
+| **System manual** (what the app can do + deploy overview) | **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)** |
 | Technical reference (isolation, APIs, env table, rollback details) | [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Copy-paste operator checklist | [`scripts/provision-customer.md`](../scripts/provision-customer.md) |
 | Env key names (no secrets) | [`.env.example`](../.env.example) |
@@ -415,7 +416,7 @@ Hand this to the customer with the URL so nobody assumes Coupa-parity.
 - **Fiscal year 2026** is hardcoded in budget queries.
 - **No cron**, no bank NACHA export, no OCR invoice capture.
 
-Product detail: [ARCHITECTURE.md](ARCHITECTURE.md) “Known demo limits”.
+Product detail: [ARCHITECTURE.md](ARCHITECTURE.md) “Known demo limits”. Full capability catalog: [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md).
 
 ---
 
