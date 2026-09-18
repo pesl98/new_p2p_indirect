@@ -1,6 +1,6 @@
 # ProcureFlow customer deployment
 
-> **Operators:** the step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (Turso → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → bootstrap → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
+> **Operators:** product capabilities + deploy overview live in **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. The step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (Turso → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → `bootstrap-org` → bootstrap-admin → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
 
 ProcureFlow is installed **one database per customer**. Customer A and customer B never share a SQLite file or Turso database. There is **no** shared-row `org_id` multi-tenancy. Authentication is therefore **local to that database** — a login on tenant A cannot see users in tenant B.
 
@@ -379,4 +379,4 @@ npm test
 
 Customer path: empty DB → `npm run db:migrate` → `npm run bootstrap-org` → `npm run bootstrap-admin` → `npm start` → `npm run smoke`. Leave `DEMO_PERSONA_SWITCHER` unset. Env template: [`.env.example`](../.env.example).
 
-New-customer walkthrough: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). See [README.md](../README.md) walkthroughs and [ARCHITECTURE.md](ARCHITECTURE.md) for the P2P control model.
+Capabilities + deploy overview: [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md). New-customer walkthrough: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). See [README.md](../README.md) walkthroughs and [ARCHITECTURE.md](ARCHITECTURE.md) for the P2P control model.
