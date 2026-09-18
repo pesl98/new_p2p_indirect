@@ -394,6 +394,8 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(deployment, /no.*shared-row `org_id`/i);
     assert.match(deployment, /SESSION_SECRET/);
     assert.match(deployment, /bootstrap-admin/);
+    assert.match(deployment, /bootstrap-org/);
+    assert.match(deployment, /--with-org/);
     assert.match(deployment, /vercel:customer/);
     assert.match(deployment, /--apply/);
     assert.match(deployment, /Redeploy/);
@@ -405,7 +407,9 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(onboarding, /DEMO_PERSONA_SWITCHER/);
     assert.match(onboarding, /npm run db:migrate/);
     assert.match(onboarding, /bootstrap-admin/);
+    assert.match(onboarding, /bootstrap-org/);
     assert.match(onboarding, /provision:customer/);
+    assert.match(onboarding, /--with-org/);
     assert.match(onboarding, /vercel:customer/);
     assert.match(onboarding, /--apply/);
     assert.match(onboarding, /Do not seed/);
@@ -413,7 +417,9 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(onboarding, /SESSION_SECRET/);
     assert.match(onboarding, /second Turso DB/i);
     assert.match(onboarding, /legacy seed/i);
+    assert.doesNotMatch(onboarding, /turso db shell/);
     assert.match(readme, /bootstrap-admin/);
+    assert.match(readme, /bootstrap-org/);
     assert.match(readme, /npm run smoke/);
     assert.match(readme, /\.env\.example/);
   });
@@ -421,6 +427,7 @@ describe('schema and docs stay aligned with provision', () => {
   test('CLI entrypoints and npm scripts exist', () => {
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-migrate.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/db-status.js')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/bootstrap-org.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'scripts/provision-customer.md')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'docs/CUSTOMER_ONBOARDING.md')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/vercel-customer.js')));
@@ -428,6 +435,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
     assert.equal(pkg.scripts['db:status'], 'node server/scripts/db-status.js');
     assert.equal(pkg.scripts['bootstrap-admin'], 'node server/src/bootstrapAdmin.js');
+    assert.equal(pkg.scripts['bootstrap-org'], 'node server/scripts/bootstrap-org.js');
     assert.equal(pkg.scripts.smoke, 'node server/scripts/smoke.js');
     assert.equal(pkg.scripts['provision:customer'], 'node server/scripts/provision-customer.js');
     assert.equal(pkg.scripts['vercel:customer'], 'node server/scripts/vercel-customer.js');

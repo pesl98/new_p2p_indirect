@@ -4,7 +4,7 @@ This is the operator runbook. Follow it top to bottom for **one new customer**. 
 
 Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the real customer slug, display name, and first-admin email.
 
-**Happy path:** Turso database → export secrets → Vercel project + `vercel link` → `npm run vercel:customer -- --apply` → migrate → bootstrap → smoke → first login.
+**Happy path:** Turso database → export secrets → Vercel project + `vercel link` → `npm run vercel:customer -- --apply` → migrate → `bootstrap-org` → bootstrap-admin → smoke → first login.
 
 | Next | Where |
 | --- | --- |
@@ -220,9 +220,13 @@ export SESSION_SECRET='…'                 # same value as Vercel
 # Optional: fail closed if TURSO_* are missing
 npm run db:migrate -- --turso
 npm run db:status
+
+# Cost centers + FY 2026 budgets (idempotent; never wipes). Skip only if you
+# are proving login and do not need PR submit yet. See §11.
+npm run bootstrap-org
 ```
 
-`db:status` prints mode (`turso-http`), table count, and user count. It never prints `TURSO_AUTH_TOKEN`. On a fresh customer you should see **0 users**.
+`db:status` prints mode (`turso-http`), table count, and user count. It never prints `TURSO_AUTH_TOKEN`. On a fresh customer you should see **0 users**. `bootstrap-org` does not create users.
 
 ### First admin (pick one)
 
@@ -235,14 +239,16 @@ npm run bootstrap-admin -- \
   --password 'choose-a-long-password'
 ```
 
-**B — one-shot wrapper** (migrate + bootstrap; still **never seeds**)
+**B — one-shot wrapper** (migrate + optional org skeleton + bootstrap; still **never seeds**)
 
 ```bash
-npm run provision:customer -- \
+npm run provision:customer -- --with-org \
   --name "Ada Admin" \
   --email admin@acme.test \
   --password 'choose-a-long-password'
 ```
+
+Omit `--with-org` if you only want schema + first admin (departments stay empty until `npm run bootstrap-org`).
 
 **C — UI** if the database still has 0 users: open the Production URL, use **Create the first admin** (name, email, password ≥ 8 characters).
 
@@ -250,10 +256,13 @@ The CLI **refuses** (exit 2) if any users already exist. Additional people are c
 
 ### Do not seed a real customer
 
-| Goal | Command |
-| --- | --- |
-| Real customer | `db:migrate` → `bootstrap-admin` (or `provision:customer`) → `smoke` |
-| Demo / training wipe | `npm run seed` (**destructive**: drops all app tables, loads Alice/Bob/… and password `ProcureFlow!demo`) |
+Three tiers — pick one; do not confuse the org skeleton with seed:
+
+| Goal | Command | Result |
+| --- | --- | --- |
+| Empty schema | `npm run db:migrate` | Tables exist. `departments` / `budgets` are empty. PR submit fails closed. |
+| Org skeleton | `npm run bootstrap-org` (or `provision:customer -- --with-org`) | Five cost centers + FY 2026 budgets. **Idempotent.** No users, no demo personas. |
+| Demo / training wipe | `npm run seed` | **Destructive:** drops all app tables, loads Alice/Bob/… and password `ProcureFlow!demo` |
 
 ```bash
 # DEMO ONLY — wipes whatever TURSO_* / SQLite this shell points at
@@ -298,31 +307,35 @@ Machine-readable: `npm run smoke -- --json`.
 
 ---
 
-## 11. Optional: departments and department approvers
+## 11. Cost centers and department approvers (`bootstrap-org`)
 
-Do this **after** users exist. Step-1 approval is the mapped department head (`departments.approver_user_id`).
+`db:migrate` leaves `departments` and `budgets` empty. Until cost centers and a FY budget exist, PR submit fails closed (no department head / no budget). Fiscal year in budget joins is hardcoded **2026**.
 
-**Administration → Department Approvers** (admin UI) assigns a head on **existing** departments. It does **not** create cost centers.
+There is **no in-app “create department” or “create budget” form**. The operator path is `npm run bootstrap-org` (or `provision:customer -- --with-org` in step 8). **Administration → Department Approvers** only assigns a step-1 head (`departments.approver_user_id`) on **existing** rows. Do **not** set heads in SQL — map them in the UI after users exist.
 
-Honest limit: there is **no in-app “create department” or “create budget” form**. `db:migrate` leaves `departments` and `budgets` empty. Until you insert rows, PRs cannot be submitted (approval policy fails closed with no department head). Fiscal year in queries is **2026**.
+Default skeleton (idempotent; skip codes that already exist; never wipe or rename):
 
-Insert from the laptop (same `TURSO_*`), then map heads in the UI:
+| Code | Name | FY 2026 `total_budget` |
+| --- | --- | --- |
+| MKT | Marketing | `10000000` cents ($100,000.00) |
+| ITE | IT | same |
+| FAC | Facilities | same |
+| HRP | HR | same |
+| ADM | Finance | same |
+
+`committed_amount` / `actual_spent` start at 0. `approver_user_id` stays unset.
 
 ```bash
-# Example cost centers — edit codes/names/cents for the customer
-# total_budget is integer cents ($100,000.00 = 10000000)
-turso db shell procureflow-acme <<'SQL'
-INSERT INTO departments (code, name) VALUES
-  ('MKT', 'Marketing'),
-  ('ITE', 'IT'),
-  ('FAC', 'Facilities'),
-  ('HRP', 'HR'),
-  ('ADM', 'Finance');
-
-INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-SELECT id, 2026, 10000000, 0, 0 FROM departments;
-SQL
+# Same TURSO_* (or PROCUREMENT_DB_PATH) as migrate / bootstrap-admin
+npm run bootstrap-org
+npm run bootstrap-org -- --json
+# optional: --fiscal-year 2026 --budget-cents 10000000
+# optional: --force-budget   # rewrite total_budget only; never touches committed/actual
 ```
+
+Safe to re-run. Existing department names and live budget totals are left alone unless you pass `--force-budget` (totals only). This command **never** creates users, suppliers, catalog, or PRs. Never pass `--seed`.
+
+If you already ran `provision:customer -- --with-org …` in step 8, you do not need to run `bootstrap-org` again.
 
 Then:
 
@@ -330,7 +343,7 @@ Then:
 2. Administration → Department Approvers — pick a step-1 head per cost center.
 3. Catalog and suppliers are also empty until someone with access adds them under **Vendors & Catalog** (create APIs exist; this is not a Coupa master-data migration).
 
-Skip this section if you are only proving login + admin user CRUD.
+Skip the UI mapping if you are only proving login + admin user CRUD. Skip `bootstrap-org` only if you do not need PR submit yet.
 
 ---
 
@@ -344,7 +357,7 @@ export TURSO_DATABASE_URL="$(turso db show procureflow-beta --url)"
 export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-beta)"
 export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
 
-npm run provision:customer -- \
+npm run provision:customer -- --with-org \
   --email admin@beta.test \
   --password 'choose-a-long-password'
 ```
@@ -358,7 +371,7 @@ Local SQLite pair (laptop / air-gapped only — not Vercel):
 ```bash
 unset TURSO_DATABASE_URL TURSO_AUTH_TOKEN
 export PROCUREMENT_DB_PATH="$PWD/server/data/acme.db"
-npm run provision:customer -- --email admin@acme.test --password 'choose-a-long-password'
+npm run provision:customer -- --with-org --email admin@acme.test --password 'choose-a-long-password'
 ```
 
 Do not commit `*.db` (`server/data/` is gitignored).
@@ -379,12 +392,12 @@ Copy this into the ticket and tick as you go.
 - [ ] `npm run vercel:customer -- --slug acme` (dry-run) then `--apply` (Production + Preview env + redeploy)
 - [ ] `DEMO_PERSONA_SWITCHER` left unset
 - [ ] Laptop `export` of the same `TURSO_*` (+ `SESSION_SECRET`)
-- [ ] `npm run db:migrate` then `npm run bootstrap-admin` (or `npm run provision:customer -- --email … --password …`)
+- [ ] `npm run db:migrate` then `npm run bootstrap-org` then `npm run bootstrap-admin` (or `npm run provision:customer -- --with-org --email … --password …`)
 - [ ] **Did not** `npm run seed`
 - [ ] First admin can sign in at the Production URL
 - [ ] Extra users created in Administration → Users
 - [ ] `BASE_URL=https://<acme>.vercel.app npm run smoke` exit 0
-- [ ] (Optional) departments inserted; heads assigned after those users exist
+- [ ] Department heads assigned in Administration → Department Approvers after those users exist
 - [ ] Secrets only in Vercel + password manager — not in git, screenshots, or chat logs
 
 ---
@@ -397,8 +410,8 @@ Hand this to the customer with the URL so nobody assumes Coupa-parity.
 - **Not a full authorization rewrite.** Admin user CRUD uses the session (`req.user`). Many P2P routes still accept body persona ids (`requester_id`, `approver_id`, `actor_name`, …). Anyone who can reach those APIs can still send another person’s id. That is a known phased cut, not a security boundary.
 - **No `org_id` multi-tenancy.** Two customers on one Turso URL is one pile of data.
 - **Persona switcher is demo-only** (`DEMO_PERSONA_SWITCHER=1`). Default customer UI is login.
-- **Empty tenant is empty.** No catalog, suppliers, departments, budgets, or sample PRs until you add them. `npm run seed` is a **wipe**, not an overlay.
-- **No department/budget create UI.** Map heads in Administration → Department Approvers after rows exist (SQL above, or a future feature).
+- **Empty tenant is empty.** No catalog, suppliers, departments, budgets, or sample PRs until you add them. Three tiers: `db:migrate` (schema only) → `bootstrap-org` (five cost centers + FY budgets; non-destructive) → `npm run seed` (**wipe**, not an overlay).
+- **No department/budget create UI.** Operator path is `npm run bootstrap-org`. Map heads in Administration → Department Approvers after users exist.
 - **Fiscal year 2026** is hardcoded in budget queries.
 - **No cron**, no bank NACHA export, no OCR invoice capture.
 
@@ -478,6 +491,7 @@ turso db create procureflow-acme
 export TURSO_DATABASE_URL="$(turso db show procureflow-acme --url)"
 export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-acme)"
 npm run db:migrate
+npm run bootstrap-org
 npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-password'
 ```
 

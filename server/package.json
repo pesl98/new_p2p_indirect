@@ -10,6 +10,7 @@
     "db:migrate": "node scripts/db-migrate.js",
     "db:status": "node scripts/db-status.js",
     "bootstrap-admin": "node src/bootstrapAdmin.js",
+    "bootstrap-org": "node scripts/bootstrap-org.js",
     "provision:customer": "node scripts/provision-customer.js",
     "vercel:customer": "node scripts/vercel-customer.js",
     "smoke": "node scripts/smoke.js",

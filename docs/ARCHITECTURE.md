@@ -22,7 +22,7 @@ Passwords live in `user_credentials` (bcrypt hash, never plaintext, never in API
 | `POST /api/auth/bootstrap` | First admin on an **empty** tenant only |
 | `POST /api/users` etc. | Require logged-in `role=admin`. Create/edit name, unique email, role (existing CHECK), department_id, title, approval_limit cents, optional password. |
 
-Empty customer DB → `npm run db:migrate` (`applySchema`) → bootstrap admin + password → `npm run smoke` → login → admin creates more users. Demo `npm run seed` still creates Alice/Bob/… with the README demo password (destructive, opt-in).
+Empty customer DB → `npm run db:migrate` (`applySchema`) → optional `npm run bootstrap-org` (five cost centers + FY budgets; not seed) → bootstrap admin + password → `npm run smoke` → login → admin creates more users. Demo `npm run seed` still creates Alice/Bob/… with the README demo password (destructive, opt-in).
 
 Existing Turso/SQLite DBs get `ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'` plus `CREATE TABLE IF NOT EXISTS user_credentials` in `db.js` (`migrateUsersAuth`). ALTER cannot attach CHECK; new DBs get the CHECK from `schema.sql`.
 
@@ -565,7 +565,8 @@ cd server && npm install && cd ../client && npm install && cd ..
 npm run db:migrate
 npm run db:status
 # First admin (empty tenant only): npm run bootstrap-admin -- --email … --password …
-# Wrapper: npm run provision:customer -- --email … --password …
+# Org skeleton (cost centers + FY budgets; not seed): npm run bootstrap-org
+# Wrapper: npm run provision:customer -- --with-org --email … --password …
 # Vercel env + redeploy: npm run vercel:customer -- --slug <customer> [--apply]
 # Verify a running app: npm run smoke   (BASE_URL=https://<customer>.vercel.app npm run smoke)
 
@@ -615,7 +616,7 @@ Customer B  →  TURSO_DATABASE_URL_B + token B  →  Vercel project B  (or PROC
 
 Pointing two deployments at the same URL merges those customers. Partial Turso credentials (URL xor token) are refused by `npm run db:migrate` / `db:status` (fail-closed; no silent local file).
 
-`db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
+`db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `bootstrap-org` then inserts the default five cost centers + FY 2026 budgets (idempotent; never wipes). `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
 
 Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (operator runbook) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md). Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
 
@@ -631,4 +632,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Export those plus `SESSION_SECRET`, then `npm run vercel:customer -- --slug <customer> --apply` to set Production **and** Preview and redeploy. Apply schema with `npm run db:migrate` (empty customer) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Create the Turso DB with `turso db create …`, `turso db show … --url`, and `turso db tokens create …` (database token, not an org JWT). Export those plus `SESSION_SECRET`, then `npm run vercel:customer -- --slug <customer> --apply` to set Production **and** Preview and redeploy. Apply schema with `npm run db:migrate`, then `npm run bootstrap-org` for cost centers (empty customer) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.

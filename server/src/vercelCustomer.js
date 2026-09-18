@@ -58,7 +58,7 @@ Happy path:
   4. vercel link --yes --project procureflow-<slug>
   5. npm run vercel:customer -- --slug <slug>            # dry-run
   6. npm run vercel:customer -- --slug <slug> --apply
-  7. npm run provision:customer -- --email … --password …
+  7. npm run provision:customer -- --with-org --email … --password …
   8. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
 
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
@@ -345,7 +345,7 @@ export function formatDryRunReport({
     '',
     'Next:',
     `  npm run vercel:customer -- --slug ${slug} --apply`,
-    '  npm run provision:customer -- --email admin@customer.com --password \'…\'',
+    '  npm run provision:customer -- --with-org --email admin@customer.com --password \'…\'',
     `  BASE_URL=${plan.baseUrl} npm run smoke`
   ];
   return `${lines.join('\n')}\n`;
@@ -368,7 +368,7 @@ export function formatApplyReport({
     `DEMO_PERSONA_SWITCHER left unset`,
     '',
     'Next (same TURSO_* already in this shell):',
-    '  npm run provision:customer -- --email admin@customer.com --password \'…\'',
+    '  npm run provision:customer -- --with-org --email admin@customer.com --password \'…\'',
     `  BASE_URL=${url} npm run smoke`,
     '',
     'Secrets stay in this shell and in Vercel env — not in git.'
