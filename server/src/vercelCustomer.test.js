@@ -522,6 +522,7 @@ describe('npm script and docs pointer', () => {
     const envExample = fs.readFileSync(path.join(repoRoot, '.env.example'), 'utf8');
     assert.match(envExample, /vercel:customer/);
     const onboarding = fs.readFileSync(path.join(repoRoot, 'docs/CUSTOMER_ONBOARDING.md'), 'utf8');
+    assert.match(onboarding, /npm run turso:customer/);
     assert.match(onboarding, /npm run vercel:customer/);
     assert.match(onboarding, /--apply/);
   });

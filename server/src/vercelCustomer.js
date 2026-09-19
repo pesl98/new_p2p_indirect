@@ -5,6 +5,7 @@
  * Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
  * Secrets must already be in the shell — this command never invents them.
  *
+ *   npm run turso:customer -- --slug acme --apply   # first: print exports
  *   npm run vercel:customer -- --slug acme
  *   npm run vercel:customer -- --slug acme --apply
  */
@@ -52,14 +53,13 @@ Required shell env (same values that will go to Vercel; never invented):
 Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
 
 Happy path:
-  1. turso db create procureflow-<slug>   (human; classic libSQL)
-  2. export TURSO_* and SESSION_SECRET
-  3. Create Vercel project procureflow-<slug> in the dashboard (import repo)
-  4. vercel link --yes --project procureflow-<slug>
-  5. npm run vercel:customer -- --slug <slug>            # dry-run
-  6. npm run vercel:customer -- --slug <slug> --apply
-  7. npm run provision:customer -- --with-org --email … --password …
-  8. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
+  1. npm run turso:customer -- --slug <slug> --apply     # classic libSQL + exports
+  2. Create Vercel project procureflow-<slug> in the dashboard (import repo)
+  3. vercel link --yes --project procureflow-<slug>
+  4. npm run vercel:customer -- --slug <slug>            # dry-run
+  5. npm run vercel:customer -- --slug <slug> --apply
+  6. npm run provision:customer -- --with-org --email … --password …
+  7. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
 
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
@@ -537,7 +537,9 @@ export async function runVercelCustomerCli({
       'Refusing to invent secrets. Export these in the shell first (same values that will go to Vercel):\n'
         + missing.map((key) => `  ${key}`).join('\n')
         + '\n\n'
-        + 'Example:\n'
+        + 'Mint them with:\n'
+        + `  npm run turso:customer -- --slug ${slug} --apply\n`
+        + 'Then re-run this command. Example (if you already have values):\n'
         + `  export TURSO_DATABASE_URL="$(turso db show ${projectName} --url)"\n`
         + `  export TURSO_AUTH_TOKEN="$(turso db tokens create ${projectName})"\n`
         + '  export SESSION_SECRET="$(node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))")"\n'

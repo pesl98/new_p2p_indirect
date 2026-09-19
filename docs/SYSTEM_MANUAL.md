@@ -527,14 +527,10 @@ There is **no cron**.
 Proven sequence (after PR #34):
 
 ```
-Turso DB (classic libSQL)
-  → export TURSO_DATABASE_URL + TURSO_AUTH_TOKEN
-  → generate SESSION_SECRET
-  → new Vercel project + vercel link
+npm run turso:customer -- --apply
+  → (human) new Vercel project + vercel link
   → npm run vercel:customer -- --apply
-  → npm run db:migrate
-  → npm run bootstrap-org
-  → npm run bootstrap-admin
+  → npm run provision:customer -- --with-org
   → npm run smoke
   → first login → Administration → Users → Department Approvers
 ```
@@ -543,11 +539,9 @@ Turso DB (classic libSQL)
 
 ### 9.1 Sequence (operator)
 
-1. **Create a classic libSQL database** (not `--tursodb`): `turso db create procureflow-<slug>`.
-2. **Mint a database token** (not an org/platform JWT): `turso db show … --url` and `turso db tokens create …`.
-3. **Generate `SESSION_SECRET`:** `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` — new secret **per customer**.
-4. **New Vercel project** from this repo (root = repo root; build from `vercel.json`). Suggested name `procureflow-<slug>`. `vercel link --yes --project procureflow-<slug>`. The env script **does not** create Vercel projects.
-5. Export the three secrets in the shell (the CLI **refuses to invent secrets**), then:
+1. **Turso DB + token + `SESSION_SECRET`:** `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). Copy the printed exports.
+2. **New Vercel project** from this repo (root = repo root; build from `vercel.json`). Suggested name `procureflow-<slug>`. `vercel link --yes --project procureflow-<slug>`. The env script **does not** create Vercel projects.
+3. Export the three secrets in the shell (the Vercel CLI **refuses to invent secrets**), then:
 
    ```bash
    npm run vercel:customer -- --slug <customer>            # dry-run
@@ -555,7 +549,7 @@ Turso DB (classic libSQL)
    ```
 
    Never sets `DEMO_PERSONA_SWITCHER`. Preview URLs stay broken if vars are Production-only. Env changes do not retrofit an already-built Preview.
-6. **Same `TURSO_*` on the laptop:**
+4. **Same `TURSO_*` on the laptop:**
 
    ```bash
    npm run db:migrate -- --turso
@@ -571,8 +565,8 @@ Turso DB (classic libSQL)
      --email admin@customer.com --password 'choose-a-long-password'
    ```
 
-7. Smoke: `BASE_URL=https://<customer-project>.vercel.app npm run smoke` (optional `--email` / `--password` for a login check).
-8. Sign in → **Administration → Users** (requesters, approvers, procurement, finance, extra admins) → **Department Approvers** (step-1 heads) → **Suppliers & Catalog** as needed.
+5. Smoke: `BASE_URL=https://<customer-project>.vercel.app npm run smoke` (optional `--email` / `--password` for a login check).
+6. Sign in → **Administration → Users** (requesters, approvers, procurement, finance, extra admins) → **Department Approvers** (step-1 heads) → **Suppliers & Catalog** as needed.
 
 **Customer B** = a **second** Turso DB + **second** Vercel project + new `SESSION_SECRET`. Never paste customer A’s URL.
 

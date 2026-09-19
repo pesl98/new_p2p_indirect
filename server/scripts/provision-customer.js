@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Empty-customer path: schema migrate, optional org skeleton, optional
- * first-admin bootstrap. Never seeds. Turso CLI stays human; Vercel env
- * + redeploy is `npm run vercel:customer`.
+ * first-admin bootstrap. Never seeds. Turso DB + token + SESSION_SECRET
+ * is `npm run turso:customer`. Vercel env + redeploy is
+ * `npm run vercel:customer`.
  *
  *   npm run provision:customer
  *   npm run provision:customer -- --with-org
