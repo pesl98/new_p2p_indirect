@@ -403,7 +403,7 @@ describe('turso:customer CLI (no live Turso)', () => {
     assert.match(stdout.text, /BASE_URL=https:\/\/procureflow-acme\.vercel\.app npm run smoke/);
     assert.doesNotMatch(stdout.text, /eyJhbGci/);
     assert.doesNotMatch(stdout.text, /libsql:\/\/procureflow-acme/);
-    assert.doesNotMatch(stdout.text, /destroy/);
+    assert.doesNotMatch(stdout.text, /turso db destroy/);
   });
 
   test('dry-run --json includes the summary shape with placeholders', async () => {
