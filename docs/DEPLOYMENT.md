@@ -1,6 +1,6 @@
 # ProcureFlow customer deployment
 
-> **Operators:** product capabilities + deploy overview live in **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. The step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (Turso → export secrets → Vercel project → `npm run vercel:customer -- --apply` → migrate → `bootstrap-org` → bootstrap-admin → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
+> **Operators:** product capabilities + deploy overview live in **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. The step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (`npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
 
 ProcureFlow is installed **one database per customer**. Customer A and customer B never share a SQLite file or Turso database. There is **no** shared-row `org_id` multi-tenancy. Authentication is therefore **local to that database** — a login on tenant A cannot see users in tenant B.
 
@@ -35,22 +35,21 @@ Partial Turso credentials (URL xor token) are **fail-closed** on `npm run db:mig
 
 ### Turso (typical customer / Vercel)
 
-Classic libSQL database (not `--tursodb`). Token must be a **database token**, not an org/platform JWT:
+Classic libSQL database (not `--tursodb`). Token must be a **database token**, not an org/platform JWT. Prefer the operator CLI (dry-run first; `--apply` creates or **reuses**, never destroys):
 
 ```bash
 curl -sSfL https://get.tur.so/install.sh | bash
 turso auth login
 
 # Customer A
-turso db create procureflow-acme
-turso db show procureflow-acme --url
-turso db tokens create procureflow-acme
+npm run turso:customer -- --slug acme            # dry-run (no Turso mutation)
+npm run turso:customer -- --slug acme --apply    # create/reuse + print exports
 
 # Customer B (separate database — do not reuse Acme’s URL or token)
-turso db create procureflow-beta
-turso db show procureflow-beta --url
-turso db tokens create procureflow-beta
+npm run turso:customer -- --slug beta --apply
 ```
+
+`--apply` is equivalent to `turso db create procureflow-<slug>` (no `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, plus a new `SESSION_SECRET` unless one is already exported. Copy the printed `export` lines into the shell. `--json` redacts the token to last 4 characters; full exports stay on human stdout.
 
 ### Local SQLite (laptop, air-gapped, or a file-per-customer VM)
 
@@ -72,17 +71,13 @@ Do not commit `*.db` files (`server/data/` is gitignored).
 **Turso**
 
 ```bash
+# Prefer the lines printed by npm run turso:customer -- --slug <customer> --apply
 export TURSO_DATABASE_URL='libsql://…'   # from `turso db show … --url`
 export TURSO_AUTH_TOKEN='…'              # from `turso db tokens create …`
+export SESSION_SECRET='…'                # minted unless already set in this shell
 ```
 
 **SQLite** — omit both Turso variables; optionally set `PROCUREMENT_DB_PATH`.
-
-**Session cookie** (customer / Vercel):
-
-```bash
-export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
-```
 
 On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Production and Preview** (or All Environments) with `npm run vercel:customer -- --slug <customer> --apply` (dry-run first; secrets stay in the shell). Preview URLs stay broken if the vars are Production-only. Env changes do not apply to an already-built Preview — Redeploy.
 
@@ -201,8 +196,8 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 ### Per-customer checklist
 
 - [ ] **New Vercel project** for this customer (Add New Project → import `pesl98/new_p2p_indirect` or your fork). Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json). Suggested name: `procureflow-<customer>`.
-- [ ] **Dedicated Turso DB** (`turso db create procureflow-<customer>`). Do **not** reuse another customer’s URL or token.
-- [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` already exported (the script **refuses to invent secrets**):
+- [ ] **Dedicated Turso DB** via `npm run turso:customer -- --slug <customer> --apply` (classic libSQL `turso db create procureflow-<customer>`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
+- [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` already exported from `turso:customer` (the Vercel script **refuses to invent secrets**):
 
   ```bash
   vercel login                                          # once
@@ -230,7 +225,7 @@ Dashboard fallback: Settings → Environment Variables → Production and Previe
 
 Deploy itself: Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) as one Node Function (`includeFiles` keeps `schema.sql`), rewrites `/api/*` to that function, and serves `public/` on the CDN. There is **no cron**.
 
-Repeat as a **second project** (or duplicate) for customer B. To clone: duplicate the project, `vercel link --yes --project procureflow-<b>`, export B’s Turso pair + a new `SESSION_SECRET`, then `npm run vercel:customer -- --slug <b> --apply`. Leaving the old URL in place would serve customer A’s data as customer B.
+Repeat as a **second project** (or duplicate) for customer B. To clone: `npm run turso:customer -- --slug <b> --apply`, duplicate the project, `vercel link --yes --project procureflow-<b>`, then `npm run vercel:customer -- --slug <b> --apply`. Leaving the old URL in place would serve customer A’s data as customer B.
 
 Entrypoints (unchanged):
 
@@ -341,8 +336,8 @@ npm run db:migrate
 ```bash
 # Destroy is irreversible. Recreate a new empty DB, then migrate.
 turso db destroy procureflow-acme --yes
-turso db create procureflow-acme
-# new URL + token → npm run vercel:customer -- --slug acme --apply
+npm run turso:customer -- --slug acme --apply   # recreate + new token + exports
+# then: npm run vercel:customer -- --slug acme --apply
 npm run db:migrate
 ```
 

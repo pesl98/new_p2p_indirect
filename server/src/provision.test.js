@@ -396,6 +396,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(deployment, /bootstrap-admin/);
     assert.match(deployment, /bootstrap-org/);
     assert.match(deployment, /--with-org/);
+    assert.match(deployment, /turso:customer/);
     assert.match(deployment, /vercel:customer/);
     assert.match(deployment, /--apply/);
     assert.match(deployment, /Redeploy/);
@@ -410,6 +411,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(onboarding, /bootstrap-org/);
     assert.match(onboarding, /provision:customer/);
     assert.match(onboarding, /--with-org/);
+    assert.match(onboarding, /turso:customer/);
     assert.match(onboarding, /vercel:customer/);
     assert.match(onboarding, /--apply/);
     assert.match(onboarding, /Do not seed/);
@@ -430,6 +432,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/bootstrap-org.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'scripts/provision-customer.md')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'docs/CUSTOMER_ONBOARDING.md')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/turso-customer.js')));
     assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/vercel-customer.js')));
     const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     assert.equal(pkg.scripts['db:migrate'], 'node server/scripts/db-migrate.js');
@@ -438,6 +441,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.equal(pkg.scripts['bootstrap-org'], 'node server/scripts/bootstrap-org.js');
     assert.equal(pkg.scripts.smoke, 'node server/scripts/smoke.js');
     assert.equal(pkg.scripts['provision:customer'], 'node server/scripts/provision-customer.js');
+    assert.equal(pkg.scripts['turso:customer'], 'node server/scripts/turso-customer.js');
     assert.equal(pkg.scripts['vercel:customer'], 'node server/scripts/vercel-customer.js');
   });
 });

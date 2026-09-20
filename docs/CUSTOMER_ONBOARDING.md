@@ -4,7 +4,7 @@ This is the operator runbook. Follow it top to bottom for **one new customer**. 
 
 Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the real customer slug, display name, and first-admin email.
 
-**Happy path:** Turso database → export secrets → Vercel project + `vercel link` → `npm run vercel:customer -- --apply` → migrate → `bootstrap-org` → bootstrap-admin → smoke → first login.
+**Happy path:** `npm run turso:customer -- --apply` → create/link Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login.
 
 | Next | Where |
 | --- | --- |
@@ -39,12 +39,12 @@ Do this once on the operator laptop before the first customer.
 - [ ] **GitHub access** to [`pesl98/new_p2p_indirect`](https://github.com/pesl98/new_p2p_indirect) (clone + the Vercel GitHub integration can import it)
 - [ ] **Vercel account** that can create a new project from that repo
 - [ ] **Turso account** (create at [turso.tech](https://turso.tech) if needed)
-- [ ] **Turso CLI**
+- [ ] **Turso CLI** — used by `npm run turso:customer -- --apply` (`turso auth login`)
 - [ ] **Vercel CLI** (`npm i -g vercel`, then `vercel login`) — used by `npm run vercel:customer -- --apply`
 - [ ] A **password manager** for URL, database token, `SESSION_SECRET`, and the first-admin password. Never commit `.env`, tokens, or `*.db`.
 
 ```bash
-# Turso CLI (macOS / Linux)
+# Turso CLI (macOS / Linux) — needed for npm run turso:customer -- --apply
 curl -sSfL https://get.tur.so/install.sh | bash
 turso --version
 
@@ -76,56 +76,40 @@ Use a Turso org the operator is allowed to create databases in. You do **not** n
 
 ---
 
-## 2. Create a classic libSQL database
+## 2–4. Turso database + token + `SESSION_SECRET`
 
-Create **one** classic libSQL database for this customer. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL).
+Create **one** classic libSQL database for this customer, mint a **database token**, and generate `SESSION_SECRET`. Prefer the operator CLI (dry-run first — it does not invent secrets or call Turso):
 
 ```bash
-# Acme
+# See planned DB name + exact turso commands (no mutation)
+npm run turso:customer -- --slug acme
+
+# Create/reuse procureflow-acme, mint a database token, print exports
+npm run turso:customer -- --slug acme --apply
+```
+
+`--apply` requires the Turso CLI and `turso auth login`. It runs (and you can still run by hand):
+
+```bash
 turso db create procureflow-acme
-```
-
-Name pattern: `procureflow-<customer-slug>`. Lowercase, no spaces.
-
-Confirm it exists:
-
-```bash
-turso db list
-turso db show procureflow-acme
-```
-
----
-
-## 3. Database URL + **database token** (not an org JWT)
-
-```bash
-# Connection URL (often libsql://…)
 turso db show procureflow-acme --url
-
-# Database token for THIS database only
 turso db tokens create procureflow-acme
 ```
 
-Store both in the password manager.
+Name pattern: `procureflow-<customer-slug>` (override with `--db <name>`). Lowercase, no spaces. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL). If the DB already exists, `--apply` **reuses** it — it never destroys.
+
+Copy the printed `export TURSO_DATABASE_URL=…`, `export TURSO_AUTH_TOKEN=…`, and `export SESSION_SECRET=…` into this shell and a password manager. `--json` redacts the token to its last 4 characters; full export lines are still printed on human stdout after `--apply`.
+
+`SESSION_SECRET` HMAC-signs the httpOnly `pf_session` cookie. `--apply` mints a new 32-byte hex secret **unless** `SESSION_SECRET` is already set in this environment — then it **reuses** it (does not silently rotate). Generate a new one **per customer**. Do not reuse Acme’s secret on Beta.
 
 | Right | Wrong |
 | --- | --- |
 | `turso db tokens create procureflow-acme` | `turso auth token` / org / platform JWT |
 | Token minted for **this** database | A token copied from another customer |
 
-`TURSO_AUTH_TOKEN` must be the **database token**. An org JWT looks like it might work and then returns **401** from Turso (the app surfaces that as a 503 configuration error). If you are unsure which token you have, mint a new one with `turso db tokens create` and replace the env var.
+`TURSO_AUTH_TOKEN` must be the **database token**. An org JWT looks like it might work and then returns **401** from Turso (the app surfaces that as a 503 configuration error). If you are unsure which token you have, re-run `npm run turso:customer -- --slug acme --apply` (or `turso db tokens create`) and replace the env var.
 
----
-
-## 4. Generate `SESSION_SECRET`
-
-This HMAC-signs the httpOnly `pf_session` cookie. Generate a new one **per customer**. Do not reuse Acme’s secret on Beta.
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Store the 64-character hex string. You will paste it into Vercel and export it on the laptop for migrate/bootstrap.
+Help: `npm run turso:customer -- --help`.
 
 ---
 
@@ -164,7 +148,7 @@ There is **no cron**.
 
 ## 6. Set environment variables (Production **and** Preview)
 
-Keep the **same** `TURSO_*` / `SESSION_SECRET` already exported in this shell (steps 3–4). The script **refuses to invent secrets**.
+Keep the **same** `TURSO_*` / `SESSION_SECRET` already exported in this shell (from `turso:customer --apply`). The script **refuses to invent secrets**.
 
 ```bash
 # See the Production+Preview checklist + exact commands (no Vercel network, no mutation)
@@ -178,9 +162,9 @@ npm run vercel:customer -- --slug acme --apply
 
 | Variable | Value | Production | Preview |
 | --- | --- | --- | --- |
-| `TURSO_DATABASE_URL` | Output of `turso db show procureflow-acme --url` | ✓ | ✓ |
-| `TURSO_AUTH_TOKEN` | Output of `turso db tokens create procureflow-acme` | ✓ | ✓ |
-| `SESSION_SECRET` | The hex string from step 4 | ✓ | ✓ |
+| `TURSO_DATABASE_URL` | From `turso:customer --apply` (`turso db show procureflow-acme --url`) | ✓ | ✓ |
+| `TURSO_AUTH_TOKEN` | From `turso:customer --apply` (`turso db tokens create procureflow-acme`) | ✓ | ✓ |
+| `SESSION_SECRET` | From `turso:customer --apply` (reused if already in the shell) | ✓ | ✓ |
 
 Leave **unset** (the script will not add this):
 
@@ -214,8 +198,8 @@ Use the **same** `TURSO_*` you pasted into Vercel. Schema does **not** apply its
 ```bash
 cd /path/to/new_p2p_indirect
 
-export TURSO_DATABASE_URL='libsql://…'    # Acme URL from step 3
-export TURSO_AUTH_TOKEN='…'               # Acme *database* token from step 3
+export TURSO_DATABASE_URL='libsql://…'    # Acme URL from turso:customer --apply
+export TURSO_AUTH_TOKEN='…'               # Acme *database* token from turso:customer --apply
 export SESSION_SECRET='…'                 # same value as Vercel
 
 # Optional: fail closed if TURSO_* are missing
@@ -353,17 +337,17 @@ Skip the UI mapping if you are only proving login + admin user CRUD. Skip `boots
 Never share a URL.
 
 ```bash
-turso db create procureflow-beta
-export TURSO_DATABASE_URL="$(turso db show procureflow-beta --url)"
-export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-beta)"
-export SESSION_SECRET="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
+npm run turso:customer -- --slug beta --apply
+# copy the printed exports into this shell (new SESSION_SECRET — do not reuse Acme’s)
 
+# Then: new Vercel project procureflow-beta + vercel link --yes --project procureflow-beta
+npm run vercel:customer -- --slug beta --apply
 npm run provision:customer -- --with-org \
   --email admin@beta.test \
   --password 'choose-a-long-password'
 ```
 
-Then: **new** Vercel project `procureflow-beta` (or duplicate Acme’s project), `vercel link --yes --project procureflow-beta`, then `npm run vercel:customer -- --slug beta --apply` (replaces Turso URL/token + `SESSION_SECRET` on Production + Preview and redeploys). Smoke `BASE_URL=https://procureflow-beta.vercel.app`.
+Smoke `BASE_URL=https://procureflow-beta.vercel.app`. `vercel:customer --apply` replaces Turso URL/token + `SESSION_SECRET` on Production + Preview and redeploys.
 
 Leaving Acme’s URL in place would serve Acme’s data as Beta.
 
@@ -384,10 +368,8 @@ Do not commit `*.db` (`server/data/` is gitignored).
 Copy this into the ticket and tick as you go.
 
 - [ ] Node 18+, Turso CLI logged in, GitHub + Vercel access
-- [ ] `turso db create procureflow-acme` (**classic libSQL**, no `--tursodb`)
-- [ ] `turso db show procureflow-acme --url` stored
-- [ ] `turso db tokens create procureflow-acme` stored (**database token**, not org JWT)
-- [ ] New `SESSION_SECRET` generated and stored
+- [ ] `npm run turso:customer -- --slug acme` (dry-run) then `--apply` — **classic libSQL**, no `--tursodb`; prints `TURSO_*` + `SESSION_SECRET` exports
+- [ ] Database token stored (**not** an org JWT). Same as `turso db tokens create procureflow-acme`
 - [ ] **New** Vercel project; root = repo root; build from `vercel.json`
 - [ ] `vercel link --yes --project procureflow-acme`
 - [ ] `npm run vercel:customer -- --slug acme` (dry-run) then `--apply` (Production + Preview env + redeploy)
@@ -487,10 +469,8 @@ npm run db:migrate
 
 ```bash
 turso db destroy procureflow-acme --yes
-turso db create procureflow-acme
-# new URL + new database token → npm run vercel:customer -- --slug acme --apply
-export TURSO_DATABASE_URL="$(turso db show procureflow-acme --url)"
-export TURSO_AUTH_TOKEN="$(turso db tokens create procureflow-acme)"
+npm run turso:customer -- --slug acme --apply   # recreate + new database token + exports
+# then: npm run vercel:customer -- --slug acme --apply
 npm run db:migrate
 npm run bootstrap-org
 npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-password'
