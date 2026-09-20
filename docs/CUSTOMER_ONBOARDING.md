@@ -4,7 +4,19 @@ This is the operator runbook. Follow it top to bottom for **one new customer**. 
 
 Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the real customer slug, display name, and first-admin email.
 
-**Happy path:** `npm run turso:customer -- --apply` → create/link Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login.
+**Happy path (preferred):** one operator command. Dry-run first (no network); `--apply` chains Turso → Vercel env → provision. `--with-org` is **on by default** here. Secrets minted by Turso stay in-process — you do not copy `export` lines between commands.
+
+```bash
+npm run onboard:customer -- --slug acme
+npm run onboard:customer -- --slug acme --apply \
+  --email admin@acme.test --password 'choose-a-long-password' \
+  --name "Ada Admin"
+# optional once Production is Ready: add --smoke
+```
+
+Still create the Vercel project in the dashboard and `vercel link --yes --project procureflow-acme` once per clone. If the project is not linked, `--apply` stops after Turso with those next steps (it does **not** create Vercel projects).
+
+**Stepped path (explicit/advanced):** `npm run turso:customer -- --apply` → create/link Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. Same sequence as the orchestrator; use it when you need to re-run one step.
 
 | Next | Where |
 | --- | --- |
@@ -62,6 +74,34 @@ npm install --prefix client
 ```
 
 Confirm Node is 18 or newer. The Vercel project should also run Node 18+ (Project → Settings → General → Node.js Version).
+
+---
+
+## 0. Preferred: one-command orchestrator
+
+After Turso + Vercel CLIs are logged in (below), the usual operator entry is:
+
+```bash
+npm run onboard:customer -- --slug acme
+# then, after the Vercel project exists and this clone is linked (step 5):
+npm run onboard:customer -- --slug acme --apply \
+  --email admin@acme.test --password 'choose-a-long-password' \
+  --name "Ada Admin"
+```
+
+| Flag | Meaning |
+| --- | --- |
+| (default) | Dry-run. Prints the full Turso → Vercel → provision plan. Exit 0. No network. Does not invent secrets. |
+| `--apply` | Create/reuse the Turso DB, push env to the linked Vercel project, migrate + org skeleton, optional first admin. |
+| `--with-org` | Default **on** for this command (unlike `provision:customer`, which requires the flag). |
+| `--no-org` | Skip cost centers / FY budgets. |
+| `--smoke` | After provision, hit `https://procureflow-acme.vercel.app` (or `--base-url`). Skip until the deploy is Ready. |
+| `--db` / `--project` | Override Turso DB name or Vercel project name. |
+| `--json` | Machine summary. Tokens redacted to last 4 characters. |
+
+`--apply` never seeds, never invents Turso URL/token, never sets `DEMO_PERSONA_SWITCHER`, and never destroys a database.
+
+The rest of this document is the **same sequence, command by command**.
 
 ---
 
@@ -368,7 +408,8 @@ Do not commit `*.db` (`server/data/` is gitignored).
 Copy this into the ticket and tick as you go.
 
 - [ ] Node 18+, Turso CLI logged in, GitHub + Vercel access
-- [ ] `npm run turso:customer -- --slug acme` (dry-run) then `--apply` — **classic libSQL**, no `--tursodb`; prints `TURSO_*` + `SESSION_SECRET` exports
+- [ ] Preferred: `npm run onboard:customer -- --slug acme` (dry-run) then `--apply --email … --password …` (after `vercel link`)
+- [ ] Or stepped: `npm run turso:customer -- --slug acme` (dry-run) then `--apply` — **classic libSQL**, no `--tursodb`; prints `TURSO_*` + `SESSION_SECRET` exports
 - [ ] Database token stored (**not** an org JWT). Same as `turso db tokens create procureflow-acme`
 - [ ] **New** Vercel project; root = repo root; build from `vercel.json`
 - [ ] `vercel link --yes --project procureflow-acme`

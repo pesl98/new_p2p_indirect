@@ -443,5 +443,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.equal(pkg.scripts['provision:customer'], 'node server/scripts/provision-customer.js');
     assert.equal(pkg.scripts['turso:customer'], 'node server/scripts/turso-customer.js');
     assert.equal(pkg.scripts['vercel:customer'], 'node server/scripts/vercel-customer.js');
+    assert.equal(pkg.scripts['onboard:customer'], 'node server/scripts/onboard-customer.js');
+    assert.ok(fs.existsSync(path.join(repoRoot, 'server/scripts/onboard-customer.js')));
   });
 });
