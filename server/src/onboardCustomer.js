@@ -7,7 +7,8 @@
  *
  * Isolation stays one Turso DB + one Vercel project per customer (not org_id).
  * Never seeds. Never invents Turso URL/token. Never sets DEMO_PERSONA_SWITCHER.
- * Never destroys a Turso DB. Does not create Vercel projects.
+ * Never destroys a Turso DB. Ensures the Vercel project and links this checkout
+ * before env push. Does not connect GitHub auto-deploy.
  *
  *   npm run onboard:customer -- --slug acme
  *   npm run onboard:customer -- --slug acme --apply --email admin@acme.test --password '…'
@@ -17,8 +18,10 @@ import { runSmokeCli } from './smoke.js';
 import { runCustomerProvisionCli } from './provisionCustomer.js';
 import {
   CUSTOMER_ENV_KEYS,
+  VERCEL_GITHUB_LIMIT,
   buildApplyPlan,
   defaultProjectName,
+  plannedEnsureCommands,
   suggestedBaseUrl,
   runVercelCustomerCli
 } from './vercelCustomer.js';
@@ -46,9 +49,10 @@ Usage:
   --project <name>      Override Vercel project name (passed to vercel:customer).
   --dry-run             Print the full planned sequence (default). Exit 0.
                         Never calls Turso/Vercel/DB. Does not invent secrets.
-  --apply               Run Turso → Vercel env → provision in-process.
-                        Secrets minted by Turso are passed to later steps
-                        without copying export lines by hand.
+  --apply               Run Turso → ensure Vercel project + link → env push
+                        and redeploy → provision in-process. Secrets minted by
+                        Turso are passed to later steps without copying export
+                        lines by hand.
   --email / --password  First admin (both required together). Optional.
   --name <display>      First-admin display name (optional with --email).
   --with-org            Include cost centers + FY budgets (DEFAULT ON here;
@@ -65,18 +69,22 @@ Usage:
 
 Refuses --seed and --tursodb. Never seeds.
 Never invents Turso URL/token, never sets DEMO_PERSONA_SWITCHER, never
-destroys a Turso DB, never creates a Vercel project.
-If the project is not linked, --apply stops after Turso with dashboard +
-vercel link next steps.
+destroys a Turso DB.
+On --apply, vercel:customer creates the project if missing
+(vercel project add; idempotent if it exists) and links this directory
+(vercel link --yes --project …). Already linked to that name: skip.
+Linked to a different project: stop (does not retarget).
+
+${VERCEL_GITHUB_LIMIT}
+Uses the Vercel CLI's current team (vercel switch if you have more than one).
 
 Happy path:
   1. npm run onboard:customer -- --slug <slug>
-  2. Create Vercel project procureflow-<slug> + vercel link --yes --project …
-  3. npm run onboard:customer -- --slug <slug> --apply --email … --password …
-  4. Optional: --smoke once Production is Ready
+  2. npm run onboard:customer -- --slug <slug> --apply --email … --password …
+  3. Optional: --smoke once Production is Ready
 
 Stepped (same sequence, secrets copied by hand):
-  turso:customer --apply → vercel link → vercel:customer --apply
+  turso:customer --apply → vercel:customer --apply (ensure + link + env)
   → provision:customer -- --with-org → smoke
 
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
@@ -281,6 +289,7 @@ export function plannedOnboardSteps({
     projectOverride ? `--project ${projectName}` : null,
     '--apply'
   ].filter(Boolean).join(' ');
+  const ensure = plannedEnsureCommands(projectName);
   const provisionBits = [
     'npm run provision:customer --',
     withOrg ? '--with-org' : null,
@@ -298,12 +307,18 @@ export function plannedOnboardSteps({
     },
     {
       id: 'B',
-      name: 'vercel:customer',
-      command: vercelCmd,
-      summary: 'Push TURSO_* + SESSION_SECRET to Production+Preview and redeploy. Stops if not linked.'
+      name: 'ensure-vercel-project',
+      command: ensure.map((cmd) => cmd.display).join(' && '),
+      summary: 'Create or reuse the Vercel project, then link this directory. Skip if already linked to this name. Fail closed if linked to a different project.'
     },
     {
       id: 'C',
+      name: 'vercel:customer',
+      command: vercelCmd,
+      summary: 'Push TURSO_* + SESSION_SECRET to Production+Preview and redeploy. Includes step B when run via vercel:customer --apply.'
+    },
+    {
+      id: 'D',
       name: 'provision:customer',
       command: provisionBits,
       summary: withOrg
@@ -311,7 +326,7 @@ export function plannedOnboardSteps({
         : 'Migrate only' + (email ? ' + first admin' : '') + ' (--no-org)'
     },
     {
-      id: 'D',
+      id: 'E',
       name: 'smoke',
       command: `BASE_URL=${smokeUrl} npm run smoke`,
       summary: smoke
@@ -336,6 +351,8 @@ export function formatOnboardDryRun({
     slug, dbName, projectName, withOrg, smoke, email, name, baseUrl
   });
   const vercelPlan = buildApplyPlan({ slug, projectName });
+  const provision = steps.find((step) => step.name === 'provision:customer');
+  const smokeStep = steps.find((step) => step.name === 'smoke');
   const sessionSet = Boolean(asTrimmed(env.SESSION_SECRET));
   const adminLine = email
     ? `First admin:    ${name ? `${name} <${email}>` : email}`
@@ -353,7 +370,7 @@ export function formatOnboardDryRun({
     '',
     'Isolation: one classic libSQL database + one Vercel project per customer.',
     'Never seeds. Never invents Turso URL/token. Never sets DEMO_PERSONA_SWITCHER.',
-    'Never destroys a Turso DB. Does not create Vercel projects.',
+    'Never destroys a Turso DB. Creates or reuses the Vercel project, then links this directory.',
     '',
     'Step A — turso:customer --apply (secrets stay in-process for later steps):',
     ...plannedTursoCommands(dbName).flatMap((cmd) => (
@@ -367,23 +384,28 @@ export function formatOnboardDryRun({
       ? '  export SESSION_SECRET=\'<reuse existing SESSION_SECRET from this environment — not printed>\''
       : `  export SESSION_SECRET='${WILL_MINT_PLACEHOLDER}'`,
     '',
-    'Step B — vercel:customer --apply (uses Step A secrets; no manual export):',
+    'Step B — ensure Vercel project + link (no secrets; part of vercel:customer --apply):',
     `  ${vercelPlan.whoami.display}`,
+    ...vercelPlan.ensureCommands.flatMap((cmd) => (
+      cmd.note ? [`  ${cmd.display}`, `    (${cmd.note})`] : [`  ${cmd.display}`]
+    )),
+    '  If this directory is linked to a different project, --apply stops and does not retarget.',
+    `  ${VERCEL_GITHUB_LIMIT}`,
+    '',
+    'Step C — vercel:customer env + redeploy (uses Step A secrets; no manual export):',
     ...vercelPlan.envCommands.map((cmd) => `  ${cmd.display}`),
     `  ${vercelPlan.listProduction.display}`,
     `  ${vercelPlan.redeployDisplay}`,
     `  (if no production deployment yet: ${vercelPlan.deployFallbackDisplay})`,
-    '  If .vercel/project.json is missing: stop with dashboard create + vercel link.',
     '',
-    `Step C — ${steps[2].command}`,
-    `  ${steps[2].summary}. Never seeds.`,
+    `Step D — ${provision.command}`,
+    `  ${provision.summary}. Never seeds.`,
     '',
-    `Step D — ${steps[3].command}`,
-    `  ${steps[3].summary}.`,
+    `Step E — ${smokeStep.command}`,
+    `  ${smokeStep.summary}.`,
     '',
     'Preferred one-command entry. Stepped path still works:',
     `  npm run turso:customer -- --slug ${slug} --apply`,
-    `  vercel link --yes --project ${projectName}`,
     `  npm run vercel:customer -- --slug ${slug} --apply`,
     `  npm run provision:customer -- ${withOrg ? '--with-org ' : ''}--email … --password …`,
     '',
@@ -412,7 +434,8 @@ export function formatOnboardApplyReport({
     `Smoke:          ${smoked ? 'ran' : 'skipped (pass --smoke once Production is Ready)'}`,
     '',
     'Secrets stay in this process, Vercel env, and (from Turso) human stdout — not in git.',
-    `DEMO_PERSONA_SWITCHER left unset.`,
+    'DEMO_PERSONA_SWITCHER left unset.',
+    VERCEL_GITHUB_LIMIT,
     '',
     'Next:',
     `  Sign in at ${baseUrl} (or Create the first admin if you omitted --email).`,
@@ -425,18 +448,15 @@ export function formatOnboardApplyReport({
 export function formatVercelLinkStop({ slug, projectName } = {}) {
   return [
     '',
-    `onboard:customer stopped at Vercel (step B).`,
-    'If the project is not linked, create it in the dashboard (do not share it):',
-    '  Add New → Project → import pesl98/new_p2p_indirect (or your fork)',
-    `  Project name: ${projectName}`,
-    '  Root Directory = repository root (leave default; build comes from vercel.json)',
+    'onboard:customer stopped at Vercel (ensure project + link, then env).',
+    'Turso was not destroyed and was not seeded.',
+    'If this directory is linked to a different project, the command will not retarget it.',
+    `Expected project: ${projectName}`,
     '',
-    'Then from this repo root:',
-    '  vercel login',
-    `  vercel link --yes --project ${projectName}`,
-    '',
-    'Re-run (Turso DB is reused; this command never creates Vercel projects):',
+    'Re-run after the Vercel error above is fixed (the Turso DB is reused):',
     `  npm run onboard:customer -- --slug ${slug} --apply --email … --password …`,
+    '',
+    VERCEL_GITHUB_LIMIT,
     ''
   ].join('\n');
 }
@@ -508,6 +528,8 @@ export async function runOnboardCustomerCli({
   cwd = process.cwd(),
   spawnFn,
   randomBytesFn,
+  existsSync,
+  readFileSync,
   runTursoFn = runTursoCustomerCli,
   runVercelFn = runVercelCustomerCli,
   runProvisionFn = runCustomerProvisionCli,
@@ -588,7 +610,7 @@ export async function runOnboardCustomerCli({
     return 0;
   }
 
-  write(stdout, `Onboarding ${slug} (Turso → Vercel → provision${args.smoke ? ' → smoke' : ''})…\n`);
+  write(stdout, `Onboarding ${slug} (Turso → Vercel project → env → provision${args.smoke ? ' → smoke' : ''})…\n`);
 
   const tursoArgv = buildTursoArgv({ slug, db: args.db || dbName });
   const tursoResult = await runTursoFn({
@@ -625,7 +647,9 @@ export async function runOnboardCustomerCli({
     stdout,
     stderr,
     cwd,
-    spawnFn
+    spawnFn,
+    existsSync,
+    readFileSync
   });
   if (vercelCode !== 0) {
     write(stderr, formatVercelLinkStop({ slug, projectName }));

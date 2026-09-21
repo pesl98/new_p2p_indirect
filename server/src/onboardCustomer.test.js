@@ -1,9 +1,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WILL_MINT_PLACEHOLDER } from './tursoCustomer.js';
+import { runVercelCustomerCli } from './vercelCustomer.js';
 import {
   ONBOARD_CUSTOMER_HELP,
   buildOnboardJsonSummary,
@@ -24,6 +26,40 @@ function captureStreams() {
   const stdout = { text: '', write(chunk) { this.text += chunk; } };
   const stderr = { text: '', write(chunk) { this.text += chunk; } };
   return { stdout, stderr };
+}
+
+function fakeChild({
+  exitCode = 0,
+  stdout = '',
+  stderr = ''
+} = {}) {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  queueMicrotask(() => {
+    if (stdout) child.stdout.emit('data', stdout);
+    if (stderr) child.stderr.emit('data', stderr);
+    child.emit('close', exitCode);
+  });
+  return child;
+}
+
+function vercelSpawn(calls) {
+  return (_command, args) => {
+    calls.push([...args]);
+    if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+    if (args[0] === 'project' && args[1] === 'add') return fakeChild({ stdout: 'added\n' });
+    if (args[0] === 'link') return fakeChild({ stdout: 'linked\n' });
+    if (args[0] === 'env') return fakeChild();
+    if (args[0] === 'ls') {
+      return fakeChild({
+        stdout: JSON.stringify([{ uid: 'dpl_acme', url: 'procureflow-acme.vercel.app' }])
+      });
+    }
+    if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+    throw new Error(`unexpected spawn ${args.join(' ')}`);
+  };
 }
 
 const MINTED = {
@@ -267,6 +303,9 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.match(stdout.text, /Database name:  procureflow-acme/);
     assert.match(stdout.text, /Vercel project: procureflow-acme/);
     assert.match(stdout.text, /turso db create procureflow-acme/);
+    assert.match(stdout.text, /vercel project add procureflow-acme/);
+    assert.match(stdout.text, /vercel link --yes --project procureflow-acme/);
+    assert.match(stdout.text, /does not connect GitHub/);
     assert.match(stdout.text, /vercel env add TURSO_DATABASE_URL production/);
     assert.match(stdout.text, /provision:customer -- --with-org/);
     assert.match(stdout.text, /skip \(pass --smoke/);
@@ -412,19 +451,32 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.equal(smokeOpts.env.TURSO_AUTH_TOKEN, MINTED.TURSO_AUTH_TOKEN);
   });
 
-  test('--apply stops after Vercel when the project is not linked; provision is not called', async () => {
+  test('--apply stops after Vercel when ensure fails closed; provision is not called', async () => {
     let provisioned = false;
+    const calls = [];
     const { stderr } = captureStreams();
     const code = await runOnboardCustomerCli({
       argv: ['--slug', 'acme', '--apply', '--email', 'a@acme.test', '--password', 'long-password'],
       env: {},
+      cwd: '/tmp/linked-other',
       stdout: captureStreams().stdout,
       stderr,
-      async runTursoFn() { return { code: 0, exports: MINTED }; },
-      async runVercelFn({ stderr: vercelErr }) {
-        vercelErr.write('This directory is not linked to a Vercel project (missing .vercel/project.json).\n');
-        return 1;
+      existsSync: (file) => String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`),
+      readFileSync: () => JSON.stringify({
+        projectId: 'prj_other',
+        orgId: 'team_other',
+        projectName: 'procureflow-other'
+      }),
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
       },
+      async runTursoFn() {
+        calls.push(['turso:customer']);
+        return { code: 0, exports: MINTED };
+      },
+      runVercelFn: runVercelCustomerCli,
       async runProvisionFn() {
         provisioned = true;
         return 0;
@@ -432,9 +484,84 @@ describe('onboard:customer CLI (no live network)', () => {
     });
     assert.equal(code, 1);
     assert.equal(provisioned, false);
+    assert.deepEqual(calls[0], ['turso:customer']);
+    assert.deepEqual(calls[1], ['whoami']);
+    assert.equal(calls.some((args) => args[0] === 'project' || args[0] === 'link' || args[0] === 'env'), false);
     assert.match(stderr.text, /stopped at Vercel/);
-    assert.match(stderr.text, /vercel link --yes --project procureflow-acme/);
-    assert.match(stderr.text, /never creates Vercel projects/);
+    assert.match(stderr.text, /Refusing to retarget/);
+    assert.match(stderr.text, /procureflow-other/);
+    assert.doesNotMatch(stderr.text, /never creates Vercel projects/);
+  });
+
+  test('--apply unlinked path orders Turso, project add, link, env, then provision', async () => {
+    const calls = [];
+    let provisioned = false;
+    const { stdout, stderr } = captureStreams();
+    const code = await runOnboardCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: {},
+      cwd: '/tmp/unlinked-acme',
+      stdout,
+      stderr,
+      existsSync: () => false,
+      spawnFn: vercelSpawn(calls),
+      async runTursoFn() {
+        calls.push(['turso:customer']);
+        return { code: 0, exports: MINTED };
+      },
+      runVercelFn: runVercelCustomerCli,
+      async runProvisionFn() {
+        provisioned = true;
+        calls.push(['provision']);
+        return 0;
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(provisioned, true);
+    const labels = calls.map((args) => {
+      if (args[0] === 'turso:customer') return 'turso';
+      if (args[0] === 'whoami') return 'whoami';
+      if (args[0] === 'project') return 'project-add';
+      if (args[0] === 'link') return 'link';
+      if (args[0] === 'env') return 'env';
+      if (args[0] === 'redeploy') return 'redeploy';
+      if (args[0] === 'provision') return 'provision';
+      return args[0];
+    });
+    assert.equal(labels[0], 'turso');
+    assert.ok(labels.indexOf('whoami') > labels.indexOf('turso'));
+    assert.ok(labels.indexOf('project-add') > labels.indexOf('whoami'));
+    assert.ok(labels.indexOf('link') > labels.indexOf('project-add'));
+    assert.ok(labels.indexOf('env') > labels.indexOf('link'));
+    assert.ok(labels.indexOf('redeploy') > labels.indexOf('env'));
+    assert.ok(labels.indexOf('provision') > labels.indexOf('redeploy'));
+    assert.match(stdout.text, /Onboarding acme \(Turso → Vercel project → env → provision/);
+    assert.equal(stdout.text.includes(MINTED.TURSO_AUTH_TOKEN), false);
+  });
+
+  test('--apply already linked to the expected project skips create and link', async () => {
+    const calls = [];
+    const { stderr } = captureStreams();
+    const code = await runOnboardCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: {},
+      cwd: '/tmp/linked-acme',
+      stdout: captureStreams().stdout,
+      stderr,
+      existsSync: (file) => String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`),
+      readFileSync: () => JSON.stringify({
+        projectId: 'prj_acme',
+        orgId: 'team_acme',
+        projectName: 'procureflow-acme'
+      }),
+      spawnFn: vercelSpawn(calls),
+      async runTursoFn() { return { code: 0, exports: MINTED }; },
+      runVercelFn: runVercelCustomerCli,
+      async runProvisionFn() { return 0; }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(calls.some((args) => args[0] === 'project' || args[0] === 'link'), false);
+    assert.equal(calls.some((args) => args[0] === 'env'), true);
   });
 
   test('--apply --json redacts token and session secret', async () => {

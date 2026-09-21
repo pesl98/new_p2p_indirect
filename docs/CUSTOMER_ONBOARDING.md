@@ -4,7 +4,7 @@ This is the operator runbook. Follow it top to bottom for **one new customer**. 
 
 Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the real customer slug, display name, and first-admin email.
 
-**Happy path (preferred):** one operator command. Dry-run first (no network); `--apply` chains Turso → Vercel env → provision. `--with-org` is **on by default** here. Secrets minted by Turso stay in-process — you do not copy `export` lines between commands.
+**Happy path (preferred):** one operator command. Dry-run first (no network); `--apply` chains Turso → ensure Vercel project + link → env + redeploy → provision. `--with-org` is **on by default** here. Secrets minted by Turso stay in-process — you do not copy `export` lines between commands.
 
 ```bash
 npm run onboard:customer -- --slug acme
@@ -14,9 +14,11 @@ npm run onboard:customer -- --slug acme --apply \
 # optional once Production is Ready: add --smoke
 ```
 
-Still create the Vercel project in the dashboard and `vercel link --yes --project procureflow-acme` once per clone. If the project is not linked, `--apply` stops after Turso with those next steps (it does **not** create Vercel projects).
+`--apply` creates or reuses the Vercel project `procureflow-acme` (`vercel project add`) and links this checkout (`vercel link --yes --project procureflow-acme`) before it pushes env. If this directory is already linked to that project, those commands are skipped. If it is linked to a **different** project, `--apply` stops and does not retarget it.
 
-**Stepped path (explicit/advanced):** `npm run turso:customer -- --apply` → create/link Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. Same sequence as the orchestrator; use it when you need to re-run one step.
+`vercel project add` does not connect GitHub. Production is deployed from this laptop (`vercel deploy --prod` / `vercel redeploy`). Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.
+
+**Stepped path (explicit/advanced):** `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` (ensure + link + env) → `provision:customer -- --with-org` → smoke → first login. Same sequence as the orchestrator; use it when you need to re-run one step.
 
 | Next | Where |
 | --- | --- |
@@ -52,7 +54,7 @@ Do this once on the operator laptop before the first customer.
 - [ ] **Vercel account** that can create a new project from that repo
 - [ ] **Turso account** (create at [turso.tech](https://turso.tech) if needed)
 - [ ] **Turso CLI** — used by `npm run turso:customer -- --apply` (`turso auth login`)
-- [ ] **Vercel CLI** (`npm i -g vercel`, then `vercel login`) — used by `npm run vercel:customer -- --apply`
+- [ ] **Vercel CLI** (`npm i -g vercel`, then `vercel login`) — used to create/link the project and push env. If you belong to more than one team, `vercel switch` to the right one first (the CLI uses the current team; these commands do not pass `--scope`).
 - [ ] A **password manager** for URL, database token, `SESSION_SECRET`, and the first-admin password. Never commit `.env`, tokens, or `*.db`.
 
 ```bash
@@ -83,16 +85,16 @@ After Turso + Vercel CLIs are logged in (below), the usual operator entry is:
 
 ```bash
 npm run onboard:customer -- --slug acme
-# then, after the Vercel project exists and this clone is linked (step 5):
 npm run onboard:customer -- --slug acme --apply \
   --email admin@acme.test --password 'choose-a-long-password' \
   --name "Ada Admin"
+# optional once Production is Ready: add --smoke
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| (default) | Dry-run. Prints the full Turso → Vercel → provision plan. Exit 0. No network. Does not invent secrets. |
-| `--apply` | Create/reuse the Turso DB, push env to the linked Vercel project, migrate + org skeleton, optional first admin. |
+| (default) | Dry-run. Prints the full Turso → ensure project + link → env → provision plan. Exit 0. No network. Does not invent secrets. |
+| `--apply` | Create/reuse the Turso DB, create/reuse the Vercel project and link this checkout, push env, migrate + org skeleton, optional first admin. |
 | `--with-org` | Default **on** for this command (unlike `provision:customer`, which requires the flag). |
 | `--no-org` | Skip cost centers / FY budgets. |
 | `--smoke` | After provision, hit `https://procureflow-acme.vercel.app` (or `--base-url`). Skip until the deploy is Ready. |
@@ -153,27 +155,28 @@ Help: `npm run turso:customer -- --help`.
 
 ---
 
-## 5. Create a **new Vercel project** (human, once)
+## 5. Ensure the Vercel project and link this checkout
 
-Same git repo, **new project** — do not add this customer as a second domain on an existing ProcureFlow project. This step stays in the dashboard (the env script will **not** create a project).
-
-1. Vercel dashboard → **Add New… → Project**.
-2. **Import** `pesl98/new_p2p_indirect` (or your fork). Grant GitHub access if Vercel asks.
-3. **Root Directory** = repository root (leave the default; do not set `client/` or `server/`).
-4. Framework: leave as detected / Other. **Do not** invent a build command — [`vercel.json`](../vercel.json) already sets `buildCommand` to `npm run build`.
-5. Suggested project name: `procureflow-acme`.
-6. Create the project. The first deploy may 503 until env vars exist — that is expected.
-
-On the laptop (once per operator / clone), link that project so later commands know the target:
+Same git repo, **new project** — do not add this customer as a second domain on an existing ProcureFlow project. `onboard:customer --apply` and `vercel:customer --apply` do this before env (confirmed against Vercel CLI 59.24.0):
 
 ```bash
-# Once per laptop
-npm i -g vercel
-vercel login
+vercel project add procureflow-acme
 vercel link --yes --project procureflow-acme
 ```
 
-`vercel link` binds this checkout to the **existing** dashboard project. If the project is missing, create it in the dashboard first — do not invent a second customer on an existing ProcureFlow project.
+| Situation | What `--apply` does |
+| --- | --- |
+| No `.vercel/project.json` | `vercel project add` (create, or reuse if the CLI reports the project already exists / HTTP 409), then `vercel link --yes --project procureflow-acme` |
+| Already linked to `procureflow-acme` | Skip both commands |
+| Linked to a different project | Stop. Does not retarget, does not change env |
+
+`vercel project add` only creates the project (the CLI lowercases the name). It does **not** import the GitHub repo or turn on git-push deploys. After env is set, `--apply` deploys from this laptop (`vercel redeploy`, or `vercel deploy --prod --yes` when there is no Production deployment yet).
+
+**Remaining human step (GitHub):** if you want `git push` to deploy, connect Vercel to GitHub once at the account/team level and attach this repo on the project. That connection is not reliable from these commands, so this runbook does not claim a zero-click GitHub import. Laptop deploy does not need it.
+
+Uses the Vercel CLI’s current team. If the project shows up under the wrong team, `vercel switch` and re-run; these commands do not pass `--scope` or `--team`.
+
+Dashboard fallback (only if `project add` cannot run — permissions or scope): **Add New… → Project**, name `procureflow-acme`, root = repository root, then re-run. Do not attach Acme to another customer’s project. Confirm Node.js 18+ under Project → Settings → General if the first deploy fails on an older runtime (`project add` uses the account default and does not set Node).
 
 What Vercel does on each deploy:
 
@@ -198,7 +201,7 @@ npm run vercel:customer -- --slug acme
 npm run vercel:customer -- --slug acme --apply
 ```
 
-`--slug acme` targets project `procureflow-acme` (override with `--project <name>`). `--apply` requires the Vercel CLI, `vercel login`, and `vercel link`. Help: `npm run vercel:customer -- --help`.
+`--slug acme` targets project `procureflow-acme` (override with `--project <name>`). `--apply` requires the Vercel CLI and `vercel login`. It ensures the project and link (step 5) before setting env. Help: `npm run vercel:customer -- --help`.
 
 | Variable | Value | Production | Preview |
 | --- | --- | --- | --- |
@@ -380,7 +383,7 @@ Never share a URL.
 npm run turso:customer -- --slug beta --apply
 # copy the printed exports into this shell (new SESSION_SECRET — do not reuse Acme’s)
 
-# Then: new Vercel project procureflow-beta + vercel link --yes --project procureflow-beta
+# vercel:customer --apply creates/links procureflow-beta if this clone is not already linked to it
 npm run vercel:customer -- --slug beta --apply
 npm run provision:customer -- --with-org \
   --email admin@beta.test \
@@ -408,12 +411,13 @@ Do not commit `*.db` (`server/data/` is gitignored).
 Copy this into the ticket and tick as you go.
 
 - [ ] Node 18+, Turso CLI logged in, GitHub + Vercel access
-- [ ] Preferred: `npm run onboard:customer -- --slug acme` (dry-run) then `--apply --email … --password …` (after `vercel link`)
+- [ ] Preferred: `npm run onboard:customer -- --slug acme` (dry-run) then `--apply --email … --password …` (creates/links `procureflow-acme` when this clone is not already linked to it)
 - [ ] Or stepped: `npm run turso:customer -- --slug acme` (dry-run) then `--apply` — **classic libSQL**, no `--tursodb`; prints `TURSO_*` + `SESSION_SECRET` exports
 - [ ] Database token stored (**not** an org JWT). Same as `turso db tokens create procureflow-acme`
-- [ ] **New** Vercel project; root = repo root; build from `vercel.json`
-- [ ] `vercel link --yes --project procureflow-acme`
-- [ ] `npm run vercel:customer -- --slug acme` (dry-run) then `--apply` (Production + Preview env + redeploy)
+- [ ] **New** Vercel project `procureflow-acme` (via `vercel project add` inside `--apply`, or the dashboard fallback). Root = repo root; build from `vercel.json`
+- [ ] This checkout linked to that project (`vercel link --yes --project procureflow-acme`; skipped if already linked). Not linked to a different customer
+- [ ] `npm run vercel:customer -- --slug acme` (dry-run) then `--apply` (ensure + link + Production + Preview env + redeploy)
+- [ ] GitHub auto-deploy left as a separate dashboard connection if you want git-push deploys (not done by `vercel project add`)
 - [ ] `DEMO_PERSONA_SWITCHER` left unset
 - [ ] Laptop `export` of the same `TURSO_*` (+ `SESSION_SECRET`)
 - [ ] `npm run db:migrate` then `npm run bootstrap-org` then `npm run bootstrap-admin` (or `npm run provision:customer -- --with-org --email … --password …`)

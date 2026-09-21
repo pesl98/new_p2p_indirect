@@ -56,11 +56,11 @@ Happy path:
   Preferred: npm run onboard:customer -- --slug <slug> [--apply --email … --password …]
   1. npm run turso:customer -- --slug <slug>            # dry-run
   2. npm run turso:customer -- --slug <slug> --apply    # print exports
-  3. Create Vercel project procureflow-<slug> in the dashboard (import repo)
-  4. vercel link --yes --project procureflow-<slug>
-  5. npm run vercel:customer -- --slug <slug> --apply   # after exporting
-  6. npm run provision:customer -- --with-org --email … --password …
-  7. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
+  3. npm run vercel:customer -- --slug <slug>           # dry-run (project add + link + env)
+  4. npm run vercel:customer -- --slug <slug> --apply   # ensure project, link, env, redeploy
+  5. npm run provision:customer -- --with-org --email … --password …
+  6. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
+  GitHub auto-deploy is not connected by vercel project add.
 
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
@@ -322,7 +322,7 @@ export function formatDryRunReport({
     '',
     `Customer slug:  ${slug}`,
     `Database name:  ${dbName}`,
-    `Vercel project: ${projectName} (create/link next; this command never calls Vercel)`,
+    `Vercel project: ${projectName} (vercel:customer --apply creates/links it; this command never calls Vercel)`,
     '',
     'Isolation: one classic libSQL database per customer. Never --tursodb.',
     'Token: turso db tokens create (database token), not an org JWT.',
@@ -348,8 +348,7 @@ export function formatDryRunReport({
     '',
     'Next:',
     `  npm run turso:customer -- --slug ${slug} --apply`,
-    `  Create / link Vercel project ${projectName} (dashboard + vercel link)`,
-    `  npm run vercel:customer -- --slug ${slug} --apply`,
+    `  npm run vercel:customer -- --slug ${slug} --apply   # project add + link if needed, then env`,
     '  npm run provision:customer -- --with-org --email admin@customer.com --password \'…\'',
     `  BASE_URL=${suggestedBaseUrl(projectName)} npm run smoke`
   ];
@@ -376,8 +375,7 @@ export function formatApplyReport({
     'Secrets are printed once on stdout — not written to git.',
     '',
     'Next:',
-    `  Create / link Vercel project ${projectName} (dashboard + vercel link)`,
-    `  npm run vercel:customer -- --slug ${slug} --apply`,
+    `  npm run vercel:customer -- --slug ${slug} --apply   # project add + link if needed, then env`,
     '  npm run provision:customer -- --with-org --email admin@customer.com --password \'…\'',
     `  BASE_URL=${suggestedBaseUrl(projectName)} npm run smoke`
   ];
