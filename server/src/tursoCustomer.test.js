@@ -21,7 +21,9 @@ import {
   resolveCustomerIdentity,
   resolveSessionSecret,
   runTursoCustomerCli,
-  slugFromDatabaseName
+  slugFromDatabaseName,
+  tursoCustomerCliCode,
+  tursoCustomerExports
 } from './tursoCustomer.js';
 import { normalizeSlug } from './vercelCustomer.js';
 
@@ -577,6 +579,42 @@ describe('turso:customer CLI (no live Turso)', () => {
     assert.match(stderr.text, /Failed to create Turso database/);
     assert.match(stderr.text, /never passes --tursodb/);
     assert.match(stderr.text, /quota exceeded/);
+  });
+
+  test('--apply returnResult returns minted exports; stdout still has full export lines', async () => {
+    const { spawnFn } = applySpawn();
+    const { stdout, stderr } = captureStreams();
+    const result = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: {},
+      stdout,
+      stderr,
+      spawnFn,
+      randomBytesFn: () => Buffer.from(MINTED_SECRET, 'hex'),
+      returnResult: true
+    });
+    assert.equal(tursoCustomerCliCode(result), 0, stderr.text);
+    const minted = tursoCustomerExports(result);
+    assert.equal(minted.TURSO_DATABASE_URL, APPLY_URL);
+    assert.equal(minted.TURSO_AUTH_TOKEN, APPLY_TOKEN);
+    assert.equal(minted.SESSION_SECRET, MINTED_SECRET);
+    assert.match(stdout.text, new RegExp(`export TURSO_DATABASE_URL='${APPLY_URL}'`));
+    assert.match(stdout.text, new RegExp(`export TURSO_AUTH_TOKEN='${APPLY_TOKEN}'`));
+    assert.match(stdout.text, new RegExp(`export SESSION_SECRET='${MINTED_SECRET}'`));
+  });
+
+  test('without returnResult, --apply still returns a numeric exit code', async () => {
+    const { spawnFn } = applySpawn();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: { SESSION_SECRET: MINTED_SECRET },
+      stdout: captureStreams().stdout,
+      stderr: captureStreams().stderr,
+      spawnFn
+    });
+    assert.equal(typeof code, 'number');
+    assert.equal(code, 0);
+    assert.equal(tursoCustomerExports(code), null);
   });
 });
 

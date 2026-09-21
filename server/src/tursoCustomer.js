@@ -53,6 +53,7 @@ Classic libSQL only — never passes --tursodb.
 Token is turso db tokens create (database token), not an org JWT.
 
 Happy path:
+  Preferred: npm run onboard:customer -- --slug <slug> [--apply --email … --password …]
   1. npm run turso:customer -- --slug <slug>            # dry-run
   2. npm run turso:customer -- --slug <slug> --apply    # print exports
   3. Create Vercel project procureflow-<slug> in the dashboard (import repo)
@@ -449,6 +450,20 @@ function printCommandOutput(stream, text) {
   if (redacted) write(stream, `${redacted}\n`);
 }
 
+export function tursoCustomerCliCode(result) {
+  if (result && typeof result === 'object' && typeof result.code === 'number') {
+    return result.code;
+  }
+  return result;
+}
+
+export function tursoCustomerExports(result) {
+  if (result && typeof result === 'object' && result.exports && typeof result.exports === 'object') {
+    return result.exports;
+  }
+  return null;
+}
+
 export async function runTursoCustomerCli({
   argv = [],
   env = process.env,
@@ -456,12 +471,19 @@ export async function runTursoCustomerCli({
   stderr = process.stderr,
   cwd = process.cwd(),
   spawnFn = spawn,
-  randomBytesFn = randomBytes
+  randomBytesFn = randomBytes,
+  returnResult = false
 } = {}) {
+  const finish = (code, extras = {}) => (
+    returnResult
+      ? { code, exports: extras.exports || null }
+      : code
+  );
+
   const args = parseTursoCustomerArgs(argv);
   if (args.help) {
     write(stdout, TURSO_CUSTOMER_HELP);
-    return 0;
+    return finish(0);
   }
   if (args.seed) {
     write(
@@ -470,7 +492,7 @@ export async function runTursoCustomerCli({
         + 'Real customer: turso:customer --apply, then vercel:customer --apply, then npm run provision:customer.\n'
         + 'Demo wipe (destructive): npm run seed\n'
     );
-    return 1;
+    return finish(1);
   }
   if (args.tursodb) {
     write(
@@ -478,21 +500,21 @@ export async function runTursoCustomerCli({
       'turso:customer never passes --tursodb. ProcureFlow uses classic libSQL only.\n'
         + 'Create/reuse with: npm run turso:customer -- --slug <customer> --apply\n'
     );
-    return 1;
+    return finish(1);
   }
   if (args.unknown.length) {
     write(stderr, `Unknown argument: ${args.unknown[0]}\n${TURSO_CUSTOMER_HELP}`);
-    return 1;
+    return finish(1);
   }
   if (args.apply && args.dryRunFlag) {
     write(stderr, 'Use either --dry-run (default) or --apply, not both.\n');
-    return 1;
+    return finish(1);
   }
 
   const identity = resolveCustomerIdentity({ slug: args.slug, db: args.db });
   if (identity.error) {
     write(stderr, identityErrorMessage(identity));
-    return 1;
+    return finish(1);
   }
 
   const { slug, dbName, projectName } = identity;
@@ -508,7 +530,7 @@ export async function runTursoCustomerCli({
         sessionSecret: env.SESSION_SECRET
       }), null, 2)}\n`);
     }
-    return 0;
+    return finish(0);
   }
 
   const tursoBin = resolveTursoBin(env);
@@ -531,7 +553,7 @@ export async function runTursoCustomerCli({
         + '  turso auth login\n'
         + `Dry-run needs no CLI: npm run turso:customer -- --slug ${slug}\n`
     );
-    return 1;
+    return finish(1);
   }
   if (whoami.code !== 0) {
     write(
@@ -539,7 +561,7 @@ export async function runTursoCustomerCli({
       'Turso CLI is not logged in. Run: turso auth login\n'
     );
     printCommandOutput(stderr, whoami.stderr || whoami.stdout);
-    return 1;
+    return finish(1);
   }
   printCommandOutput(stdout, whoami.stdout);
 
@@ -561,7 +583,7 @@ export async function runTursoCustomerCli({
             + 'Classic libSQL only — this command never passes --tursodb.\n'
         );
         printCommandOutput(stderr, createdResult.stderr || createdResult.stdout);
-        return 1;
+        return finish(1);
       }
     } else {
       created = true;
@@ -573,20 +595,20 @@ export async function runTursoCustomerCli({
         + 'Confirm turso auth login and that the name is correct. This command will not destroy a DB.\n'
     );
     printCommandOutput(stderr, shown.stderr || shown.stdout);
-    return 1;
+    return finish(1);
   }
 
   const urlResult = await runTursoCommand(['db', 'show', dbName, '--url'], runOpts);
   if (urlResult.code !== 0) {
     write(stderr, `Failed to read URL for ${dbName} (turso db show --url).\n`);
     printCommandOutput(stderr, urlResult.stderr || urlResult.stdout);
-    return 1;
+    return finish(1);
   }
   const url = parseTursoUrl(urlResult.stdout);
   if (!url) {
     write(stderr, `turso db show ${dbName} --url did not return a libsql/https URL.\n`);
     printCommandOutput(stderr, urlResult.stdout);
-    return 1;
+    return finish(1);
   }
 
   const tokenResult = await runTursoCommand(['db', 'tokens', 'create', dbName], runOpts);
@@ -597,13 +619,13 @@ export async function runTursoCustomerCli({
         + 'Need a database token, not an org JWT (do not use turso auth token).\n'
     );
     printCommandOutput(stderr, tokenResult.stderr || tokenResult.stdout);
-    return 1;
+    return finish(1);
   }
   const token = parseTursoToken(tokenResult.stdout);
   if (!token) {
     write(stderr, `turso db tokens create ${dbName} did not return a token.\n`);
     printCommandOutput(stderr, tokenResult.stdout);
-    return 1;
+    return finish(1);
   }
 
   const session = resolveSessionSecret(env, { randomBytesFn });
@@ -640,5 +662,11 @@ export async function runTursoCustomerCli({
     }), null, 2)}\n`);
   }
 
-  return 0;
+  return finish(0, {
+    exports: {
+      TURSO_DATABASE_URL: url,
+      TURSO_AUTH_TOKEN: token,
+      SESSION_SECRET: session.value
+    }
+  });
 }

@@ -1,12 +1,12 @@
 # ProcureFlow customer deployment
 
-> **Operators:** product capabilities + deploy overview live in **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. The step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (`npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login). This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
+> **Operators:** product capabilities + deploy overview live in **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. The step-by-step runbook is **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply --email … --password …`. Stepped: `npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. This file is the technical reference: isolation model, env table, Auth API, Vercel internals, rollback details.
 
 ProcureFlow is installed **one database per customer**. Customer A and customer B never share a SQLite file or Turso database. There is **no** shared-row `org_id` multi-tenancy. Authentication is therefore **local to that database** — a login on tenant A cannot see users in tenant B.
 
 Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
 
-**Real customer sequence:** `npm run db:migrate` → `npm run bootstrap-org` → `npm run bootstrap-admin` → `npm run smoke`. Wrapper: `npm run provision:customer` (optional `--with-org`, optional `--email` / `--password`; **never seeds**). Demo wipe stays opt-in: `npm run seed`.
+**Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (Turso + Vercel env + migrate + org skeleton + optional first admin; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `vercel link` → `npm run vercel:customer -- --apply` → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`.
 
 **Auth (this phase):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie, admin user CRUD on `req.user`. SSO / SAML / OIDC is **out of scope** (next). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**). Legacy P2P routes still accept body `requester_id` / `approver_id` — that is not a full authorization boundary.
 
@@ -35,13 +35,16 @@ Partial Turso credentials (URL xor token) are **fail-closed** on `npm run db:mig
 
 ### Turso (typical customer / Vercel)
 
-Classic libSQL database (not `--tursodb`). Token must be a **database token**, not an org/platform JWT. Prefer the operator CLI (dry-run first; `--apply` creates or **reuses**, never destroys):
+Classic libSQL database (not `--tursodb`). Token must be a **database token**, not an org/platform JWT. Prefer the one-command orchestrator (`npm run onboard:customer -- --slug acme`, dry-run first). The Turso-only CLI still works (dry-run first; `--apply` creates or **reuses**, never destroys):
 
 ```bash
 curl -sSfL https://get.tur.so/install.sh | bash
 turso auth login
 
-# Customer A
+# Customer A — preferred one-command (after vercel link):
+# npm run onboard:customer -- --slug acme --apply --email … --password …
+
+# Customer A — Turso step only
 npm run turso:customer -- --slug acme            # dry-run (no Turso mutation)
 npm run turso:customer -- --slug acme --apply    # create/reuse + print exports
 
@@ -196,7 +199,7 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 ### Per-customer checklist
 
 - [ ] **New Vercel project** for this customer (Add New Project → import `pesl98/new_p2p_indirect` or your fork). Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json). Suggested name: `procureflow-<customer>`.
-- [ ] **Dedicated Turso DB** via `npm run turso:customer -- --slug <customer> --apply` (classic libSQL `turso db create procureflow-<customer>`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
+- [ ] **Dedicated Turso DB** via `npm run onboard:customer -- --slug <customer> --apply` (or `npm run turso:customer -- --slug <customer> --apply` — classic libSQL `turso db create procureflow-<customer>`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
 - [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` already exported from `turso:customer` (the Vercel script **refuses to invent secrets**):
 
   ```bash

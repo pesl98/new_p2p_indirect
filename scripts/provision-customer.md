@@ -1,16 +1,23 @@
 # Provision a ProcureFlow customer (operator checklist)
 
-**System manual** (capabilities + deploy overview): [docs/SYSTEM_MANUAL.md](../docs/SYSTEM_MANUAL.md). **Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) (`turso:customer --apply` → Vercel project → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke → first login). Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
+**System manual** (capabilities + deploy overview): [docs/SYSTEM_MANUAL.md](../docs/SYSTEM_MANUAL.md). **Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) — preferred: `npm run onboard:customer -- --slug <customer>` then `--apply --email … --password …`. Stepped: `turso:customer --apply` → Vercel project → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke → first login. Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
 
 Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users and 0 departments — bootstrap the org skeleton, then the first admin. **Do not seed** a live tenant.
 
-Real-customer sequence: **`turso:customer --apply` → (human) create/link Vercel project → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke**. Wrapper for migrate + optional org + optional admin: `npm run provision:customer -- --with-org`. Turso DB + database token + `SESSION_SECRET`: `npm run turso:customer`. Vercel Production+Preview env + redeploy: `npm run vercel:customer`.
+Real-customer sequence (preferred): **`npm run onboard:customer -- --slug <customer> --apply --email … --password …`**. Stepped: **`turso:customer --apply` → (human) create/link Vercel project → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke**. Wrapper for migrate + optional org + optional admin: `npm run provision:customer -- --with-org`. Turso DB + database token + `SESSION_SECRET`: `npm run turso:customer`. Vercel Production+Preview env + redeploy: `npm run vercel:customer`.
 
 Three tiers: empty schema (`db:migrate`) → org skeleton (`bootstrap-org`, non-destructive) → destructive demo (`seed`).
 
 ## Customer A (Turso + Vercel)
 
 ```bash
+# Preferred one-command (dry-run first; --with-org is default on this command)
+npm run onboard:customer -- --slug acme
+# After vercel link --yes --project procureflow-acme:
+npm run onboard:customer -- --slug acme --apply \
+  --email admin@acme.test --password 'choose-a-long-password'
+
+# Stepped (same sequence; copy Turso export lines by hand)
 npm run turso:customer -- --slug acme                 # dry-run (no Turso mutation)
 npm run turso:customer -- --slug acme --apply         # create/reuse classic libSQL + print exports
 # copy the printed export TURSO_* / SESSION_SECRET lines into this shell
@@ -56,6 +63,7 @@ First login: open the Production URL, sign in as the bootstrap admin, then **Adm
 ## Customer B (must be a different database)
 
 ```bash
+# Preferred: npm run onboard:customer -- --slug beta --apply --email admin@beta.test --password '…'
 npm run turso:customer -- --slug beta --apply         # separate DB + new SESSION_SECRET
 
 # Second Vercel project (or clone). Do not paste Acme’s URL.
@@ -90,6 +98,7 @@ npm run db:migrate -- --seed     # demo wipe + personas
 npm run db:migrate -- --turso    # fail-closed if TURSO_* missing
 npm run db:status -- --json
 npm run smoke -- --json
+npm run onboard:customer -- --help
 npm run turso:customer -- --help
 npm run vercel:customer -- --help
 ```

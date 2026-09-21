@@ -12,6 +12,7 @@
     "bootstrap-admin": "node src/bootstrapAdmin.js",
     "bootstrap-org": "node scripts/bootstrap-org.js",
     "provision:customer": "node scripts/provision-customer.js",
+    "onboard:customer": "node scripts/onboard-customer.js",
     "turso:customer": "node scripts/turso-customer.js",
     "vercel:customer": "node scripts/vercel-customer.js",
     "smoke": "node scripts/smoke.js",

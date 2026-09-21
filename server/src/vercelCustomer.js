@@ -53,6 +53,7 @@ Required shell env (same values that will go to Vercel; never invented):
 Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
 
 Happy path:
+  Preferred: npm run onboard:customer -- --slug <slug> [--apply --email … --password …]
   1. npm run turso:customer -- --slug <slug> --apply     # classic libSQL + exports
   2. Create Vercel project procureflow-<slug> in the dashboard (import repo)
   3. vercel link --yes --project procureflow-<slug>

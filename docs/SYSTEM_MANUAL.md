@@ -524,7 +524,18 @@ There is **no cron**.
 
 ## 9. New customer deploy
 
-Proven sequence (after PR #34):
+Preferred one-command (after the Vercel project exists and this clone is linked):
+
+```
+npm run onboard:customer -- --slug <customer>
+npm run onboard:customer -- --slug <customer> --apply --email … --password …
+  → optional --smoke once Production is Ready
+  → first login → Administration → Users → Department Approvers
+```
+
+`--apply` chains Turso → Vercel env → provision (`--with-org` default **on**; `--no-org` to skip). Secrets stay in-process. If `.vercel/project.json` is missing, it stops with dashboard + `vercel link` next steps (it does **not** create Vercel projects).
+
+Stepped (same sequence, secrets copied by hand):
 
 ```
 npm run turso:customer -- --apply
@@ -539,7 +550,7 @@ npm run turso:customer -- --apply
 
 ### 9.1 Sequence (operator)
 
-1. **Turso DB + token + `SESSION_SECRET`:** `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). Copy the printed exports.
+1. **Turso DB + token + `SESSION_SECRET`:** prefer `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply`. Or the Turso-only CLI: `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). The orchestrator passes exports to the next step; the Turso-only CLI prints them for you to copy.
 2. **New Vercel project** from this repo (root = repo root; build from `vercel.json`). Suggested name `procureflow-<slug>`. `vercel link --yes --project procureflow-<slug>`. The env script **does not** create Vercel projects.
 3. Export the three secrets in the shell (the Vercel CLI **refuses to invent secrets**), then:
 
