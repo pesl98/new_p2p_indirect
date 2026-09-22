@@ -524,7 +524,7 @@ There is **no cron**.
 
 ## 9. New customer deploy
 
-Preferred one-command (after the Vercel project exists and this clone is linked):
+Preferred one-command (Turso + Vercel CLIs logged in; `vercel switch` first if you have more than one team):
 
 ```
 npm run onboard:customer -- --slug <customer>
@@ -533,13 +533,14 @@ npm run onboard:customer -- --slug <customer> --apply --email … --password …
   → first login → Administration → Users → Department Approvers
 ```
 
-`--apply` chains Turso → Vercel env → provision (`--with-org` default **on**; `--no-org` to skip). Secrets stay in-process. If `.vercel/project.json` is missing, it stops with dashboard + `vercel link` next steps (it does **not** create Vercel projects).
+`--apply` chains Turso → ensure Vercel project + link → env + redeploy → provision (`--with-org` default **on**; `--no-org` to skip). Secrets stay in-process. `vercel project add procureflow-<slug>` is idempotent (the CLI exits 0 if the project already exists). `vercel link --yes --project procureflow-<slug>` runs when this directory is not linked. Already linked to that name: both are skipped. Linked to a different project: stop (does not retarget).
+
+`vercel project add` does not connect GitHub. Production is deployed from this laptop. Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.
 
 Stepped (same sequence, secrets copied by hand):
 
 ```
 npm run turso:customer -- --apply
-  → (human) new Vercel project + vercel link
   → npm run vercel:customer -- --apply
   → npm run provision:customer -- --with-org
   → npm run smoke
@@ -551,7 +552,7 @@ npm run turso:customer -- --apply
 ### 9.1 Sequence (operator)
 
 1. **Turso DB + token + `SESSION_SECRET`:** prefer `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply`. Or the Turso-only CLI: `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). The orchestrator passes exports to the next step; the Turso-only CLI prints them for you to copy.
-2. **New Vercel project** from this repo (root = repo root; build from `vercel.json`). Suggested name `procureflow-<slug>`. `vercel link --yes --project procureflow-<slug>`. The env script **does not** create Vercel projects.
+2. **New Vercel project** `procureflow-<slug>` (root = repo root; build from `vercel.json`). `vercel:customer --apply` runs `vercel project add` then `vercel link --yes --project` unless this directory is already linked to that name. It does not import GitHub. A directory linked to a different project fails closed.
 3. Export the three secrets in the shell (the Vercel CLI **refuses to invent secrets**), then:
 
    ```bash

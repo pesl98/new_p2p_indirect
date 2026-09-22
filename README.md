@@ -201,7 +201,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 ## ☁️ Deploy: Vercel + Turso
 
-**System manual** (capabilities + this sequence): **[docs/SYSTEM_MANUAL.md](docs/SYSTEM_MANUAL.md)**. **Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer> --apply --email … --password …`. Stepped: `npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login.
+**System manual** (capabilities + this sequence): **[docs/SYSTEM_MANUAL.md](docs/SYSTEM_MANUAL.md)**. **Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (creates/links the Vercel project when this clone is not already linked to it). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login.
 
 **Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (or the stepped `turso:customer` → `vercel:customer` → `provision:customer` path) → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Technical reference, secrets, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
 
@@ -226,7 +226,7 @@ Use a **classic libSQL** database (not `--tursodb`) and a **database token** (no
 ```bash
 curl -sSfL https://get.tur.so/install.sh | bash
 turso auth login
-# Preferred (after vercel link): npm run onboard:customer -- --slug <customer> --apply --email … --password …
+# Preferred: npm run onboard:customer -- --slug <customer> --apply --email … --password …
 npm run turso:customer -- --slug <customer>            # dry-run
 npm run turso:customer -- --slug <customer> --apply    # create/reuse + print exports
 ```
@@ -242,7 +242,7 @@ npm run vercel:customer -- --slug <customer>            # dry-run (no Vercel net
 npm run vercel:customer -- --slug <customer> --apply    # Production + Preview + redeploy
 ```
 
-The script **refuses to invent secrets**, never sets `DEMO_PERSONA_SWITCHER`, and does not create a Turso DB. Project name defaults to `procureflow-<slug>` (`--project` to override). The directory must already be linked (`vercel link --yes --project procureflow-<slug>`); if not, it prints dashboard / `vercel link` next steps.
+The script **refuses to invent secrets**, never sets `DEMO_PERSONA_SWITCHER`, and does not create a Turso DB. Project name defaults to `procureflow-<slug>` (`--project` to override). `--apply` runs `vercel project add` (reuses the project if it already exists) and `vercel link --yes --project` unless this directory is already linked to that name. A link to a different project fails closed (it does not retarget). `vercel project add` does not connect GitHub; production deploy is from this laptop.
 
 Dashboard fallback: project → Settings → Environment Variables, set **both** Turso vars and `SESSION_SECRET` for **Production and Preview** (or All Environments). Preview URLs stay broken if the vars are Production-only.
 

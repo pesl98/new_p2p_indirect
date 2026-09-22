@@ -1,10 +1,10 @@
 # Provision a ProcureFlow customer (operator checklist)
 
-**System manual** (capabilities + deploy overview): [docs/SYSTEM_MANUAL.md](../docs/SYSTEM_MANUAL.md). **Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) — preferred: `npm run onboard:customer -- --slug <customer>` then `--apply --email … --password …`. Stepped: `turso:customer --apply` → Vercel project → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke → first login. Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
+**System manual** (capabilities + deploy overview): [docs/SYSTEM_MANUAL.md](../docs/SYSTEM_MANUAL.md). **Walkthrough:** [docs/CUSTOMER_ONBOARDING.md](../docs/CUSTOMER_ONBOARDING.md) — preferred: `npm run onboard:customer -- --slug <customer>` then `--apply --email … --password …` (creates/links the Vercel project when this clone is not already linked to it). Stepped: `turso:customer --apply` → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke → first login. Technical reference: [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md). Isolation = **one Turso DB or SQLite file per customer** (not `org_id`). Env keys: [`.env.example`](../.env.example).
 
 Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users and 0 departments — bootstrap the org skeleton, then the first admin. **Do not seed** a live tenant.
 
-Real-customer sequence (preferred): **`npm run onboard:customer -- --slug <customer> --apply --email … --password …`**. Stepped: **`turso:customer --apply` → (human) create/link Vercel project → `vercel:customer --apply` → `provision:customer -- --with-org` → smoke**. Wrapper for migrate + optional org + optional admin: `npm run provision:customer -- --with-org`. Turso DB + database token + `SESSION_SECRET`: `npm run turso:customer`. Vercel Production+Preview env + redeploy: `npm run vercel:customer`.
+Real-customer sequence (preferred): **`npm run onboard:customer -- --slug <customer> --apply --email … --password …`**. Stepped: **`turso:customer --apply` → `vercel:customer --apply` (project add + link if needed, then env) → `provision:customer -- --with-org` → smoke**. Wrapper for migrate + optional org + optional admin: `npm run provision:customer -- --with-org`. Turso DB + database token + `SESSION_SECRET`: `npm run turso:customer`. Vercel project ensure + Production+Preview env + redeploy: `npm run vercel:customer`. GitHub auto-deploy is not connected by `vercel project add`.
 
 Three tiers: empty schema (`db:migrate`) → org skeleton (`bootstrap-org`, non-destructive) → destructive demo (`seed`).
 
@@ -13,7 +13,7 @@ Three tiers: empty schema (`db:migrate`) → org skeleton (`bootstrap-org`, non-
 ```bash
 # Preferred one-command (dry-run first; --with-org is default on this command)
 npm run onboard:customer -- --slug acme
-# After vercel link --yes --project procureflow-acme:
+# --apply creates/links procureflow-acme unless this clone is already linked to it:
 npm run onboard:customer -- --slug acme --apply \
   --email admin@acme.test --password 'choose-a-long-password'
 
@@ -22,11 +22,13 @@ npm run turso:customer -- --slug acme                 # dry-run (no Turso mutati
 npm run turso:customer -- --slug acme --apply         # create/reuse classic libSQL + print exports
 # copy the printed export TURSO_* / SESSION_SECRET lines into this shell
 
-# Vercel project procureflow-acme must already exist (dashboard import; root = repo root)
-vercel login                                          # once
-vercel link --yes --project procureflow-acme          # once per clone
+# vercel:customer --apply runs:
+#   vercel project add procureflow-acme
+#   vercel link --yes --project procureflow-acme
+# (skipped if already linked to that name; fails closed if linked to a different project)
+vercel login                                          # once; vercel switch if you have multiple teams
 npm run vercel:customer -- --slug acme                # dry-run (no Vercel network)
-npm run vercel:customer -- --slug acme --apply        # Production + Preview env + redeploy
+npm run vercel:customer -- --slug acme --apply        # ensure + link + Production + Preview env + redeploy
 
 # Empty tenant — no demo personas
 npm run db:migrate
@@ -40,9 +42,10 @@ npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-pas
 
 ### Vercel project `procureflow-acme`
 
-- [ ] New Vercel project (do not share this project with another customer)
+- [ ] New Vercel project `procureflow-acme` (do not share this project with another customer). `--apply` runs `vercel project add` (reuses the project if it already exists)
 - [ ] Root directory = repo root; build comes from `vercel.json` (`npm run build`)
-- [ ] `vercel link --yes --project procureflow-acme`
+- [ ] Linked with `vercel link --yes --project procureflow-acme` (skipped if already linked to that name)
+- [ ] GitHub auto-deploy is a separate dashboard step if you want git-push deploys (`vercel project add` does not connect GitHub; laptop `vercel deploy --prod` / redeploy does)
 - [ ] `npm run vercel:customer -- --slug acme --apply` sets **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET` (this customer’s values only; refuses to invent secrets)
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (the script will not set it)
 - [ ] Redeploy is part of `--apply` (old Previews keep stale env until rebuilt)
@@ -66,8 +69,8 @@ First login: open the Production URL, sign in as the bootstrap admin, then **Adm
 # Preferred: npm run onboard:customer -- --slug beta --apply --email admin@beta.test --password '…'
 npm run turso:customer -- --slug beta --apply         # separate DB + new SESSION_SECRET
 
-# Second Vercel project (or clone). Do not paste Acme’s URL.
-vercel link --yes --project procureflow-beta
+# Second Vercel project. Do not paste Acme’s URL.
+# If this clone is still linked to procureflow-acme, --apply fails closed (does not retarget).
 npm run vercel:customer -- --slug beta --apply
 npm run provision:customer -- --with-org --email admin@beta.test --password 'choose-a-long-password'
 

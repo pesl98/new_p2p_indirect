@@ -16,7 +16,12 @@ import {
   missingCustomerEnvKeys,
   normalizeSlug,
   parseDeploymentTarget,
+  parseProjectInspectName,
   parseVercelCustomerArgs,
+  projectAddArgv,
+  projectAddOk,
+  projectLinkArgv,
+  readLinkedProject,
   redactSecrets,
   runProcess,
   runVercelCustomerCli,
@@ -67,6 +72,24 @@ function fakeChild({
     child.emit('close', exitCode);
   });
   return child;
+}
+
+function linkedProjectFs(name = 'procureflow-acme') {
+  return {
+    existsSync(file) {
+      return String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`);
+    },
+    readFileSync(file) {
+      if (!String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`)) {
+        throw new Error(`unexpected read ${file}`);
+      }
+      return JSON.stringify({
+        projectId: 'prj_test',
+        orgId: 'team_test',
+        projectName: name
+      });
+    }
+  };
 }
 
 describe('vercel:customer arg parsing', () => {
@@ -172,6 +195,10 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.match(stdout.text, /--apply/);
     assert.match(stdout.text, /never invented/);
     assert.match(stdout.text, /DEMO_PERSONA_SWITCHER/);
+    assert.match(stdout.text, /vercel project add/);
+    assert.match(stdout.text, /vercel link --yes --project/);
+    assert.match(stdout.text, /does not connect GitHub/);
+    assert.doesNotMatch(stdout.text, /does not create Vercel projects/);
   });
 
   test('refuses missing --slug', async () => {
@@ -290,6 +317,9 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.match(stdout.text, /Set SESSION_SECRET on preview/);
     assert.match(stdout.text, /Leave DEMO_PERSONA_SWITCHER unset/);
     assert.match(stdout.text, /printf '%s' "\$TURSO_AUTH_TOKEN" \| vercel env add TURSO_AUTH_TOKEN production --yes --force/);
+    assert.match(stdout.text, /vercel project add procureflow-acme/);
+    assert.match(stdout.text, /vercel link --yes --project procureflow-acme/);
+    assert.match(stdout.text, /does not connect GitHub/);
     assert.match(stdout.text, /vercel redeploy <latest-production-deployment> --yes/);
     assert.match(stdout.text, /npm run vercel:customer -- --slug acme --apply/);
     assert.match(stdout.text, /BASE_URL=https:\/\/procureflow-acme\.vercel\.app npm run smoke/);
@@ -351,30 +381,106 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.match(stderr.text, /vercel login/);
   });
 
-  test('--apply guides the operator when the project is not linked', async () => {
+  test('--apply when unlinked runs project add then link before env', async () => {
+    const env = readyEnv();
+    const calls = [];
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env,
+      cwd: '/tmp/unlinked-acme',
+      stdout,
+      stderr,
+      existsSync: () => false,
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'project' && args[1] === 'add') {
+          return fakeChild({ stdout: 'Success! Project procureflow-acme added\n' });
+        }
+        if (args[0] === 'link') return fakeChild({ stdout: 'Linked\n' });
+        if (args[0] === 'env') return fakeChild({ stdout: `Created ${args[2]}\n` });
+        if (args[0] === 'ls') {
+          return fakeChild({
+            stdout: JSON.stringify([{ uid: 'dpl_acme123', url: 'procureflow-acme.vercel.app' }])
+          });
+        }
+        if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.deepEqual(calls[0], ['whoami']);
+    assert.deepEqual(calls[1], projectAddArgv('procureflow-acme'));
+    assert.deepEqual(calls[2], projectLinkArgv('procureflow-acme'));
+    const envIndex = calls.findIndex((args) => args[0] === 'env');
+    assert.ok(envIndex > 2);
+    assert.equal(calls.filter((args) => args[0] === 'env').length, 6);
+    assert.match(stdout.text, /Ensuring Vercel project procureflow-acme/);
+    assert.match(stdout.text, /Linking this directory/);
+    assert.equal(stdout.text.includes(env.TURSO_AUTH_TOKEN), false);
+    assert.equal(calls.some((args) => args.includes(env.TURSO_AUTH_TOKEN)), false);
+  });
+
+  test('--apply reuses a project when project add reports it already exists', async () => {
+    const calls = [];
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: readyEnv(),
+      cwd: '/tmp/unlinked-acme',
+      stdout,
+      stderr,
+      existsSync: () => false,
+      spawnFn(_command, args) {
+        calls.push(args[0] === 'project' ? args.slice(0, 2).join(' ') : args[0]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'project') {
+          return fakeChild({ exitCode: 1, stderr: 'Error: Project already exists (409)\n' });
+        }
+        if (args[0] === 'link') return fakeChild({ stdout: 'Linked\n' });
+        if (args[0] === 'env') return fakeChild();
+        if (args[0] === 'ls') return fakeChild({ stdout: 'No deployments found.\n' });
+        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(calls.includes('link'), true);
+    assert.match(stdout.text, /already exists — reusing it/);
+  });
+
+  test('--apply fails closed when linked to a different project', async () => {
+    const link = linkedProjectFs('procureflow-other');
+    const calls = [];
     const { stderr } = captureStreams();
     const code = await runVercelCustomerCli({
       argv: ['--slug', 'acme', '--apply'],
       env: readyEnv(),
-      cwd: '/tmp',
+      cwd: '/tmp/linked-other',
       stdout: captureStreams().stdout,
       stderr,
-      existsSync: () => false,
-      spawnFn(_cmd, args) {
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn(_command, args) {
+        calls.push([...args]);
         if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
         throw new Error(`unexpected spawn ${args.join(' ')}`);
       }
     });
     assert.equal(code, 1);
-    assert.match(stderr.text, /not linked/);
-    assert.match(stderr.text, /vercel link --yes --project procureflow-acme/);
-    assert.match(stderr.text, /does not create Vercel projects/);
+    assert.deepEqual(calls, [['whoami']]);
+    assert.match(stderr.text, /procureflow-other/);
+    assert.match(stderr.text, /procureflow-acme/);
+    assert.match(stderr.text, /Refusing to retarget/);
+    assert.doesNotMatch(stderr.text, /tok_test_secret_value/);
   });
 
   test('--apply upserts Production+Preview env, redeploys, and never prints secrets', async () => {
     const env = readyEnv();
     const calls = [];
     const stdinValues = [];
+    const link = linkedProjectFs('procureflow-acme');
     const { stdout, stderr } = captureStreams();
     const code = await runVercelCustomerCli({
       argv: ['--slug', 'acme', '--apply'],
@@ -382,7 +488,8 @@ describe('vercel:customer CLI (no live Vercel)', () => {
       cwd: '/tmp/linked-acme',
       stdout,
       stderr,
-      existsSync: (file) => file.endsWith(path.join('.vercel', 'project.json')),
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
       spawnFn(command, args, options) {
         calls.push({ command, args, cwd: options.cwd });
         const onStdin = (data) => stdinValues.push({ args: [...args], data: String(data) });
@@ -410,6 +517,8 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.equal(code, 0, stderr.text);
     assert.equal(calls[0].command, 'vercel');
     assert.deepEqual(calls[0].args, ['whoami']);
+    assert.equal(calls.some((c) => c.args[0] === 'project' || c.args[0] === 'link'), false);
+    assert.match(stdout.text, /Already linked to procureflow-acme — skipping project add and link/);
     const envCalls = calls.filter((c) => c.args[0] === 'env');
     assert.equal(envCalls.length, 6);
     assert.deepEqual(
@@ -446,6 +555,7 @@ describe('vercel:customer CLI (no live Vercel)', () => {
 
   test('--apply falls back to vercel deploy --prod when no production deployment exists', async () => {
     const calls = [];
+    const link = linkedProjectFs('procureflow-acme');
     const { stdout, stderr } = captureStreams();
     const code = await runVercelCustomerCli({
       argv: ['--slug', 'acme', '--apply'],
@@ -453,7 +563,8 @@ describe('vercel:customer CLI (no live Vercel)', () => {
       cwd: '/tmp/linked-acme',
       stdout,
       stderr,
-      existsSync: () => true,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
       spawnFn(_command, args) {
         calls.push(args[0]);
         if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
@@ -467,6 +578,87 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.equal(calls.includes('redeploy'), false);
     assert.equal(calls.includes('deploy'), true);
     assert.match(stdout.text, /No production deployment found/);
+  });
+
+  test('--apply inspects a link that has no projectName and skips when it matches', async () => {
+    const calls = [];
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: readyEnv(),
+      cwd: '/tmp/linked-legacy',
+      stdout,
+      stderr,
+      existsSync: (file) => String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`),
+      readFileSync: () => JSON.stringify({ projectId: 'prj_legacy', orgId: 'team_legacy' }),
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'project' && args[1] === 'inspect') {
+          return fakeChild({ stdout: JSON.stringify({ id: 'prj_legacy', name: 'procureflow-acme' }) });
+        }
+        if (args[0] === 'env') return fakeChild();
+        if (args[0] === 'ls') return fakeChild({ stdout: 'No deployments found.\n' });
+        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.deepEqual(
+      calls.find((args) => args[0] === 'project'),
+      ['project', 'inspect', '--json']
+    );
+    assert.equal(calls.some((args) => args[0] === 'link' || (args[0] === 'project' && args[1] === 'add')), false);
+    assert.match(stdout.text, /skipping project add and link/);
+  });
+
+  test('--apply fails closed when inspect shows a different linked project', async () => {
+    const calls = [];
+    const { stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: readyEnv(),
+      cwd: '/tmp/linked-legacy',
+      stdout: captureStreams().stdout,
+      stderr,
+      existsSync: (file) => String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`),
+      readFileSync: () => JSON.stringify({ projectId: 'prj_legacy', orgId: 'team_legacy' }),
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'project' && args[1] === 'inspect') {
+          return fakeChild({ stdout: JSON.stringify({ id: 'prj_legacy', name: 'procureflow-other' }) });
+        }
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 1);
+    assert.equal(calls.some((args) => args[0] === 'link' || args[0] === 'env' || (args[1] === 'add')), false);
+    assert.match(stderr.text, /Refusing to retarget/);
+    assert.match(stderr.text, /procureflow-other/);
+  });
+
+  test('--apply does not link when project add fails for a reason other than already exists', async () => {
+    const calls = [];
+    const { stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: readyEnv(),
+      cwd: '/tmp/unlinked-acme',
+      stdout: captureStreams().stdout,
+      stderr,
+      existsSync: () => false,
+      spawnFn(_command, args) {
+        calls.push(args[0]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'project') return fakeChild({ exitCode: 1, stderr: 'Not authorized\n' });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(calls, ['whoami', 'project']);
+    assert.match(stderr.text, /Failed to create Vercel project/);
+    assert.match(stderr.text, /does not connect GitHub/);
   });
 });
 
@@ -500,6 +692,26 @@ describe('helpers', () => {
     assert.match(text, /Production \+ Preview/);
     assert.match(text, /--apply/);
     assert.match(text, /Does not create a Turso database/);
+  });
+
+  test('readLinkedProject and project-add reuse detection', () => {
+    const linked = readLinkedProject('/tmp/customer', {
+      existsSync: (file) => String(file).endsWith('project.json'),
+      readFileSync: () => JSON.stringify({
+        projectId: 'prj_1',
+        orgId: 'team_1',
+        projectName: 'ProcureFlow-Acme'
+      })
+    });
+    assert.equal(linked.linked, true);
+    assert.equal(linked.projectName, 'ProcureFlow-Acme');
+    assert.equal(readLinkedProject('/tmp/missing', { existsSync: () => false }).linked, false);
+    assert.equal(projectAddOk({ code: 0, stdout: '', stderr: '' }), true);
+    assert.equal(projectAddOk({ code: 1, stdout: '', stderr: 'Project already exists' }), true);
+    assert.equal(projectAddOk({ code: 1, stdout: '', stderr: 'Not authorized' }), false);
+    assert.equal(parseProjectInspectName('{"name":"procureflow-acme"}'), 'procureflow-acme');
+    assert.deepEqual(projectAddArgv('procureflow-acme'), ['project', 'add', 'procureflow-acme']);
+    assert.deepEqual(projectLinkArgv('procureflow-acme'), ['link', '--yes', '--project', 'procureflow-acme']);
   });
 
   test('runProcess maps ENOENT to exit 127', async () => {

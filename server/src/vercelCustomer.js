@@ -1,9 +1,11 @@
 /**
- * Push per-customer Turso + session env to a linked Vercel project and redeploy.
+ * Ensure a per-customer Vercel project exists, link this checkout, push Turso +
+ * session env, and redeploy.
  *
  * Isolation stays one Turso DB + one Vercel project per customer (not org_id).
  * Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
  * Secrets must already be in the shell — this command never invents them.
+ * Does not connect GitHub auto-deploy (laptop vercel deploy / redeploy only).
  *
  *   npm run turso:customer -- --slug acme --apply   # first: print exports
  *   npm run vercel:customer -- --slug acme
@@ -27,6 +29,9 @@ export const DEMO_PERSONA_SWITCHER_KEY = 'DEMO_PERSONA_SWITCHER';
 
 export const DEFAULT_PROJECT_PREFIX = 'procureflow-';
 
+export const VERCEL_GITHUB_LIMIT =
+  'vercel project add does not connect GitHub. Production is deployed from this laptop (vercel deploy --prod / vercel redeploy). Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.';
+
 export const VERCEL_CUSTOMER_HELP = `ProcureFlow Vercel customer env (Production + Preview)
 
 Usage:
@@ -39,10 +44,11 @@ Usage:
   --project <name>      Override Vercel project name
   --dry-run             Print the operator checklist + exact commands (default).
                         Exit 0. Never calls Vercel. No network required.
-  --apply               Set/update the three env vars on Production and Preview
-                        on the linked Vercel project, then redeploy so env
-                        takes effect. Requires Vercel CLI, vercel login, and
-                        vercel link.
+  --apply               Ensure the Vercel project exists and this directory is
+                        linked, then set/update the three env vars on Production
+                        and Preview and redeploy. Requires the Vercel CLI and
+                        vercel login. Uses the CLI's current team (vercel switch
+                        if you have more than one).
   --help, -h            Show this help
 
 Required shell env (same values that will go to Vercel; never invented):
@@ -52,15 +58,24 @@ Required shell env (same values that will go to Vercel; never invented):
 
 Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
 
+Project ensure (before env, on --apply):
+  vercel project add procureflow-<slug>
+    Idempotent. Vercel CLI 59 exits 0 if the project already exists (HTTP 409).
+    Skipped when this directory is already linked to that project name.
+  vercel link --yes --project procureflow-<slug>
+    Skipped when already linked to that name.
+  If .vercel/project.json names a different project, --apply stops and does
+  not retarget it.
+
+${VERCEL_GITHUB_LIMIT}
+
 Happy path:
   Preferred: npm run onboard:customer -- --slug <slug> [--apply --email … --password …]
   1. npm run turso:customer -- --slug <slug> --apply     # classic libSQL + exports
-  2. Create Vercel project procureflow-<slug> in the dashboard (import repo)
-  3. vercel link --yes --project procureflow-<slug>
-  4. npm run vercel:customer -- --slug <slug>            # dry-run
-  5. npm run vercel:customer -- --slug <slug> --apply
-  6. npm run provision:customer -- --with-org --email … --password …
-  7. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
+  2. npm run vercel:customer -- --slug <slug>            # dry-run (ensure + env)
+  3. npm run vercel:customer -- --slug <slug> --apply    # project add, link, env, redeploy
+  4. npm run provision:customer -- --with-org --email … --password …
+  5. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
 
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
@@ -196,23 +211,155 @@ export function deployProdArgv() {
   return ['deploy', '--prod', '--yes'];
 }
 
-export function linkGuidance({ projectName }) {
+export function projectAddArgv(projectName) {
+  return ['project', 'add', projectName];
+}
+
+export function projectLinkArgv(projectName) {
+  return ['link', '--yes', '--project', projectName];
+}
+
+export function projectInspectArgv() {
+  return ['project', 'inspect', '--json'];
+}
+
+function shellWord(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9._:@%+=,/~-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+export function projectAddDisplay(projectName) {
+  return `vercel project add ${shellWord(projectName)}`;
+}
+
+export function projectLinkDisplay(projectName) {
+  return `vercel link --yes --project ${shellWord(projectName)}`;
+}
+
+export function plannedEnsureCommands(projectName) {
   return [
-    'This directory is not linked to a Vercel project (missing .vercel/project.json).',
-    '',
-    'Create the project in the Vercel dashboard first (do not share it with another customer):',
-    '  Add New → Project → import pesl98/new_p2p_indirect (or your fork)',
-    `  Project name: ${projectName}`,
-    '  Root Directory = repository root (leave default; build comes from vercel.json)',
-    '',
-    'Then from this repo root:',
-    `  vercel login`,
-    `  vercel link --yes --project ${projectName}`,
-    '',
-    'Re-run:',
-    `  npm run vercel:customer -- --slug <customer> --apply`,
-    '',
-    'This command does not create Vercel projects (that stays a dashboard / vercel link step).'
+    {
+      argv: projectAddArgv(projectName),
+      display: projectAddDisplay(projectName),
+      note: 'idempotent — Vercel CLI exits 0 when the project already exists (HTTP 409). Skipped if this directory is already linked to this project name.'
+    },
+    {
+      argv: projectLinkArgv(projectName),
+      display: projectLinkDisplay(projectName),
+      note: 'skipped if this directory is already linked to this project name. A different linked project fails closed (no retarget).'
+    }
+  ];
+}
+
+export function projectNamesMatch(left, right) {
+  const a = asTrimmed(left).toLowerCase();
+  const b = asTrimmed(right).toLowerCase();
+  return Boolean(a) && a === b;
+}
+
+export function projectAddOk(result) {
+  if (!result) return false;
+  if (result.code === 0) return true;
+  const text = `${result.stdout || ''}\n${result.stderr || ''}`;
+  return /already exists/i.test(text) || /\b409\b/.test(text);
+}
+
+export function readLinkedProject(cwd, {
+  existsSync = fs.existsSync,
+  readFileSync = fs.readFileSync
+} = {}) {
+  const file = path.join(cwd, '.vercel', 'project.json');
+  if (!existsSync(file)) {
+    return {
+      linked: false,
+      projectName: null,
+      projectId: null,
+      orgId: null,
+      unreadable: false
+    };
+  }
+  let raw;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return {
+      linked: true,
+      projectName: null,
+      projectId: null,
+      orgId: null,
+      unreadable: true
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {
+      linked: true,
+      projectName: null,
+      projectId: null,
+      orgId: null,
+      unreadable: true
+    };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {
+      linked: true,
+      projectName: null,
+      projectId: null,
+      orgId: null,
+      unreadable: true
+    };
+  }
+  return {
+    linked: true,
+    projectName: asTrimmed(parsed.projectName) || null,
+    projectId: asTrimmed(parsed.projectId) || null,
+    orgId: asTrimmed(parsed.orgId) || null,
+    unreadable: false
+  };
+}
+
+export function parseProjectInspectName(stdout) {
+  const text = asTrimmed(stdout);
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    const name = parsed?.name || parsed?.project?.name;
+    return asTrimmed(name) || null;
+  } catch {
+    const match = text.match(/^\s*Name\s+(\S+)/im);
+    return match ? match[1] : null;
+  }
+}
+
+export function formatWrongProjectStop({ linkedName, projectName }) {
+  return [
+    `This directory is linked to Vercel project "${linkedName}", not "${projectName}".`,
+    'Refusing to retarget another customer (no project add, no vercel link, no env changes).',
+    `Pass --project ${linkedName} if that link is the customer you mean,`,
+    `or use a checkout that is unlinked or already linked to ${projectName}.`,
+    'Do not delete .vercel/project.json unless you have confirmed which customer it belongs to.'
+  ].join('\n');
+}
+
+export function formatUnreadableLinkStop({ projectName }) {
+  return [
+    'This directory has .vercel/project.json but the linked project name could not be read.',
+    `Refusing to retarget it onto ${projectName}.`,
+    'Confirm which customer the link belongs to before removing .vercel/project.json.'
+  ].join('\n');
+}
+
+export function formatEnsureFailure({ projectName, phase, code }) {
+  return [
+    `Failed to ${phase} Vercel project ${projectName} (vercel exit ${code}).`,
+    'No env vars were changed.',
+    VERCEL_GITHUB_LIMIT,
+    'If the CLI cannot create the project (team permissions or scope), create it in the',
+    'dashboard under the same team, then re-run. Do not attach this customer to another project.',
+    `  vercel link --yes --project ${projectName}`
   ].join('\n');
 }
 
@@ -299,6 +446,7 @@ export function buildApplyPlan({ slug, projectName }) {
     projectName,
     baseUrl: suggestedBaseUrl(projectName),
     whoami: { argv: whoamiArgv(), display: 'vercel whoami' },
+    ensureCommands: plannedEnsureCommands(projectName),
     envCommands,
     listProduction: {
       argv: listProductionArgv(),
@@ -327,8 +475,9 @@ export function formatDryRunReport({
     describeReadyEnv(env),
     '',
     'Checklist (Production + Preview):',
-    `  [ ] Vercel project ${projectName} exists (dashboard import; root = repo root)`,
-    `  [ ] Linked in this directory: vercel link --yes --project ${projectName}`,
+    `  [ ] Ensure project ${projectName} (create if missing; reuse if it exists)`,
+    `  [ ] Link this directory to ${projectName} (skip if already linked to that name)`,
+    '  [ ] Stop if this directory is linked to a different project (do not retarget)',
     ...CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map(
       (target) => `  [ ] Set ${key} on ${target}`
     )),
@@ -337,11 +486,15 @@ export function formatDryRunReport({
     '',
     'Commands that --apply would run (secrets stay in the shell / stdin, never argv):',
     `  ${plan.whoami.display}`,
+    ...plan.ensureCommands.flatMap((cmd) => (
+      cmd.note ? [`  ${cmd.display}`, `    (${cmd.note})`] : [`  ${cmd.display}`]
+    )),
     ...plan.envCommands.map((cmd) => `  ${cmd.display}`),
     `  ${plan.listProduction.display}`,
     `  ${plan.redeployDisplay}`,
     `  (if no production deployment yet: ${plan.deployFallbackDisplay})`,
     '',
+    VERCEL_GITHUB_LIMIT,
     'Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.',
     '',
     'Next:',
@@ -366,7 +519,8 @@ export function formatApplyReport({
     `Project name:   ${projectName}`,
     `Production+Preview env set: ${CUSTOMER_ENV_KEYS.join(', ')}`,
     `Redeploy:       ${redeployed || 'triggered'}`,
-    `DEMO_PERSONA_SWITCHER left unset`,
+    'DEMO_PERSONA_SWITCHER left unset',
+    VERCEL_GITHUB_LIMIT,
     '',
     'Next (same TURSO_* already in this shell):',
     '  npm run provision:customer -- --with-org --email admin@customer.com --password \'…\'',
@@ -375,10 +529,6 @@ export function formatApplyReport({
     'Secrets stay in this shell and in Vercel env — not in git.'
   ];
   return `${lines.join('\n')}\n`;
-}
-
-export function isProjectLinked(cwd, { existsSync = fs.existsSync } = {}) {
-  return existsSync(path.join(cwd, '.vercel', 'project.json'));
 }
 
 export function resolveVercelBin(env = process.env) {
@@ -470,6 +620,84 @@ function printCommandOutput(stream, text, env) {
   if (redacted) write(stream, `${redacted}\n`);
 }
 
+export async function ensureVercelProjectLink({
+  projectName,
+  cwd,
+  runCommand,
+  existsSync = fs.existsSync,
+  readFileSync = fs.readFileSync,
+  stdout,
+  stderr,
+  env = process.env
+} = {}) {
+  const linked = readLinkedProject(cwd, { existsSync, readFileSync });
+  if (linked.unreadable) {
+    write(stderr, `${formatUnreadableLinkStop({ projectName })}\n`);
+    return { ok: false, code: 1, skipped: false };
+  }
+
+  if (linked.linked) {
+    let linkedName = linked.projectName;
+    if (!linkedName) {
+      write(
+        stdout,
+        'Linked .vercel/project.json has no projectName. Confirming with vercel project inspect --json…\n'
+      );
+      const inspected = await runCommand(projectInspectArgv());
+      printCommandOutput(stdout, inspected.stdout, env);
+      if (inspected.code !== 0) {
+        write(
+          stderr,
+          'Could not confirm the linked Vercel project name (vercel project inspect --json failed).\n'
+            + `Refusing to retarget this directory onto ${projectName}.\n`
+        );
+        printCommandOutput(stderr, inspected.stderr || inspected.stdout, env);
+        return { ok: false, code: inspected.code || 1, skipped: false };
+      }
+      linkedName = parseProjectInspectName(inspected.stdout);
+      if (!linkedName) {
+        write(
+          stderr,
+          'vercel project inspect did not return a project name.\n'
+            + `Refusing to retarget this directory onto ${projectName}.\n`
+        );
+        return { ok: false, code: 1, skipped: false };
+      }
+    }
+    if (!projectNamesMatch(linkedName, projectName)) {
+      write(stderr, `${formatWrongProjectStop({ linkedName, projectName })}\n`);
+      return { ok: false, code: 1, skipped: false, wrongProject: true };
+    }
+    write(stdout, `Already linked to ${projectName} — skipping project add and link.\n`);
+    return { ok: true, code: 0, skipped: true };
+  }
+
+  write(
+    stdout,
+    `Ensuring Vercel project ${projectName} (create if missing, reuse if it exists)…\n`
+  );
+  const added = await runCommand(projectAddArgv(projectName));
+  printCommandOutput(stdout, added.stdout, env);
+  if (!projectAddOk(added)) {
+    write(stderr, `${formatEnsureFailure({ projectName, phase: 'create', code: added.code })}\n`);
+    printCommandOutput(stderr, added.stderr || added.stdout, env);
+    return { ok: false, code: added.code || 1, skipped: false };
+  }
+  if (added.code !== 0) {
+    write(stdout, `Project ${projectName} already exists — reusing it.\n`);
+  }
+
+  write(stdout, `Linking this directory to ${projectName}…\n`);
+  const link = await runCommand(projectLinkArgv(projectName));
+  printCommandOutput(stdout, link.stdout, env);
+  if (link.code !== 0) {
+    write(stderr, `${formatEnsureFailure({ projectName, phase: 'link', code: link.code })}\n`);
+    printCommandOutput(stderr, link.stderr || link.stdout, env);
+    return { ok: false, code: link.code || 1, skipped: false };
+  }
+  return { ok: true, code: 0, skipped: false, linked: true };
+}
+
 export async function runVercelCustomerCli({
   argv = [],
   env = process.env,
@@ -477,7 +705,8 @@ export async function runVercelCustomerCli({
   stderr = process.stderr,
   cwd = process.cwd(),
   spawnFn = spawn,
-  existsSync = fs.existsSync
+  existsSync = fs.existsSync,
+  readFileSync = fs.readFileSync
 } = {}) {
   const args = parseVercelCustomerArgs(argv);
   if (args.help) {
@@ -583,10 +812,17 @@ export async function runVercelCustomerCli({
   }
   printCommandOutput(stdout, whoami.stdout, env);
 
-  if (!isProjectLinked(cwd, { existsSync })) {
-    write(stderr, `${linkGuidance({ projectName })}\n`);
-    return 1;
-  }
+  const ensured = await ensureVercelProjectLink({
+    projectName,
+    cwd,
+    existsSync,
+    readFileSync,
+    stdout,
+    stderr,
+    env,
+    runCommand: (commandArgs) => runVercelCommand(commandArgs, runOpts)
+  });
+  if (!ensured.ok) return ensured.code || 1;
 
   const plan = buildApplyPlan({ slug, projectName });
   for (const cmd of plan.envCommands) {

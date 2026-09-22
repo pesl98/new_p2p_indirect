@@ -6,7 +6,7 @@ ProcureFlow is installed **one database per customer**. Customer A and customer 
 
 Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
 
-**Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (Turso + Vercel env + migrate + org skeleton + optional first admin; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `vercel link` → `npm run vercel:customer -- --apply` → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`.
+**Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (Turso + ensure Vercel project/link + env + migrate + org skeleton + optional first admin; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` (project add + link if needed, then env) → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`.
 
 **Auth (this phase):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie, admin user CRUD on `req.user`. SSO / SAML / OIDC is **out of scope** (next). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**). Legacy P2P routes still accept body `requester_id` / `approver_id` — that is not a full authorization boundary.
 
@@ -41,7 +41,7 @@ Classic libSQL database (not `--tursodb`). Token must be a **database token**, n
 curl -sSfL https://get.tur.so/install.sh | bash
 turso auth login
 
-# Customer A — preferred one-command (after vercel link):
+# Customer A — preferred one-command (creates/links the Vercel project if needed):
 # npm run onboard:customer -- --slug acme --apply --email … --password …
 
 # Customer A — Turso step only
@@ -198,15 +198,14 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 
 ### Per-customer checklist
 
-- [ ] **New Vercel project** for this customer (Add New Project → import `pesl98/new_p2p_indirect` or your fork). Root directory = repo root. Build command is already `npm run build` in [`vercel.json`](../vercel.json). Suggested name: `procureflow-<customer>`.
+- [ ] **New Vercel project** `procureflow-<customer>` (one project per customer). `vercel:customer --apply` / `onboard:customer --apply` run `vercel project add` (idempotent if it already exists) then `vercel link --yes --project`. Root directory = repo root when you deploy from this checkout. Build command is already `npm run build` in [`vercel.json`](../vercel.json). If this directory is linked to a different project, the command **stops** and does not retarget.
 - [ ] **Dedicated Turso DB** via `npm run onboard:customer -- --slug <customer> --apply` (or `npm run turso:customer -- --slug <customer> --apply` — classic libSQL `turso db create procureflow-<customer>`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
 - [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` already exported from `turso:customer` (the Vercel script **refuses to invent secrets**):
 
   ```bash
-  vercel login                                          # once
-  vercel link --yes --project procureflow-<customer>    # once per clone
-  npm run vercel:customer -- --slug <customer>          # dry-run (no network)
-  npm run vercel:customer -- --slug <customer> --apply  # Production + Preview env + redeploy
+  vercel login                                          # once; vercel switch if you have multiple teams
+  npm run vercel:customer -- --slug <customer>          # dry-run (no network): project add + link + env
+  npm run vercel:customer -- --slug <customer> --apply  # ensure + link, then Production + Preview env + redeploy
   ```
 
   `--apply` sets/updates:
@@ -217,7 +216,9 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
   | `TURSO_AUTH_TOKEN` | This customer’s database token |
   | `SESSION_SECRET` | Long random string (signs the httpOnly session cookie) |
 
-  on **Production and Preview**. It never sets `DEMO_PERSONA_SWITCHER`. `--project <name>` overrides the default `procureflow-<slug>`. If the directory is not linked, the script prints `vercel link` / dashboard next steps and exits — it does **not** create Vercel projects.
+  on **Production and Preview**. It never sets `DEMO_PERSONA_SWITCHER`. `--project <name>` overrides the default `procureflow-<slug>`. Already linked to that name: create/link is skipped. Linked to a different project: fail closed.
+
+  `vercel project add` does **not** connect GitHub. Production is `vercel deploy --prod` / `vercel redeploy` from this laptop. Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard. These commands do not pass `--scope` / `--team` (they use the CLI’s current team). Dashboard fallback if `project add` cannot run: create the project under the same team, then re-run. Do not share the project with another customer.
 
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (login, not the demo header switcher).
 - [ ] `--apply` **redeploys** Production so env takes effect (`vercel redeploy` of the latest production deployment, or `vercel deploy --prod --yes` if none exists). Env changes do not apply to an already-built Preview.
@@ -228,7 +229,7 @@ Dashboard fallback: Settings → Environment Variables → Production and Previe
 
 Deploy itself: Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) as one Node Function (`includeFiles` keeps `schema.sql`), rewrites `/api/*` to that function, and serves `public/` on the CDN. There is **no cron**.
 
-Repeat as a **second project** (or duplicate) for customer B. To clone: `npm run turso:customer -- --slug <b> --apply`, duplicate the project, `vercel link --yes --project procureflow-<b>`, then `npm run vercel:customer -- --slug <b> --apply`. Leaving the old URL in place would serve customer A’s data as customer B.
+Repeat as a **second project** for customer B. `npm run turso:customer -- --slug <b> --apply`, then `npm run vercel:customer -- --slug <b> --apply` (creates/links `procureflow-<b>` if this clone is not already linked to it). A checkout linked to customer A will **not** be silently retargeted to B. Leaving A’s URL in place would serve customer A’s data as customer B.
 
 Entrypoints (unchanged):
 
