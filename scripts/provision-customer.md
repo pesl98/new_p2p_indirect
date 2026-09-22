@@ -4,7 +4,7 @@
 
 Login is a per-tenant httpOnly session (`SESSION_SECRET`). Header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`). Empty DB after migrate has 0 users and 0 departments — bootstrap the org skeleton, then the first admin. **Do not seed** a live tenant.
 
-Real-customer sequence (preferred): **`npm run onboard:customer -- --slug <customer> --apply --email … --password …`**. Stepped: **`turso:customer --apply` → `vercel:customer --apply` (project add + link if needed, then env) → `provision:customer -- --with-org` → smoke**. Wrapper for migrate + optional org + optional admin: `npm run provision:customer -- --with-org`. Turso DB + database token + `SESSION_SECRET`: `npm run turso:customer`. Vercel project ensure + Production+Preview env + redeploy: `npm run vercel:customer`. GitHub auto-deploy is not connected by `vercel project add`.
+Real-customer sequence (preferred): **`npm run onboard:customer -- --slug <customer> --apply --email … --password … --smoke`**. `--apply` waits until the Production deployment is Ready before smoke runs. Stepped: **`turso:customer --apply` → `vercel:customer --apply` (project add + link if needed, then env, redeploy, and the same Ready wait) → `provision:customer -- --with-org` → smoke**. Wrapper for migrate + optional org + optional admin: `npm run provision:customer -- --with-org`. Turso DB + database token + `SESSION_SECRET`: `npm run turso:customer`. Vercel project ensure + Production+Preview env + redeploy + Ready wait: `npm run vercel:customer`. GitHub auto-deploy is not connected by `vercel project add`.
 
 Three tiers: empty schema (`db:migrate`) → org skeleton (`bootstrap-org`, non-destructive) → destructive demo (`seed`).
 
@@ -15,7 +15,8 @@ Three tiers: empty schema (`db:migrate`) → org skeleton (`bootstrap-org`, non-
 npm run onboard:customer -- --slug acme
 # --apply creates/links procureflow-acme unless this clone is already linked to it:
 npm run onboard:customer -- --slug acme --apply \
-  --email admin@acme.test --password 'choose-a-long-password'
+  --email admin@acme.test --password 'choose-a-long-password' \
+  --smoke
 
 # Stepped (same sequence; copy Turso export lines by hand)
 npm run turso:customer -- --slug acme                 # dry-run (no Turso mutation)
@@ -28,7 +29,7 @@ npm run turso:customer -- --slug acme --apply         # create/reuse classic lib
 # (skipped if already linked to that name; fails closed if linked to a different project)
 vercel login                                          # once; vercel switch if you have multiple teams
 npm run vercel:customer -- --slug acme                # dry-run (no Vercel network)
-npm run vercel:customer -- --slug acme --apply        # ensure + link + Production + Preview env + redeploy
+npm run vercel:customer -- --slug acme --apply        # ensure + link + env + redeploy, then wait until Production is Ready
 
 # Empty tenant — no demo personas
 npm run db:migrate
@@ -48,7 +49,7 @@ npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-pas
 - [ ] GitHub auto-deploy is a separate dashboard step if you want git-push deploys (`vercel project add` does not connect GitHub; laptop `vercel deploy --prod` / redeploy does)
 - [ ] `npm run vercel:customer -- --slug acme --apply` sets **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET` (this customer’s values only; refuses to invent secrets)
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (the script will not set it)
-- [ ] Redeploy is part of `--apply` (old Previews keep stale env until rebuilt)
+- [ ] Redeploy is part of `--apply`, which then waits until that Production deployment is Ready (`VERCEL_READY_TIMEOUT_MS`, default 4 minutes). Old Previews keep stale env until rebuilt.
 - [ ] Never paste another customer’s Turso URL here
 - [ ] `TURSO_AUTH_TOKEN` is from `npm run turso:customer -- --apply` / `turso db tokens create` (database token, **not** an org JWT)
 - [ ] Database is classic libSQL (`turso:customer` / `turso db create`, **not** `--tursodb`)

@@ -16,16 +16,21 @@ import {
   missingCustomerEnvKeys,
   normalizeSlug,
   parseDeploymentTarget,
+  parseInspectReadyState,
   parseProjectInspectName,
   parseVercelCustomerArgs,
+  pickDeploymentRef,
   projectAddArgv,
   projectAddOk,
   projectLinkArgv,
   readLinkedProject,
   redactSecrets,
+  resolveReadyTimeoutMs,
   runProcess,
   runVercelCustomerCli,
-  suggestedBaseUrl
+  suggestedBaseUrl,
+  waitForDeploymentReady,
+  DEFAULT_VERCEL_READY_TIMEOUT_MS
 } from './vercelCustomer.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -43,6 +48,16 @@ function readyEnv(extra = {}) {
     SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     ...extra
   };
+}
+
+function inspectJson(state, extra = {}) {
+  return `${JSON.stringify({
+    id: 'dpl_new',
+    url: 'procureflow-acme-abc123.vercel.app',
+    target: 'production',
+    readyState: state,
+    ...extra
+  })}\n`;
 }
 
 function fakeChild({
@@ -321,6 +336,10 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.match(stdout.text, /vercel link --yes --project procureflow-acme/);
     assert.match(stdout.text, /does not connect GitHub/);
     assert.match(stdout.text, /vercel redeploy <latest-production-deployment> --yes/);
+    assert.match(stdout.text, /vercel inspect <new-deployment-url-or-id> --json/);
+    assert.match(stdout.text, /VERCEL_READY_TIMEOUT_MS/);
+    assert.match(stdout.text, /waits for Production Ready|until readyState is READY/);
+    assert.match(stdout.text, /Dry-run does not call Vercel/);
     assert.match(stdout.text, /npm run vercel:customer -- --slug acme --apply/);
     assert.match(stdout.text, /BASE_URL=https:\/\/procureflow-acme\.vercel\.app npm run smoke/);
     assert.doesNotMatch(stdout.text, /tok_test_secret_value/);
@@ -405,7 +424,8 @@ describe('vercel:customer CLI (no live Vercel)', () => {
             stdout: JSON.stringify([{ uid: 'dpl_acme123', url: 'procureflow-acme.vercel.app' }])
           });
         }
-        if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        if (args[0] === 'inspect') return fakeChild({ stdout: inspectJson('READY') });
         throw new Error(`unexpected spawn ${args.join(' ')}`);
       }
     });
@@ -441,12 +461,14 @@ describe('vercel:customer CLI (no live Vercel)', () => {
         if (args[0] === 'link') return fakeChild({ stdout: 'Linked\n' });
         if (args[0] === 'env') return fakeChild();
         if (args[0] === 'ls') return fakeChild({ stdout: 'No deployments found.\n' });
-        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        if (args[0] === 'inspect') return fakeChild({ stdout: inspectJson('READY') });
         throw new Error(`unexpected spawn ${args.join(' ')}`);
       }
     });
     assert.equal(code, 0, stderr.text);
     assert.equal(calls.includes('link'), true);
+    assert.equal(calls.includes('inspect'), true);
     assert.match(stdout.text, /already exists — reusing it/);
   });
 
@@ -509,7 +531,10 @@ describe('vercel:customer CLI (no live Vercel)', () => {
           });
         }
         if (args[0] === 'redeploy') {
-          return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n', onStdin });
+          return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n', onStdin });
+        }
+        if (args[0] === 'inspect') {
+          return fakeChild({ stdout: inspectJson('READY'), onStdin });
         }
         throw new Error(`unexpected spawn ${args.join(' ')}`);
       }
@@ -539,6 +564,15 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.deepEqual(ls.args, ['ls', '--environment', 'production']);
     const redeploy = calls.find((c) => c.args[0] === 'redeploy');
     assert.deepEqual(redeploy.args, ['redeploy', 'dpl_acme123', '--yes']);
+    const inspect = calls.find((c) => c.args[0] === 'inspect');
+    assert.ok(calls.indexOf(inspect) > calls.indexOf(redeploy));
+    assert.deepEqual(inspect.args, [
+      'inspect',
+      'https://procureflow-acme-abc123.vercel.app',
+      '--json'
+    ]);
+    assert.match(stdout.text, /Production deployment https:\/\/procureflow-acme-abc123\.vercel\.app is Ready/);
+    assert.match(stdout.text, /Production:\s+Ready/);
     assert.equal(calls.some((c) => c.args.includes('seed') || c.args[0] === 'deploy'), false);
     assert.match(stdout.text, /Production\+Preview env set/);
     assert.match(stdout.text, /DEMO_PERSONA_SWITCHER left unset/);
@@ -570,13 +604,15 @@ describe('vercel:customer CLI (no live Vercel)', () => {
         if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
         if (args[0] === 'env') return fakeChild();
         if (args[0] === 'ls') return fakeChild({ stdout: 'No deployments found.\n' });
-        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        if (args[0] === 'inspect') return fakeChild({ stdout: inspectJson('READY') });
         throw new Error(`unexpected spawn ${args.join(' ')}`);
       }
     });
     assert.equal(code, 0, stderr.text);
     assert.equal(calls.includes('redeploy'), false);
     assert.equal(calls.includes('deploy'), true);
+    assert.ok(calls.indexOf('inspect') > calls.indexOf('deploy'));
     assert.match(stdout.text, /No production deployment found/);
   });
 
@@ -599,7 +635,8 @@ describe('vercel:customer CLI (no live Vercel)', () => {
         }
         if (args[0] === 'env') return fakeChild();
         if (args[0] === 'ls') return fakeChild({ stdout: 'No deployments found.\n' });
-        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+        if (args[0] === 'deploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        if (args[0] === 'inspect') return fakeChild({ stdout: inspectJson('READY') });
         throw new Error(`unexpected spawn ${args.join(' ')}`);
       }
     });
@@ -662,6 +699,246 @@ describe('vercel:customer CLI (no live Vercel)', () => {
   });
 });
 
+describe('Production Ready wait', () => {
+  test('parseInspectReadyState reads JSON readyState and plain-text status', () => {
+    assert.equal(parseInspectReadyState(inspectJson('READY')), 'READY');
+    assert.equal(parseInspectReadyState(inspectJson('BUILDING')), 'BUILDING');
+    assert.equal(parseInspectReadyState(inspectJson('QUEUED')), 'QUEUED');
+    assert.equal(parseInspectReadyState(inspectJson('INITIALIZING')), 'INITIALIZING');
+    assert.equal(parseInspectReadyState(inspectJson('ERROR')), 'ERROR');
+    assert.equal(parseInspectReadyState(inspectJson('CANCELED')), 'CANCELED');
+    assert.equal(parseInspectReadyState('{"readyState":"CANCELLED"}'), 'CANCELED');
+    assert.equal(parseInspectReadyState('  status\t● Ready\n  url\thttps://x.vercel.app\n'), 'READY');
+    assert.equal(parseInspectReadyState('● Building'), 'BUILDING');
+    assert.equal(parseInspectReadyState(''), null);
+    assert.equal(parseInspectReadyState('not a deployment'), null);
+  });
+
+  test('pickDeploymentRef prefers the new deployment URL over the project alias', () => {
+    assert.equal(
+      pickDeploymentRef(
+        'https://procureflow-acme.vercel.app\nhttps://procureflow-acme-abc123.vercel.app\n',
+        { projectName: 'procureflow-acme' }
+      ),
+      'https://procureflow-acme-abc123.vercel.app'
+    );
+    assert.equal(
+      pickDeploymentRef('https://procureflow-acme.vercel.app\n', { projectName: 'procureflow-acme' }),
+      'https://procureflow-acme.vercel.app'
+    );
+    assert.equal(
+      pickDeploymentRef(JSON.stringify({ id: 'dpl_new', url: 'procureflow-acme-abc123.vercel.app' })),
+      'https://procureflow-acme-abc123.vercel.app'
+    );
+    assert.equal(pickDeploymentRef(''), null);
+    assert.equal(resolveReadyTimeoutMs({}), DEFAULT_VERCEL_READY_TIMEOUT_MS);
+    assert.equal(resolveReadyTimeoutMs({ VERCEL_READY_TIMEOUT_MS: '1000' }), 1000);
+    assert.equal(resolveReadyTimeoutMs({ VERCEL_READY_TIMEOUT_MS: 'nope' }), DEFAULT_VERCEL_READY_TIMEOUT_MS);
+  });
+
+  test('waitForDeploymentReady returns immediately on READY and does not sleep', async () => {
+    let slept = 0;
+    const result = await waitForDeploymentReady({
+      deploymentRef: 'https://procureflow-acme-abc123.vercel.app',
+      timeoutMs: 1000,
+      async inspect() {
+        return { code: 0, stdout: inspectJson('READY'), stderr: '' };
+      },
+      async sleep() { slept += 1; }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'READY');
+    assert.equal(slept, 0);
+  });
+
+  test('waitForDeploymentReady polls Building then Ready without a real delay', async () => {
+    const states = ['BUILDING', 'READY'];
+    const sleeps = [];
+    let clock = 0;
+    const result = await waitForDeploymentReady({
+      deploymentRef: 'dpl_new',
+      timeoutMs: 60_000,
+      pollIntervalMs: 5000,
+      now: () => clock,
+      async sleep(ms) {
+        sleeps.push(ms);
+        clock += ms;
+      },
+      async inspect() {
+        return { code: 0, stdout: inspectJson(states.shift()), stderr: '' };
+      }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.state, 'READY');
+    assert.deepEqual(sleeps, [5000]);
+    assert.equal(clock, 5000);
+  });
+
+  test('waitForDeploymentReady fails on ERROR and CANCELED without further polls', async () => {
+    for (const state of ['ERROR', 'CANCELED', 'BLOCKED']) {
+      let calls = 0;
+      let slept = 0;
+      const result = await waitForDeploymentReady({
+        deploymentRef: 'dpl_new',
+        timeoutMs: 60_000,
+        async inspect() {
+          calls += 1;
+          return { code: 1, stdout: inspectJson(state), stderr: 'build failed\n' };
+        },
+        async sleep() { slept += 1; }
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.state, state);
+      assert.equal(result.timedOut, false);
+      assert.equal(calls, 1);
+      assert.equal(slept, 0);
+    }
+  });
+
+  test('waitForDeploymentReady times out while still Building using an injected clock', async () => {
+    let clock = 10_000;
+    let calls = 0;
+    const result = await waitForDeploymentReady({
+      deploymentRef: 'https://procureflow-acme-abc123.vercel.app',
+      timeoutMs: 1000,
+      pollIntervalMs: 5000,
+      now: () => clock,
+      async sleep(ms) { clock += ms; },
+      async inspect() {
+        calls += 1;
+        return { code: 0, stdout: inspectJson('QUEUED'), stderr: '' };
+      }
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.timedOut, true);
+    assert.equal(result.state, 'QUEUED');
+    assert.equal(calls, 1);
+    assert.equal(clock, 11_000);
+  });
+
+  function linkedApplySpawn(states) {
+    const queue = [...states];
+    const calls = [];
+    return {
+      calls,
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'env') return fakeChild();
+        if (args[0] === 'ls') {
+          return fakeChild({
+            stdout: JSON.stringify([{ uid: 'dpl_old', url: 'procureflow-acme-old.vercel.app' }])
+          });
+        }
+        if (args[0] === 'redeploy') {
+          return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        }
+        if (args[0] === 'inspect') {
+          const state = queue.shift() || 'BUILDING';
+          return fakeChild({
+            exitCode: state === 'ERROR' || state === 'CANCELED' ? 1 : 0,
+            stdout: inspectJson(state),
+            stderr: state === 'ERROR' ? 'Build failed\n' : ''
+          });
+        }
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    };
+  }
+
+  test('--apply waits through Building and returns only after Ready', async () => {
+    const link = linkedProjectFs('procureflow-acme');
+    const harness = linkedApplySpawn(['BUILDING', 'INITIALIZING', 'READY']);
+    let clock = 0;
+    const sleeps = [];
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: { ...readyEnv(), VERCEL_READY_TIMEOUT_MS: '60000' },
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn: harness.spawnFn,
+      pollIntervalMs: 1000,
+      now: () => clock,
+      async sleep(ms) {
+        sleeps.push(ms);
+        clock += ms;
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    const inspects = harness.calls.filter((args) => args[0] === 'inspect');
+    assert.equal(inspects.length, 3);
+    assert.deepEqual(inspects[0], [
+      'inspect',
+      'https://procureflow-acme-abc123.vercel.app',
+      '--json'
+    ]);
+    const redeployAt = harness.calls.findIndex((args) => args[0] === 'redeploy');
+    const firstInspect = harness.calls.findIndex((args) => args[0] === 'inspect');
+    assert.ok(firstInspect > redeployAt);
+    assert.deepEqual(sleeps, [1000, 1000]);
+    assert.match(stdout.text, /is Ready/);
+    assert.match(stdout.text, /customer env applied/);
+    assert.doesNotMatch(stdout.text, /tok_test_secret_value/);
+  });
+
+  test('--apply exits non-zero when the deployment is ERROR', async () => {
+    const link = linkedProjectFs('procureflow-acme');
+    const harness = linkedApplySpawn(['ERROR']);
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: readyEnv(),
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn: harness.spawnFn,
+      async sleep() { throw new Error('should not sleep on ERROR'); }
+    });
+    assert.equal(code, 1);
+    assert.match(stderr.text, /is ERROR/);
+    assert.match(stderr.text, /vercel redeploy/);
+    assert.match(stderr.text, /Vercel dashboard/);
+    assert.match(stderr.text, /Build failed/);
+    assert.doesNotMatch(stdout.text, /customer env applied/);
+    assert.equal(harness.calls.filter((args) => args[0] === 'inspect').length, 1);
+  });
+
+  test('--apply exits non-zero on Ready timeout and names the last state', async () => {
+    const link = linkedProjectFs('procureflow-acme');
+    const harness = linkedApplySpawn(['BUILDING', 'BUILDING']);
+    let clock = 0;
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: { ...readyEnv(), VERCEL_READY_TIMEOUT_MS: '1500' },
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn: harness.spawnFn,
+      pollIntervalMs: 5000,
+      now: () => clock,
+      async sleep(ms) { clock += ms; }
+    });
+    assert.equal(code, 1);
+    assert.match(stderr.text, /Timed out after 2s/);
+    assert.match(stderr.text, /last state: BUILDING/);
+    assert.match(stderr.text, /vercel inspect/);
+    assert.match(stderr.text, /vercel redeploy/);
+    assert.match(stderr.text, /Vercel dashboard/);
+    assert.doesNotMatch(stdout.text, /customer env applied/);
+    assert.equal(harness.calls.filter((args) => args[0] === 'inspect').length, 1);
+    assert.doesNotMatch(stderr.text, /tok_test_secret_value/);
+  });
+});
+
 describe('helpers', () => {
   test('parseDeploymentTarget reads JSON and plain-text vercel.app URLs', () => {
     assert.deepEqual(
@@ -692,6 +969,8 @@ describe('helpers', () => {
     assert.match(text, /Production \+ Preview/);
     assert.match(text, /--apply/);
     assert.match(text, /Does not create a Turso database/);
+    assert.match(text, /vercel inspect <new-deployment-url-or-id> --json/);
+    assert.match(text, /Dry-run does not call Vercel/);
   });
 
   test('readLinkedProject and project-add reuse detection', () => {
