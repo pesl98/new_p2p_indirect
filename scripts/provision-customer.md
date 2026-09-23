@@ -105,16 +105,24 @@ npm run smoke -- --json
 npm run onboard:customer -- --help
 npm run turso:customer -- --help
 npm run vercel:customer -- --help
+npm run offboard:customer -- --help
 ```
 
-## Wipe / rollback
+## Wipe / rollback / deprovision
 
 ```bash
 # SQLite
 rm -f "$PROCUREMENT_DB_PATH" "$PROCUREMENT_DB_PATH"-wal "$PROCUREMENT_DB_PATH"-shm
 npm run db:migrate
 
-# Turso (irreversible)
+# Deprovision (preferred): dry-run, then strip Production+Preview customer env and destroy the DB.
+# --apply does nothing destructive unless --confirm-slug matches the normalized slug.
+# Does not delete the Vercel project. Does not seed. Fails closed if this checkout
+# is linked to a different Vercel project.
+npm run offboard:customer -- --slug acme
+npm run offboard:customer -- --slug acme --apply --confirm-slug acme
+
+# Turso data wipe, then recreate (not deprovision — Vercel env stays)
 turso db destroy procureflow-acme --yes
 # recreate: npm run turso:customer -- --slug acme --apply
 # then npm run vercel:customer -- --slug acme --apply + db:migrate

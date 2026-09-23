@@ -264,7 +264,7 @@ Missing Turso on Vercel is **503** with a setup page (HTML) or JSON `{ "error": 
 
 A 401 from Turso usually means an **org JWT** was pasted instead of `turso db tokens create`.
 
-Operator troubleshooting (login with users but no passwords, Preview-only env, missing `SESSION_SECRET`, deprovision): **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md#troubleshooting)**.
+Operator troubleshooting (login with users but no passwords, Preview-only env, missing `SESSION_SECRET`): **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md#troubleshooting)**. Deprovision: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md#rollback--wipe--deprovision)** (`npm run offboard:customer`).
 
 ---
 
@@ -335,10 +335,11 @@ rm -f "$PROCUREMENT_DB_PATH" "$PROCUREMENT_DB_PATH"-wal "$PROCUREMENT_DB_PATH"-s
 npm run db:migrate
 ```
 
-**Turso**
+**Turso data wipe (then recreate — not deprovision)**
 
 ```bash
 # Destroy is irreversible. Recreate a new empty DB, then migrate.
+# The Vercel project and its env stay. To take the customer down, use offboard:customer.
 turso db destroy procureflow-acme --yes
 npm run turso:customer -- --slug acme --apply   # recreate + new token + exports
 # then: npm run vercel:customer -- --slug acme --apply
@@ -358,7 +359,7 @@ This drops every application table on the **currently configured** database and 
 
 - Instant Rollback to a previous deployment in the Vercel dashboard (code only; the Turso DB is not reverted).
 - To roll back **data**, restore a Turso dump / recreate + migrate / re-seed. Pointing the project at a previous database URL is a data rollback if that DB still exists.
-- To deprovision: remove the Vercel project (or unset env) **and** `turso db destroy` so the isolated DB is gone.
+- To deprovision, prefer `npm run offboard:customer -- --slug <customer>` (dry-run), then `--apply --confirm-slug <customer>`. That removes `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` from Production and Preview, then runs `turso db destroy procureflow-<slug> --yes` (already-gone is success). `--apply` alone does not destroy. A checkout linked to a different Vercel project fails closed. The Vercel project is left in place (`vercel project rm` on CLI 59.26.0 has no `--yes`). Details: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md#rollback--wipe--deprovision)**.
 
 ---
 

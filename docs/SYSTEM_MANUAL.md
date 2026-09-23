@@ -581,7 +581,7 @@ npm run turso:customer -- --apply
 
 **Customer B** = a **second** Turso DB + **second** Vercel project + new `SESSION_SECRET`. Never paste customer A’s URL.
 
-Click-by-click (Acme worked example, troubleshooting, deprovision): **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)**. Env tables, Auth API, rollback: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Checklist: [`scripts/provision-customer.md`](../scripts/provision-customer.md).
+Click-by-click (Acme worked example, troubleshooting, deprovision): **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)**. Deprovision CLI: `npm run offboard:customer -- --slug <customer>` then `--apply --confirm-slug <customer>`. Env tables, Auth API, rollback: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Checklist: [`scripts/provision-customer.md`](../scripts/provision-customer.md).
 
 ### 9.2 Three data tiers (do not confuse)
 

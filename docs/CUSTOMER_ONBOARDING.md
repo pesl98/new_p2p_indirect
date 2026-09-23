@@ -103,6 +103,8 @@ npm run onboard:customer -- --slug acme --apply \
 
 `--apply` never seeds, never invents Turso URL/token, never sets `DEMO_PERSONA_SWITCHER`, and never destroys a database.
 
+**Deprovision** (later, not part of this happy path): `npm run offboard:customer -- --slug acme` (dry-run), then `--apply --confirm-slug acme`. See [Rollback / wipe / deprovision](#rollback--wipe--deprovision).
+
 The rest of this document is the **same sequence, command by command**.
 
 ---
@@ -509,7 +511,9 @@ rm -f "$PROCUREMENT_DB_PATH" "$PROCUREMENT_DB_PATH"-wal "$PROCUREMENT_DB_PATH"-s
 npm run db:migrate
 ```
 
-**Turso (irreversible)**
+**Turso data wipe (irreversible, then recreate)**
+
+This destroys the database and stands it up again. It is not deprovision — the Vercel project and its env stay. Use `offboard:customer` when the customer is going away.
 
 ```bash
 turso db destroy procureflow-acme --yes
@@ -524,14 +528,27 @@ npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-pas
 
 - **Instant Rollback** reverts **code** only. The Turso database is not rolled back.
 - Data rollback = restore a Turso dump, or recreate + migrate (+ optional destructive seed). Pointing the project at a previous database URL is a data rollback only if that DB still exists.
+- Offboard does **not** delete the Vercel project. `vercel project rm` on Vercel CLI 59.26.0 has no `--yes` (`vercel project rm --help`), so the CLI will not claim a zero-click project delete. Delete the empty project in the dashboard if you want it gone (Settings → General → Delete Project).
 
-**Deprovision Acme**
+**Deprovision Acme (preferred)**
 
-1. Remove or empty the Vercel project (or unset env so it cannot serve data).
-2. `turso db destroy procureflow-acme --yes`.
-3. Rotate/delete stored secrets in the password manager.
+Dry-run first (no network). `--apply` does not remove env or destroy the database unless `--confirm-slug` exactly equals the normalized slug (`acme`, not `Acme`).
 
-Leaving the Turso DB alive after deleting the Vercel project still holds all P2P data.
+```bash
+npm run offboard:customer -- --slug acme
+npm run offboard:customer -- --slug acme --apply --confirm-slug acme
+```
+
+What that `--apply` does, in order:
+
+1. Stops if this checkout is linked to a **different** Vercel project. It does not retarget, does not run `vercel link`, and does not destroy the database.
+2. Removes only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` from **Production** and **Preview** (`vercel env rm <key> <production|preview> --yes --project procureflow-acme`). It does not set `DEMO_PERSONA_SWITCHER` and does not touch other env keys. A key that is already absent is success. If the Vercel project is not in the current team, the command stops **before** Turso destroy (`vercel switch`, then retry).
+3. Then `turso db destroy procureflow-acme --yes`. If the database is already gone, that is success.
+4. Leaves the Vercel project in place.
+
+Never seeds. Never prints full tokens. `--db` / `--project` override the names (defaults `procureflow-<slug>`). Help: `npm run offboard:customer -- --help`.
+
+Rotate or delete the URL, database token, and `SESSION_SECRET` in the password manager afterward. Removing them from Vercel does not revoke the Turso token. Leaving the Turso database alive after deleting the Vercel project still holds all P2P data — if you already deleted the project by hand, run `turso db destroy procureflow-acme --yes` yourself.
 
 ---
 

@@ -16,6 +16,7 @@
     "onboard:customer": "node server/scripts/onboard-customer.js",
     "turso:customer": "node server/scripts/turso-customer.js",
     "vercel:customer": "node server/scripts/vercel-customer.js",
+    "offboard:customer": "node server/scripts/offboard-customer.js",
     "smoke": "node server/scripts/smoke.js",
     "start": "node server/src/index.js",
     "start:server": "node server/src/index.js",
