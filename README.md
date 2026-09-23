@@ -252,7 +252,7 @@ Dashboard fallback: project → Settings → Environment Variables, set **both**
 | `TURSO_AUTH_TOKEN` | Token from `turso db tokens create …` |
 | `SESSION_SECRET` | Long random string (signs the httpOnly session cookie). Required for customer deploys. |
 
-`--apply` redeploys after saving. Env changes do not apply to an already-built Preview.
+`--apply` redeploys after saving and waits until that Production deployment is Ready (`vercel inspect --json`, default 4 minutes via `VERCEL_READY_TIMEOUT_MS`), so `onboard:customer --apply --smoke` can close the happy path on one command. Env changes do not apply to an already-built Preview. GitHub auto-deploy is still a dashboard connection.
 
 ### Seed against Turso (from your laptop)
 

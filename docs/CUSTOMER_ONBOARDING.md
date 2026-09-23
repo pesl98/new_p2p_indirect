@@ -4,17 +4,17 @@ This is the operator runbook. Follow it top to bottom for **one new customer**. 
 
 Worked example: **Acme**. Replace `acme` / `Acme` / `admin@acme.test` with the real customer slug, display name, and first-admin email.
 
-**Happy path (preferred):** one operator command. Dry-run first (no network); `--apply` chains Turso → ensure Vercel project + link → env + redeploy → provision. `--with-org` is **on by default** here. Secrets minted by Turso stay in-process — you do not copy `export` lines between commands.
+**Happy path (preferred):** one operator command. Dry-run first (no network); `--apply` chains Turso → ensure Vercel project + link → env + redeploy, waits until that Production deployment is Ready, then provisions. `--with-org` is **on by default** here. Secrets minted by Turso stay in-process — you do not copy `export` lines between commands. `--smoke` on the same `--apply` is the preferred close.
 
 ```bash
 npm run onboard:customer -- --slug acme
 npm run onboard:customer -- --slug acme --apply \
   --email admin@acme.test --password 'choose-a-long-password' \
-  --name "Ada Admin"
-# optional once Production is Ready: add --smoke
+  --name "Ada Admin" \
+  --smoke
 ```
 
-`--apply` creates or reuses the Vercel project `procureflow-acme` (`vercel project add`) and links this checkout (`vercel link --yes --project procureflow-acme`) before it pushes env. If this directory is already linked to that project, those commands are skipped. If it is linked to a **different** project, `--apply` stops and does not retarget it.
+`--apply` creates or reuses the Vercel project `procureflow-acme` (`vercel project add`) and links this checkout (`vercel link --yes --project procureflow-acme`) before it pushes env. If this directory is already linked to that project, those commands are skipped. If it is linked to a **different** project, `--apply` stops and does not retarget it. After redeploy (or the first `vercel deploy --prod`), it polls `vercel inspect <deployment> --json` until `readyState` is READY (default 4 minutes, `VERCEL_READY_TIMEOUT_MS`) and only then returns, so `--smoke` is not racing a build.
 
 `vercel project add` does not connect GitHub. Production is deployed from this laptop (`vercel deploy --prod` / `vercel redeploy`). Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.
 
@@ -87,17 +87,17 @@ After Turso + Vercel CLIs are logged in (below), the usual operator entry is:
 npm run onboard:customer -- --slug acme
 npm run onboard:customer -- --slug acme --apply \
   --email admin@acme.test --password 'choose-a-long-password' \
-  --name "Ada Admin"
-# optional once Production is Ready: add --smoke
+  --name "Ada Admin" \
+  --smoke
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| (default) | Dry-run. Prints the full Turso → ensure project + link → env → provision plan. Exit 0. No network. Does not invent secrets. |
-| `--apply` | Create/reuse the Turso DB, create/reuse the Vercel project and link this checkout, push env, migrate + org skeleton, optional first admin. |
+| (default) | Dry-run. Prints the full Turso → ensure project + link → env → wait for Ready → provision plan. Exit 0. No network. Does not invent secrets. |
+| `--apply` | Create/reuse the Turso DB, create/reuse the Vercel project and link this checkout, push env, wait until Production is Ready, migrate + org skeleton, optional first admin. |
 | `--with-org` | Default **on** for this command (unlike `provision:customer`, which requires the flag). |
 | `--no-org` | Skip cost centers / FY budgets. |
-| `--smoke` | After provision, hit `https://procureflow-acme.vercel.app` (or `--base-url`). Skip until the deploy is Ready. |
+| `--smoke` | After provision, hit `https://procureflow-acme.vercel.app` (or `--base-url`). Safe on the same `--apply`: that command already waited for Production Ready. |
 | `--db` / `--project` | Override Turso DB name or Vercel project name. |
 | `--json` | Machine summary. Tokens redacted to last 4 characters. |
 
@@ -225,12 +225,11 @@ Dashboard fallback (if you cannot use the CLI): Settings → Environment Variabl
 
 ## 7. Deploy / Redeploy after env change
 
-`npm run vercel:customer -- --slug acme --apply` already rebuilds the latest Production deployment (`vercel redeploy`). If there is no Production deployment yet, it falls back to `vercel deploy --prod --yes`.
+`npm run vercel:customer -- --slug acme --apply` rebuilds the latest Production deployment (`vercel redeploy`). If there is no Production deployment yet, it falls back to `vercel deploy --prod --yes`. It then polls `vercel inspect <that-deployment> --json` until `readyState` is READY (keeps waiting only while Building, Queued, or Initializing). The default wait is 4 minutes (`VERCEL_READY_TIMEOUT_MS`). Timeout, ERROR, or CANCELED exits non-zero and tells you to inspect or redeploy from the Vercel dashboard. The command does not return — and `onboard:customer --smoke` does not start — until that deployment is Ready.
 
-1. Wait until Ready.
-2. Copy the Production URL (`https://procureflow-acme.vercel.app` or the project’s alias).
+Production URL: `https://procureflow-acme.vercel.app` (or the project’s alias).
 
-Opening the URL before Redeploy often still shows the 503 Turso setup page. If you set env in the dashboard instead of the script, Redeploy there, then continue.
+Opening the URL before this wait finishes often still shows the 503 Turso setup page. If you set env in the dashboard instead of the script, Redeploy there and wait until that deployment is Ready, then continue. GitHub auto-deploy is still a separate dashboard connection.
 
 ---
 

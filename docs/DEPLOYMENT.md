@@ -6,7 +6,7 @@ ProcureFlow is installed **one database per customer**. Customer A and customer 
 
 Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/provision-customer.md). Dual-mode (local `better-sqlite3` vs Turso HTTP on Vercel) is unchanged. Env keys (no secrets) are listed in [`.env.example`](../.env.example).
 
-**Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (Turso + ensure Vercel project/link + env + migrate + org skeleton + optional first admin; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` (project add + link if needed, then env) → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`.
+**Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password … --smoke` (Turso + ensure Vercel project/link + env + redeploy, wait until Production is Ready, then migrate + org skeleton + optional first admin + smoke; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` (project add + link if needed, then env, redeploy, and the same Ready wait) → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`. GitHub auto-deploy is still a dashboard connection.
 
 **Auth (this phase):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie, admin user CRUD on `req.user`. SSO / SAML / OIDC is **out of scope** (next). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**). Legacy P2P routes still accept body `requester_id` / `approver_id` — that is not a full authorization boundary.
 
@@ -221,9 +221,9 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
   `vercel project add` does **not** connect GitHub. Production is `vercel deploy --prod` / `vercel redeploy` from this laptop. Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard. These commands do not pass `--scope` / `--team` (they use the CLI’s current team). Dashboard fallback if `project add` cannot run: create the project under the same team, then re-run. Do not share the project with another customer.
 
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (login, not the demo header switcher).
-- [ ] `--apply` **redeploys** Production so env takes effect (`vercel redeploy` of the latest production deployment, or `vercel deploy --prod --yes` if none exists). Env changes do not apply to an already-built Preview.
+- [ ] `--apply` **redeploys** Production so env takes effect (`vercel redeploy` of the latest production deployment, or `vercel deploy --prod --yes` if none exists), then polls `vercel inspect <deployment> --json` until `readyState` is READY (default 4 minutes, `VERCEL_READY_TIMEOUT_MS`). Timeout, ERROR, or CANCELED exits non-zero. Env changes do not apply to an already-built Preview.
 - [ ] From a laptop with the same `TURSO_*`: `npm run db:migrate` then `npm run bootstrap-org` then `npm run bootstrap-admin` (or `npm run provision:customer -- --with-org --email … --password …`). Do **not** `npm run seed`.
-- [ ] Smoke the hostname: `BASE_URL=https://<customer-project>.vercel.app npm run smoke`
+- [ ] Smoke the hostname. Preferred: pass `--smoke` on `onboard:customer --apply` (that command already waited for Ready). Stepped: `BASE_URL=https://<customer-project>.vercel.app npm run smoke` after `vercel:customer --apply` returns.
 
 Dashboard fallback: Settings → Environment Variables → Production and Preview (or All Environments) → Redeploy. Prefer the CLI so operators do not hunt the dashboard for every customer.
 

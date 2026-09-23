@@ -528,12 +528,11 @@ Preferred one-command (Turso + Vercel CLIs logged in; `vercel switch` first if y
 
 ```
 npm run onboard:customer -- --slug <customer>
-npm run onboard:customer -- --slug <customer> --apply --email … --password …
-  → optional --smoke once Production is Ready
+npm run onboard:customer -- --slug <customer> --apply --email … --password … --smoke
   → first login → Administration → Users → Department Approvers
 ```
 
-`--apply` chains Turso → ensure Vercel project + link → env + redeploy → provision (`--with-org` default **on**; `--no-org` to skip). Secrets stay in-process. `vercel project add procureflow-<slug>` is idempotent (the CLI exits 0 if the project already exists). `vercel link --yes --project procureflow-<slug>` runs when this directory is not linked. Already linked to that name: both are skipped. Linked to a different project: stop (does not retarget).
+`--apply` chains Turso → ensure Vercel project + link → env + redeploy, waits until that Production deployment is Ready, then provision (`--with-org` default **on**; `--no-org` to skip). `--smoke` on that same command is the preferred close. Secrets stay in-process. `vercel project add procureflow-<slug>` is idempotent (the CLI exits 0 if the project already exists). `vercel link --yes --project procureflow-<slug>` runs when this directory is not linked. Already linked to that name: both are skipped. Linked to a different project: stop (does not retarget).
 
 `vercel project add` does not connect GitHub. Production is deployed from this laptop. Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.
 
@@ -557,7 +556,7 @@ npm run turso:customer -- --apply
 
    ```bash
    npm run vercel:customer -- --slug <customer>            # dry-run
-   npm run vercel:customer -- --slug <customer> --apply    # Production + Preview + redeploy
+   npm run vercel:customer -- --slug <customer> --apply    # Production + Preview + redeploy, then wait until Ready
    ```
 
    Never sets `DEMO_PERSONA_SWITCHER`. Preview URLs stay broken if vars are Production-only. Env changes do not retrofit an already-built Preview.

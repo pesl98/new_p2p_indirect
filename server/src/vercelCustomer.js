@@ -1,11 +1,15 @@
 /**
  * Ensure a per-customer Vercel project exists, link this checkout, push Turso +
- * session env, and redeploy.
+ * session env, redeploy, and wait until that Production deployment is Ready.
  *
  * Isolation stays one Turso DB + one Vercel project per customer (not org_id).
  * Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
  * Secrets must already be in the shell — this command never invents them.
  * Does not connect GitHub auto-deploy (laptop vercel deploy / redeploy only).
+ *
+ * Ready wait uses `vercel inspect <url-or-id> --json` (confirmed on Vercel CLI
+ * 59.25.4). The CLI also has `inspect --wait`, but this command polls so the
+ * timeout, sleep, and Ready/ERROR/CANCELED handling stay in-process and testable.
  *
  *   npm run turso:customer -- --slug acme --apply   # first: print exports
  *   npm run vercel:customer -- --slug acme
@@ -32,6 +36,33 @@ export const DEFAULT_PROJECT_PREFIX = 'procureflow-';
 export const VERCEL_GITHUB_LIMIT =
   'vercel project add does not connect GitHub. Production is deployed from this laptop (vercel deploy --prod / vercel redeploy). Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.';
 
+/** Default wait for Production readyState READY after redeploy/deploy. */
+export const DEFAULT_VERCEL_READY_TIMEOUT_MS = 4 * 60 * 1000;
+
+/** Pause between `vercel inspect --json` polls while the deployment is still building. */
+export const DEFAULT_VERCEL_READY_POLL_MS = 5000;
+
+export const DEPLOYMENT_INSPECT_DISPLAY = 'vercel inspect <new-deployment-url-or-id> --json';
+
+export const PENDING_DEPLOYMENT_STATES = Object.freeze([
+  'BUILDING',
+  'QUEUED',
+  'INITIALIZING'
+]);
+
+export const FAILED_DEPLOYMENT_STATES = Object.freeze([
+  'ERROR',
+  'CANCELED',
+  'BLOCKED'
+]);
+
+export function readyWaitNote() {
+  return `--apply polls ${DEPLOYMENT_INSPECT_DISPLAY} until readyState is READY`
+    + ` (keeps waiting only while ${PENDING_DEPLOYMENT_STATES.join(', ')}).`
+    + ` Default timeout ${DEFAULT_VERCEL_READY_TIMEOUT_MS} ms (VERCEL_READY_TIMEOUT_MS).`
+    + ' It returns after Ready, so smoke can follow. Dry-run does not call Vercel.';
+}
+
 export const VERCEL_CUSTOMER_HELP = `ProcureFlow Vercel customer env (Production + Preview)
 
 Usage:
@@ -46,9 +77,13 @@ Usage:
                         Exit 0. Never calls Vercel. No network required.
   --apply               Ensure the Vercel project exists and this directory is
                         linked, then set/update the three env vars on Production
-                        and Preview and redeploy. Requires the Vercel CLI and
-                        vercel login. Uses the CLI's current team (vercel switch
-                        if you have more than one).
+                        and Preview, redeploy, and wait until that Production
+                        deployment is Ready (vercel inspect <url-or-id> --json).
+                        Requires the Vercel CLI and vercel login. Uses the CLI's
+                        current team (vercel switch if you have more than one).
+                        Default wait is ${DEFAULT_VERCEL_READY_TIMEOUT_MS} ms
+                        (override with VERCEL_READY_TIMEOUT_MS). Exits non-zero
+                        on timeout, ERROR, or CANCELED.
   --help, -h            Show this help
 
 Required shell env (same values that will go to Vercel; never invented):
@@ -69,13 +104,17 @@ Project ensure (before env, on --apply):
 
 ${VERCEL_GITHUB_LIMIT}
 
+${readyWaitNote()}
+
 Happy path:
-  Preferred: npm run onboard:customer -- --slug <slug> [--apply --email … --password …]
+  Preferred: npm run onboard:customer -- --slug <slug> --apply --email … --password … --smoke
   1. npm run turso:customer -- --slug <slug> --apply     # classic libSQL + exports
-  2. npm run vercel:customer -- --slug <slug>            # dry-run (ensure + env)
-  3. npm run vercel:customer -- --slug <slug> --apply    # project add, link, env, redeploy
+  2. npm run vercel:customer -- --slug <slug>            # dry-run (ensure + env + Ready wait)
+  3. npm run vercel:customer -- --slug <slug> --apply    # project add, link, env, redeploy, wait Ready
   4. npm run provision:customer -- --with-org --email … --password …
   5. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
+     (--apply already waited for Production Ready, so smoke can follow immediately.
+      GitHub auto-deploy is still a dashboard connection, not this command.)
 
 See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
 `;
@@ -209,6 +248,214 @@ export function redeployArgv(deploymentIdOrUrl) {
 
 export function deployProdArgv() {
   return ['deploy', '--prod', '--yes'];
+}
+
+export function deploymentInspectArgv(deploymentIdOrUrl) {
+  return ['inspect', deploymentIdOrUrl, '--json'];
+}
+
+export function resolveReadyTimeoutMs(env = process.env) {
+  const raw = asTrimmed(env.VERCEL_READY_TIMEOUT_MS);
+  if (!raw) return DEFAULT_VERCEL_READY_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_VERCEL_READY_TIMEOUT_MS;
+  return n;
+}
+
+export function normalizeDeploymentState(value) {
+  if (value == null) return null;
+  const text = String(value).replace(/\u001b\[[0-9;]*m/g, '').trim();
+  if (!text) return null;
+  const upper = text.toUpperCase();
+  if (upper === 'CANCELLED') return 'CANCELED';
+  if (
+    PENDING_DEPLOYMENT_STATES.includes(upper)
+    || FAILED_DEPLOYMENT_STATES.includes(upper)
+    || upper === 'READY'
+  ) {
+    return upper;
+  }
+  const labeled = text.match(
+    /(?:readyState|status|state)\s*[:=]\s*["']?(INITIALIZING|QUEUED|BUILDING|READY|ERROR|CANCELED|CANCELLED|BLOCKED)\b/i
+  );
+  if (labeled) {
+    return labeled[1].toUpperCase() === 'CANCELLED' ? 'CANCELED' : labeled[1].toUpperCase();
+  }
+  const all = [...text.matchAll(
+    /\b(INITIALIZING|QUEUED|BUILDING|READY|ERROR|CANCELED|CANCELLED|BLOCKED)\b/gi
+  )];
+  if (!all.length) return null;
+  const found = all[all.length - 1][1].toUpperCase();
+  return found === 'CANCELLED' ? 'CANCELED' : found;
+}
+
+export function parseInspectReadyState(stdout) {
+  const text = asTrimmed(stdout).replace(/\u001b\[[0-9;]*m/g, '');
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const raw = parsed.readyState || parsed.status || parsed.state;
+      const normalized = normalizeDeploymentState(raw);
+      if (normalized) return normalized;
+    }
+  } catch {
+    // plain-text `vercel inspect` summary
+  }
+  return normalizeDeploymentState(text);
+}
+
+export function classifyDeploymentState(state) {
+  if (!state) return 'unknown';
+  if (state === 'READY') return 'ready';
+  if (PENDING_DEPLOYMENT_STATES.includes(state)) return 'pending';
+  if (FAILED_DEPLOYMENT_STATES.includes(state)) return 'failed';
+  return 'unknown';
+}
+
+export function pickDeploymentRef(stdout, { projectName } = {}) {
+  const text = String(stdout || '');
+  if (!asTrimmed(text)) return null;
+  let parsedUrl = null;
+  let parsedId = null;
+  try {
+    const parsed = JSON.parse(text);
+    const obj = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (obj && typeof obj === 'object') {
+      const rawUrl = obj.url || obj.deploymentUrl;
+      const uid = obj.uid || obj.id;
+      if (uid && /^dpl_/.test(String(uid))) parsedId = String(uid);
+      if (rawUrl) {
+        parsedUrl = /^https?:/i.test(String(rawUrl))
+          ? String(rawUrl)
+          : `https://${rawUrl}`;
+      }
+    }
+  } catch {
+    // redeploy/deploy stdout is usually a bare URL
+  }
+  const urls = [];
+  if (parsedUrl) urls.push(parsedUrl);
+  const re = /https:\/\/[a-z0-9._-]+\.vercel\.app/gi;
+  let match = re.exec(text);
+  while (match) {
+    urls.push(match[0]);
+    match = re.exec(text);
+  }
+  const alias = projectName
+    ? `https://${String(projectName).toLowerCase()}.vercel.app`
+    : null;
+  const unique = urls.find((url) => !alias || url.toLowerCase() !== alias);
+  if (unique) return unique;
+  if (parsedId) return parsedId;
+  const dpl = text.match(/\bdpl_[A-Za-z0-9]+\b/);
+  if (urls[0]) return urls[0];
+  if (dpl) return dpl[0];
+  return null;
+}
+
+export function formatMissingDeploymentRef() {
+  return [
+    'Redeploy finished but no deployment URL or id was found to inspect.',
+    'Refusing to treat the deploy as Ready.',
+    'Check the Vercel dashboard for the Production deployment, then redeploy if needed:',
+    '  vercel ls --environment production',
+    '  vercel redeploy <deployment-url-or-id>'
+  ].join('\n');
+}
+
+export function formatDeploymentWaitFailure({
+  deploymentRef,
+  state,
+  timedOut,
+  timeoutMs,
+  inspect,
+  env = process.env
+} = {}) {
+  const ref = deploymentRef || '(unknown deployment)';
+  if (timedOut) {
+    const seconds = Math.round((timeoutMs || 0) / 1000);
+    return [
+      `Timed out after ${seconds}s waiting for Production deployment ${ref} to become Ready (last state: ${state || 'unknown'}).`,
+      'Env was updated and a deploy was triggered, but this command stops here so smoke does not hit a deployment that is still building.',
+      'Check the Vercel dashboard, or inspect and redeploy:',
+      `  vercel inspect ${ref}`,
+      `  vercel redeploy ${ref}`,
+      'Then re-run once that deployment is Ready.'
+    ].join('\n');
+  }
+  if (classifyDeploymentState(state) === 'failed') {
+    return [
+      `Production deployment ${ref} is ${state} (not Ready).`,
+      'Check the Vercel dashboard for the build error, then redeploy:',
+      `  vercel inspect ${ref} --logs`,
+      `  vercel redeploy ${ref}`
+    ].join('\n');
+  }
+  const detail = redactSecrets(
+    asTrimmed(inspect?.stderr || inspect?.stdout || ''),
+    env
+  );
+  const snippet = detail
+    ? detail.split('\n').slice(0, 8).join('\n')
+    : '';
+  return [
+    `Could not read a deployment state from vercel inspect ${ref} --json (exit ${inspect?.code ?? 'unknown'}).`,
+    'Check the Vercel dashboard, then redeploy if the build failed:',
+    `  vercel inspect ${ref}`,
+    `  vercel redeploy ${ref}`,
+    snippet || null
+  ].filter((line) => line != null).join('\n');
+}
+
+export async function waitForDeploymentReady({
+  deploymentRef,
+  inspect,
+  timeoutMs = DEFAULT_VERCEL_READY_TIMEOUT_MS,
+  pollIntervalMs = DEFAULT_VERCEL_READY_POLL_MS,
+  sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+  now = () => Date.now()
+} = {}) {
+  if (!deploymentRef) {
+    return {
+      ok: false,
+      deploymentRef: null,
+      state: null,
+      timedOut: false,
+      unparsed: true,
+      inspect: null
+    };
+  }
+  const started = now();
+  for (;;) {
+    const result = await inspect(deploymentRef);
+    const state = parseInspectReadyState(result?.stdout);
+    const kind = classifyDeploymentState(state);
+    if (kind === 'ready') {
+      return { ok: true, deploymentRef, state, timedOut: false, inspect: result };
+    }
+    if (kind === 'failed') {
+      return { ok: false, deploymentRef, state, timedOut: false, inspect: result };
+    }
+    if (kind !== 'pending') {
+      return {
+        ok: false,
+        deploymentRef,
+        state,
+        timedOut: false,
+        unparsed: true,
+        inspect: result
+      };
+    }
+    if (now() - started >= timeoutMs) {
+      return { ok: false, deploymentRef, state, timedOut: true, inspect: result };
+    }
+    const remaining = timeoutMs - (now() - started);
+    await sleep(Math.max(0, Math.min(pollIntervalMs, remaining)));
+    if (now() - started >= timeoutMs) {
+      return { ok: false, deploymentRef, state, timedOut: true, inspect: result };
+    }
+  }
 }
 
 export function projectAddArgv(projectName) {
@@ -454,6 +701,8 @@ export function buildApplyPlan({ slug, projectName }) {
     },
     redeployDisplay: 'vercel redeploy <latest-production-deployment> --yes',
     deployFallbackDisplay: 'vercel deploy --prod --yes',
+    inspectDisplay: DEPLOYMENT_INSPECT_DISPLAY,
+    readyWaitNote: readyWaitNote(),
     skipped: [DEMO_PERSONA_SWITCHER_KEY]
   };
 }
@@ -483,6 +732,7 @@ export function formatDryRunReport({
     )),
     `  [ ] Leave ${DEMO_PERSONA_SWITCHER_KEY} unset`,
     '  [ ] Redeploy so env takes effect',
+    '  [ ] Wait until that Production deployment is Ready',
     '',
     'Commands that --apply would run (secrets stay in the shell / stdin, never argv):',
     `  ${plan.whoami.display}`,
@@ -493,6 +743,8 @@ export function formatDryRunReport({
     `  ${plan.listProduction.display}`,
     `  ${plan.redeployDisplay}`,
     `  (if no production deployment yet: ${plan.deployFallbackDisplay})`,
+    `  ${plan.inspectDisplay}`,
+    `    (${plan.readyWaitNote})`,
     '',
     VERCEL_GITHUB_LIMIT,
     'Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.',
@@ -519,6 +771,7 @@ export function formatApplyReport({
     `Project name:   ${projectName}`,
     `Production+Preview env set: ${CUSTOMER_ENV_KEYS.join(', ')}`,
     `Redeploy:       ${redeployed || 'triggered'}`,
+    'Production:     Ready',
     'DEMO_PERSONA_SWITCHER left unset',
     VERCEL_GITHUB_LIMIT,
     '',
@@ -706,7 +959,10 @@ export async function runVercelCustomerCli({
   cwd = process.cwd(),
   spawnFn = spawn,
   existsSync = fs.existsSync,
-  readFileSync = fs.readFileSync
+  readFileSync = fs.readFileSync,
+  sleep,
+  now,
+  pollIntervalMs = DEFAULT_VERCEL_READY_POLL_MS
 } = {}) {
   const args = parseVercelCustomerArgs(argv);
   if (args.help) {
@@ -853,7 +1109,7 @@ export async function runVercelCustomerCli({
   }
 
   const target = parseDeploymentTarget(listed.stdout);
-  let redeployed;
+  let deployStdout;
   if (target?.uid) {
     const redeploy = await runVercelCommand(redeployArgv(target.uid), runOpts);
     printCommandOutput(stdout, redeploy.stdout, env);
@@ -862,7 +1118,7 @@ export async function runVercelCustomerCli({
       printCommandOutput(stderr, redeploy.stderr || redeploy.stdout, env);
       return 1;
     }
-    redeployed = asTrimmed(redeploy.stdout) || target.url || target.uid;
+    deployStdout = redeploy.stdout;
   } else {
     write(
       stdout,
@@ -875,8 +1131,37 @@ export async function runVercelCustomerCli({
       printCommandOutput(stderr, deployed.stderr || deployed.stdout, env);
       return 1;
     }
-    redeployed = asTrimmed(deployed.stdout) || suggestedBaseUrl(projectName);
+    deployStdout = deployed.stdout;
   }
+
+  const deploymentRef = pickDeploymentRef(deployStdout, { projectName });
+  if (!deploymentRef) {
+    write(stderr, `${formatMissingDeploymentRef()}\n`);
+    return 1;
+  }
+
+  const timeoutMs = resolveReadyTimeoutMs(env);
+  write(
+    stdout,
+    `Waiting for Production deployment ${deploymentRef} to become Ready`
+      + ` (timeout ${timeoutMs} ms)…\n`
+  );
+  const waited = await waitForDeploymentReady({
+    deploymentRef,
+    timeoutMs,
+    pollIntervalMs,
+    sleep,
+    now,
+    inspect: (ref) => runVercelCommand(deploymentInspectArgv(ref), runOpts)
+  });
+  if (!waited.ok) {
+    write(stderr, `${formatDeploymentWaitFailure({ ...waited, timeoutMs, env })}\n`);
+    if (!waited.unparsed && waited.inspect?.stderr) {
+      printCommandOutput(stderr, waited.inspect.stderr, env);
+    }
+    return 1;
+  }
+  write(stdout, `Production deployment ${deploymentRef} is Ready.\n`);
 
   if (demoPersonaSwitcherSet(env)) {
     write(
@@ -889,7 +1174,7 @@ export async function runVercelCustomerCli({
     slug,
     projectName,
     baseUrl: suggestedBaseUrl(projectName),
-    redeployed
+    redeployed: deploymentRef
   }));
   return 0;
 }

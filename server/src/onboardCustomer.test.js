@@ -57,7 +57,17 @@ function vercelSpawn(calls) {
         stdout: JSON.stringify([{ uid: 'dpl_acme', url: 'procureflow-acme.vercel.app' }])
       });
     }
-    if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme.vercel.app\n' });
+    if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+    if (args[0] === 'inspect') {
+      return fakeChild({
+        stdout: `${JSON.stringify({
+          id: 'dpl_new',
+          url: 'procureflow-acme-abc123.vercel.app',
+          readyState: 'READY',
+          target: 'production'
+        })}\n`
+      });
+    }
     throw new Error(`unexpected spawn ${args.join(' ')}`);
   };
 }
@@ -309,6 +319,9 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.match(stdout.text, /vercel env add TURSO_DATABASE_URL production/);
     assert.match(stdout.text, /provision:customer -- --with-org/);
     assert.match(stdout.text, /skip \(pass --smoke/);
+    assert.match(stdout.text, /waits for Production Ready/);
+    assert.match(stdout.text, /vercel inspect <new-deployment-url-or-id> --json/);
+    assert.match(stdout.text, /Dry-run does not call Vercel/);
     assert.match(stdout.text, /will mint on --apply/);
     assert.doesNotMatch(stdout.text, /eyJhbGci/);
     assert.doesNotMatch(stdout.text, /libsql:\/\/procureflow-acme-org/);
@@ -423,8 +436,9 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.ok(calls.turso && calls.vercel && calls.provision);
   });
 
-  test('--apply --smoke runs smoke against the suggested BASE_URL', async () => {
+  test('--apply --smoke runs smoke against the suggested BASE_URL after vercel succeeds', async () => {
     let smokeOpts = null;
+    const order = [];
     const code = await runOnboardCustomerCli({
       argv: [
         '--slug', 'acme',
@@ -436,19 +450,71 @@ describe('onboard:customer CLI (no live network)', () => {
       env: {},
       stdout: captureStreams().stdout,
       stderr: captureStreams().stderr,
-      async runTursoFn() { return { code: 0, exports: MINTED }; },
-      async runVercelFn() { return 0; },
-      async runProvisionFn() { return 0; },
+      async runTursoFn() {
+        order.push('turso');
+        return { code: 0, exports: MINTED };
+      },
+      async runVercelFn() {
+        order.push('vercel');
+        return 0;
+      },
+      async runProvisionFn() {
+        order.push('provision');
+        return 0;
+      },
       async runSmokeFn(opts) {
+        order.push('smoke');
         smokeOpts = opts;
         return 0;
       }
     });
     assert.equal(code, 0);
+    assert.deepEqual(order, ['turso', 'vercel', 'provision', 'smoke']);
     assert.ok(smokeOpts);
     assert.ok(smokeOpts.argv.includes('https://procureflow-acme.vercel.app'));
     assert.equal(smokeOpts.env.BASE_URL, 'https://procureflow-acme.vercel.app');
     assert.equal(smokeOpts.env.TURSO_AUTH_TOKEN, MINTED.TURSO_AUTH_TOKEN);
+  });
+
+  test('--apply --smoke runs smoke only after the real vercel path has seen Ready', async () => {
+    const order = [];
+    const { stdout, stderr } = captureStreams();
+    const code = await runOnboardCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--smoke'],
+      env: {},
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: (file) => String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`),
+      readFileSync: () => JSON.stringify({
+        projectId: 'prj_acme',
+        orgId: 'team_acme',
+        projectName: 'procureflow-acme'
+      }),
+      spawnFn: vercelSpawn(order),
+      async runTursoFn() {
+        order.push(['turso:customer']);
+        return { code: 0, exports: MINTED };
+      },
+      runVercelFn: runVercelCustomerCli,
+      async runProvisionFn() {
+        order.push(['provision']);
+        return 0;
+      },
+      async runSmokeFn() {
+        order.push(['smoke']);
+        return 0;
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    const labels = order.map((args) => args[0]);
+    const readyAt = labels.indexOf('inspect');
+    const smokeAt = labels.indexOf('smoke');
+    assert.ok(readyAt > labels.indexOf('redeploy'));
+    assert.ok(smokeAt > readyAt);
+    assert.ok(labels.indexOf('provision') > readyAt);
+    assert.match(stdout.text, /is Ready/);
+    assert.match(stdout.text, /Smoke:\s+ran/);
   });
 
   test('--apply stops after Vercel when ensure fails closed; provision is not called', async () => {

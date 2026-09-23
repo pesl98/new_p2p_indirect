@@ -49,18 +49,21 @@ Usage:
   --project <name>      Override Vercel project name (passed to vercel:customer).
   --dry-run             Print the full planned sequence (default). Exit 0.
                         Never calls Turso/Vercel/DB. Does not invent secrets.
-  --apply               Run Turso → ensure Vercel project + link → env push
-                        and redeploy → provision in-process. Secrets minted by
-                        Turso are passed to later steps without copying export
-                        lines by hand.
+  --apply               Run Turso → ensure Vercel project + link → env push,
+                        redeploy, and wait until Production is Ready → provision
+                        in-process. Secrets minted by Turso are passed to later
+                        steps without copying export lines by hand. vercel:customer
+                        returns only after Production is Ready (or a timeout/error).
   --email / --password  First admin (both required together). Optional.
   --name <display>      First-admin display name (optional with --email).
   --with-org            Include cost centers + FY budgets (DEFAULT ON here;
                         provision:customer still requires the flag).
   --no-org              Skip the org skeleton (schema + optional admin only).
   --smoke               After provision, hit BASE_URL (default
-                        https://procureflow-<slug>.vercel.app). Skipped unless
-                        passed — Vercel may still be warming.
+                        https://procureflow-<slug>.vercel.app). Preferred on
+                        the same --apply command: that command waits for
+                        Production Ready before it returns, so smoke is not
+                        racing a still-building hostname.
   --base-url <url>      Override smoke / provision next-step URL.
   --json                Machine summary. Tokens redacted to last 4 chars.
                         Full Turso export lines may still appear on human
@@ -80,8 +83,9 @@ Uses the Vercel CLI's current team (vercel switch if you have more than one).
 
 Happy path:
   1. npm run onboard:customer -- --slug <slug>
-  2. npm run onboard:customer -- --slug <slug> --apply --email … --password …
-  3. Optional: --smoke once Production is Ready
+  2. npm run onboard:customer -- --slug <slug> --apply --email … --password … --smoke
+     (--apply waits for Production Ready before smoke runs.
+      GitHub auto-deploy is still a dashboard connection.)
 
 Stepped (same sequence, secrets copied by hand):
   turso:customer --apply → vercel:customer --apply (ensure + link + env)
@@ -315,7 +319,7 @@ export function plannedOnboardSteps({
       id: 'C',
       name: 'vercel:customer',
       command: vercelCmd,
-      summary: 'Push TURSO_* + SESSION_SECRET to Production+Preview and redeploy. Includes step B when run via vercel:customer --apply.'
+      summary: 'Push TURSO_* + SESSION_SECRET to Production+Preview, redeploy, and wait until Production is Ready. Includes step B when run via vercel:customer --apply.'
     },
     {
       id: 'D',
@@ -330,8 +334,8 @@ export function plannedOnboardSteps({
       name: 'smoke',
       command: `BASE_URL=${smokeUrl} npm run smoke`,
       summary: smoke
-        ? 'HTTP smoke against the customer URL'
-        : 'Skipped unless --smoke (Vercel deploy may still be warming)'
+        ? 'HTTP smoke against the customer URL (after Production is Ready)'
+        : 'Skipped unless --smoke. --apply waits for Production Ready, so --smoke on the same command is the preferred close'
     }
   ];
 }
@@ -365,7 +369,7 @@ export function formatOnboardDryRun({
     `Vercel project: ${projectName}`,
     `Suggested URL:  ${baseUrl}`,
     `Org skeleton:   ${withOrg ? 'yes (--with-org is default on this command; --no-org to skip)' : 'no (--no-org)'}`,
-    `Smoke:          ${smoke ? 'yes (--smoke)' : 'skip (pass --smoke after Production is Ready)'}`,
+    `Smoke:          ${smoke ? 'yes (--smoke, after Production is Ready)' : 'skip (pass --smoke on the same --apply; it waits for Production Ready)'}`,
     adminLine,
     '',
     'Isolation: one classic libSQL database + one Vercel project per customer.',
@@ -397,6 +401,8 @@ export function formatOnboardDryRun({
     `  ${vercelPlan.listProduction.display}`,
     `  ${vercelPlan.redeployDisplay}`,
     `  (if no production deployment yet: ${vercelPlan.deployFallbackDisplay})`,
+    `  ${vercelPlan.inspectDisplay}`,
+    `    (${vercelPlan.readyWaitNote})`,
     '',
     `Step D — ${provision.command}`,
     `  ${provision.summary}. Never seeds.`,
@@ -431,7 +437,7 @@ export function formatOnboardApplyReport({
     `Database name:  ${dbName}`,
     `Vercel project: ${projectName}`,
     `Org skeleton:   ${withOrg ? 'yes' : 'no'}`,
-    `Smoke:          ${smoked ? 'ran' : 'skipped (pass --smoke once Production is Ready)'}`,
+    `Smoke:          ${smoked ? 'ran' : 'skipped (pass --smoke on the same --apply; it waits for Production Ready)'}`,
     '',
     'Secrets stay in this process, Vercel env, and (from Turso) human stdout — not in git.',
     'DEMO_PERSONA_SWITCHER left unset.',
