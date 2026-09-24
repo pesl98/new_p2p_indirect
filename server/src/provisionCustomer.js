@@ -41,7 +41,7 @@ Env (same as db:migrate / bootstrap-admin / bootstrap-org):
 Preferred one-command: npm run onboard:customer -- --slug <customer> [--apply]
 Turso DB + token + SESSION_SECRET: npm run turso:customer -- --slug <customer> [--apply]
 Vercel env + redeploy: npm run vercel:customer -- --slug <customer> [--apply]
-See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 function write(stream, text) {

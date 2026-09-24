@@ -6,7 +6,7 @@ Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite 
 
 This document describes the control model implemented in code.
 
-**Authentication (this phase):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Admin user CRUD uses `req.user` (session), not spoofable body ids. Operator runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md) (first-admin bootstrap, `SESSION_SECRET`, `npm run smoke`).
+**Authentication (this phase):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Admin user CRUD uses `req.user` (session), not spoofable body ids. Operator manual: [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md). Older pointers: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and [DEPLOYMENT.md](DEPLOYMENT.md) (first-admin bootstrap, `SESSION_SECRET`, `npm run smoke`).
 
 **Phased cut — legacy persona ids:** most existing P2P mutating routes still trust body fields (`approver_id`, `received_by`, `requester_id`, `actor_name`). Anyone who can reach those APIs can still send any persona id. That is **not** a full SoD rewrite. Follow-up work should require login on those routes and prefer `req.user`. The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`); default customer deploy uses login.
 
@@ -579,7 +579,7 @@ npm run seed
 # or: npm run db:migrate -- --seed
 # Demo login: alice.chen@company.com / ProcureFlow!demo
 # Optional header switcher: DEMO_PERSONA_SWITCHER=1
-# Customer: SESSION_SECRET=… and first-admin bootstrap — see docs/CUSTOMER_ONBOARDING.md
+# Customer: SESSION_SECRET=… and first-admin bootstrap — see docs/DEPLOY_MANUAL.md
 
 # Unit tests (node --test) — SQLite in-memory plus Turso HTTP mocks
 npm test
@@ -621,7 +621,7 @@ Pointing two deployments at the same URL merges those customers. Partial Turso c
 
 `db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `bootstrap-org` then inserts the default five cost centers + FY 2026 budgets (idempotent; never wipes). `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
 
-Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (operator runbook) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md). Capabilities overview: **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
+Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md) point there. Capabilities overview: **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
 
 ## Local vs Vercel / Turso
 
@@ -635,4 +635,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `npm run turso:customer -- --slug <customer> --apply` (`turso db create …`, `turso db show … --url`, and `turso db tokens create …` — database token, not an org JWT; classic libSQL, never `--tursodb`). Export those plus `SESSION_SECRET`, then `npm run vercel:customer -- --slug <customer> --apply` to set Production **and** Preview and redeploy. Apply schema with `npm run provision:customer -- --with-org` (or `db:migrate` + `bootstrap-org`) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Create the Turso DB with `npm run turso:customer -- --slug <customer> --apply` (`turso db create …`, `turso db show … --url`, and `turso db tokens create …` — database token, not an org JWT; classic libSQL, never `--tursodb`). The full operator sequence is **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and **[DEPLOYMENT.md](DEPLOYMENT.md)** point there.
