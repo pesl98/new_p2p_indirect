@@ -1,14 +1,15 @@
 # ProcureFlow system manual
 
-**Audience:** owner / operator who needs (1) the **exact shipped capabilities** and (2) **how to stand up a new customer**.
+**Audience:** owner / operator who needs the **exact shipped capabilities**.
 
-This is the single entry point. It describes what is implemented in code on `main` after [PR #34](https://github.com/pesl98/new_p2p_indirect/pull/34). It does **not** invent Coupa/Ariba-parity features.
+This is the capabilities overview. It describes what is implemented in code. It does **not** invent Coupa/Ariba-parity features. How to deploy, run, update, and remove a customer install is **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**.
 
 | If you need… | Go here |
 | --- | --- |
-| Click-by-click new-customer runbook (Turso → Vercel → first login) | **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** |
-| Env tables, Auth API, Vercel internals, rollback | **[DEPLOYMENT.md](DEPLOYMENT.md)** |
-| Copy-paste operator checklist | [`scripts/provision-customer.md`](../scripts/provision-customer.md) |
+| Deploy, run, update, and remove a customer install | **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)** |
+| Click-by-click pointer (the procedure moved) | **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** |
+| Older technical pointer | **[DEPLOYMENT.md](DEPLOYMENT.md)** |
+| Copy-paste pointer | [`scripts/provision-customer.md`](../scripts/provision-customer.md) |
 | Control-model detail (match math, contract scoring, tests) | **[ARCHITECTURE.md](ARCHITECTURE.md)** |
 | Env key names (no secrets) | [`.env.example`](../.env.example) |
 | Feature walkthroughs on the seeded demo | [README.md](../README.md) |
@@ -507,16 +508,7 @@ Invoice numbers are **vendor-assigned** strings, unique per supplier: `UNIQUE(su
 
 On Vercel, Turso is **required**. Missing pair (or Turso 401) → HTML/JSON **503** (`TursoConfigError`), not a local SQLite file. Partial Turso credentials (URL xor token) are fail-closed on migrate/status/bootstrap-org.
 
-Full env table: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Keys (no values): [`.env.example`](../.env.example).
-
-| Variable | Customer deploy |
-| --- | --- |
-| `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` | Required on Vercel (classic libSQL URL + **database** token) |
-| `SESSION_SECRET` | Required (signs `pf_session`) |
-| `DEMO_PERSONA_SWITCHER` | Leave unset |
-| `PROCUREMENT_DB_PATH` | Local SQLite only — **do not** set on Vercel |
-| `BCRYPT_ROUNDS` | Optional (default 10) |
-| `BASE_URL` | Smoke only |
+Env vars, Vercel, Turso, smoke, and offboard: **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. Key names with no values: [`.env.example`](../.env.example).
 
 There is **no cron**.
 
@@ -524,66 +516,16 @@ There is **no cron**.
 
 ## 9. New customer deploy
 
-Preferred one-command (Turso + Vercel CLIs logged in; `vercel switch` first if you have more than one team):
+Commands and flags are in **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. Short form, so this capabilities manual stays pointed at the real procedure:
 
 ```
 npm run onboard:customer -- --slug <customer>
 npm run onboard:customer -- --slug <customer> --apply --email … --password … --smoke
-  → first login → Administration → Users → Department Approvers
 ```
 
-`--apply` chains Turso → ensure Vercel project + link → env + redeploy, waits until that Production deployment is Ready, then provision (`--with-org` default **on**; `--no-org` to skip). `--smoke` on that same command is the preferred close. Secrets stay in-process. `vercel project add procureflow-<slug>` is idempotent (the CLI exits 0 if the project already exists). `vercel link --yes --project procureflow-<slug>` runs when this directory is not linked. Already linked to that name: both are skipped. Linked to a different project: stop (does not retarget).
+Stepped, same sequence: `npm run turso:customer -- --apply`, then `npm run vercel:customer -- --apply`, then provision and smoke. **Do not** `npm run seed` on a live tenant.
 
-`vercel project add` does not connect GitHub. Production is deployed from this laptop. Git-push deploys still need a one-time Vercel↔GitHub connection in the dashboard.
-
-Stepped (same sequence, secrets copied by hand):
-
-```
-npm run turso:customer -- --apply
-  → npm run vercel:customer -- --apply
-  → npm run provision:customer -- --with-org
-  → npm run smoke
-  → first login → Administration → Users → Department Approvers
-```
-
-**Do not** `npm run seed` on a live tenant.
-
-### 9.1 Sequence (operator)
-
-1. **Turso DB + token + `SESSION_SECRET`:** prefer `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply`. Or the Turso-only CLI: `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). The orchestrator passes exports to the next step; the Turso-only CLI prints them for you to copy.
-2. **New Vercel project** `procureflow-<slug>` (root = repo root; build from `vercel.json`). `vercel:customer --apply` runs `vercel project add` then `vercel link --yes --project` unless this directory is already linked to that name. It does not import GitHub. A directory linked to a different project fails closed.
-3. Export the three secrets in the shell (the Vercel CLI **refuses to invent secrets**), then:
-
-   ```bash
-   npm run vercel:customer -- --slug <customer>            # dry-run
-   npm run vercel:customer -- --slug <customer> --apply    # Production + Preview + redeploy, then wait until Ready
-   ```
-
-   Never sets `DEMO_PERSONA_SWITCHER`. Preview URLs stay broken if vars are Production-only. Env changes do not retrofit an already-built Preview.
-4. **Same `TURSO_*` on the laptop:**
-
-   ```bash
-   npm run db:migrate -- --turso
-   npm run db:status
-   npm run bootstrap-org
-   npm run bootstrap-admin -- --email admin@customer.com --password 'choose-a-long-password'
-   ```
-
-   One-shot wrapper (still **never seeds**):
-
-   ```bash
-   npm run provision:customer -- --with-org \
-     --email admin@customer.com --password 'choose-a-long-password'
-   ```
-
-5. Smoke: `BASE_URL=https://<customer-project>.vercel.app npm run smoke` (optional `--email` / `--password` for a login check).
-6. Sign in → **Administration → Users** (requesters, approvers, procurement, finance, extra admins) → **Department Approvers** (step-1 heads) → **Suppliers & Catalog** as needed.
-
-**Customer B** = a **second** Turso DB + **second** Vercel project + new `SESSION_SECRET`. Never paste customer A’s URL.
-
-Click-by-click (Acme worked example, troubleshooting, deprovision): **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)**. Deprovision CLI: `npm run offboard:customer -- --slug <customer>` then `--apply --confirm-slug <customer>`. Env tables, Auth API, rollback: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Checklist: [`scripts/provision-customer.md`](../scripts/provision-customer.md).
-
-### 9.2 Three data tiers (do not confuse)
+### 9.1 Three data tiers (do not confuse)
 
 | Tier | Command | Result |
 | --- | --- | --- |
@@ -637,47 +579,11 @@ More control-model detail: [ARCHITECTURE.md — Known demo limits](ARCHITECTURE.
 
 ---
 
-## 12. Troubleshooting pointers
+## 12. Troubleshooting
 
-Full tables: [CUSTOMER_ONBOARDING.md § Troubleshooting](CUSTOMER_ONBOARDING.md#troubleshooting).
+Deploy failures (missing Turso env, token rejected, Preview, `SESSION_SECRET`, smoke, stale UI, SQL parse, Vercel function path) are in **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**.
 
-### Login fails: users exist, nobody has a password
-
-Typical of a **legacy seed from before auth** (`users` rows, empty `user_credentials`). Login 401. `bootstrapNeeded: false` (UI will **not** show Create the first admin). `bootstrap-admin` exits **2**.
-
-| Situation | Fix |
-| --- | --- |
-| Disposable demo DB | `npm run seed` — **destructive** wipe + personas + demo password |
-| At least one admin can log in | Administration → Users → **Set password** |
-| Nobody can log in and you must keep going | Recreate DB → `db:migrate` → `bootstrap-org` → `bootstrap-admin`. Bootstrap will not run while any users exist. |
-
-### HTTP 503 / `TursoConfigError`
-
-`TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are not both visible to **that** deployment. Re-run `npm run vercel:customer -- --slug <customer> --apply` (Production **and** Preview) and Redeploy. Partial credentials are fail-closed (no silent local file).
-
-### HTTP 401 from Turso / token rejected
-
-Wrong token kind: org/platform JWT (`turso auth token`) or a token for a **different** database. Mint with `turso db tokens create <db>` and `--apply` again.
-
-### Preview URL broken; Production works
-
-Preview missing env. `--apply` sets Preview as well as Production. Rebuild **that** Preview. Env edits do not retrofit an old Preview deployment.
-
-### `SESSION_SECRET` missing / sessions die after Redeploy
-
-Customer / Vercel **must** set it. Changing it invalidates every `pf_session` cookie (expected on rotate). Do not share one secret across customers.
-
-### Smoke fails against Vercel; laptop migrate worked
-
-`BASE_URL` has no trailing path. Redeploy after env changes. `npm run db:status` with the same `TURSO_*` should show `turso-http` and the expected user count.
-
-### First deploy built before env existed
-
-Redeploy. Do not debug the 503 as an application bug until a deployment **built with the vars** is Ready.
-
-### PR submit fails closed on a fresh customer
-
-No cost centers / FY 2026 budgets (`bootstrap-org`) or no department head mapped (and no `role=approver` in that department). Catalog/suppliers may also be empty.
+PR submit on a fresh customer fails closed until cost centers and FY 2026 budgets exist (`bootstrap-org`) and a department head is mapped (or a user with role `approver` is in that department). Catalog and suppliers stay empty until someone adds them.
 
 ---
 
@@ -721,10 +627,11 @@ Tests cover the control model listed in [ARCHITECTURE.md](ARCHITECTURE.md). This
 
 | Path | Why |
 | --- | --- |
-| [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) | Click-by-click customer install |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Isolation, env, Auth API, Vercel, rollback |
+| [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) | Deploy, run, update, and remove a customer |
+| [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) | Pointer to the deploy manual |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Pointer to the deploy manual |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Match math, contract scoring, sequential approvals |
-| [`scripts/provision-customer.md`](../scripts/provision-customer.md) | Copy-paste checklist |
+| [`scripts/provision-customer.md`](../scripts/provision-customer.md) | Pointer to the deploy manual |
 | [`.env.example`](../.env.example) | Env key names |
 | [`server/src/schema.sql`](../server/src/schema.sql) | Tables and CHECKs |
 | [`server/src/approvalPolicy.js`](../server/src/approvalPolicy.js) | Approval chains |

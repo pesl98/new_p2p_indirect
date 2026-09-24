@@ -73,7 +73,7 @@ Isolation: one Turso database or SQLite file per customer. No org_id row tenancy
 Empty tenant: after migrate, optional npm run bootstrap-org (cost centers + FY
 budgets; not seed), then first admin (UI or npm run bootstrap-admin).
 Then: BASE_URL=http://127.0.0.1:5000 npm run smoke
-See docs/CUSTOMER_ONBOARDING.md (operator runbook) and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 export function tursoCredentialState(env = process.env) {

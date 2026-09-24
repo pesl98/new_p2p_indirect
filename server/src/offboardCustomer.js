@@ -82,7 +82,7 @@ The Vercel project is left in place. vercel project rm (CLI 59.26.0) has no
 --yes, so this command does not delete it. Dashboard: Settings → General →
 Delete Project. Instant Rollback reverts code only.
 
-See docs/CUSTOMER_ONBOARDING.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md points there.
 `;
 
 function write(stream, text) {
@@ -294,7 +294,7 @@ export function formatDryRunReport({ slug, dbName, projectName } = {}) {
     'Next:',
     `  npm run offboard:customer -- --slug ${slug} --apply --confirm-slug ${slug}`,
     '',
-    'See docs/CUSTOMER_ONBOARDING.md.'
+    'See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md points there.'
   ];
   return `${lines.join('\n')}\n`;
 }
@@ -563,7 +563,7 @@ export async function runOffboardCustomerCli({
     'Rotate or delete the stored URL, database token, and SESSION_SECRET in the password manager.',
     'Removing them from Vercel does not revoke the Turso token.',
     '',
-    'See docs/CUSTOMER_ONBOARDING.md.'
+    'See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md points there.'
   ];
   write(stdout, `${lines.join('\n')}\n`);
   return 0;
