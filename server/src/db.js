@@ -123,6 +123,19 @@ async function migrateLineTypesAndServiceEntrySheets(database) {
   }
 }
 
+/** Existing DBs: nullable service_basis on catalog, PR, PO, and contract lines. NULL preserves current unit qty. */
+async function migrateServiceBasis(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  for (const table of ['catalog_items', 'requisition_items', 'po_items', 'contract_items']) {
+    if (tables.includes(table) && !(await tableHasColumn(database, table, 'service_basis'))) {
+      await maybe(database.exec(`ALTER TABLE ${table} ADD COLUMN service_basis TEXT`));
+    }
+  }
+}
+
 /** Existing DBs created before catalog master-data maintenance need status. */
 async function migrateCatalogItemStatus(database) {
   const tables = (await maybe(
@@ -386,6 +399,7 @@ export const CONTRACT_ITEMS_TABLE_SQL = `
     unit_price INTEGER NOT NULL,
     total_price INTEGER NOT NULL,
     line_type TEXT NOT NULL DEFAULT 'service' CHECK (line_type IN ('goods', 'service')),
+    service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
     FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
     FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
   )
@@ -575,6 +589,7 @@ export async function applySchema(database) {
   await migrateApprovalRequestsWaitingStatus(database);
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);
+  await migrateServiceBasis(database);
   await migrateCatalogItemStatus(database);
   await migrateInvoiceShortPay(database);
   await migrateDepartmentApprover(database);

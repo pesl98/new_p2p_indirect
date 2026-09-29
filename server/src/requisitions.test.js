@@ -97,6 +97,7 @@ describe('POST /api/requisitions', () => {
       assert.equal(pr.items[0].resolved_supplier_name, 'TechSupply Global');
       assert.equal(pr.items[1].item_description, 'Q4 Security Audit');
       assert.equal(pr.items[1].line_type, 'service');
+      assert.equal(pr.items[1].service_basis, null);
       assert.equal(pr.approvals.length, 0);
       assert.match(pr.pr_number, /^PR-\d{4}-\d{3}$/);
     });

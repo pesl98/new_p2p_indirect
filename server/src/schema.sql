@@ -1,5 +1,8 @@
 -- Schema for Non-Production Procurement Application
 -- Money columns are INTEGER cents (USD minor units). Quantities are INTEGER whole units.
+-- Service lines may set service_basis (lump_sum | hours | days). Goods lines leave it NULL.
+-- Hours/days quantity is whole hours or days; lump_sum quantity is whole occurrences.
+-- Line total is still quantity × unit_price in integer cents.
 
 -- Step-1 department head lives on departments.approver_user_id (nullable users.id).
 -- Not a SQLite FK because departments is created before users.
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS catalog_items (
   lead_time_days INTEGER DEFAULT 3,
   image_url TEXT,
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
+  service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
   FOREIGN KEY (preferred_supplier_id) REFERENCES suppliers(id)
 );
@@ -104,6 +108,7 @@ CREATE TABLE IF NOT EXISTS requisition_items (
   total_price INTEGER NOT NULL,
   estimated_supplier_id INTEGER,
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
+  service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
   FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id) ON DELETE CASCADE,
   FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id),
   FOREIGN KEY (estimated_supplier_id) REFERENCES suppliers(id)
@@ -179,6 +184,7 @@ CREATE TABLE IF NOT EXISTS po_items (
   quantity_accepted INTEGER DEFAULT 0,
   quantity_invoiced INTEGER DEFAULT 0,
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
+  service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (requisition_item_id) REFERENCES requisition_items(id)
 );
@@ -397,6 +403,7 @@ CREATE TABLE IF NOT EXISTS contract_items (
   unit_price INTEGER NOT NULL,
   total_price INTEGER NOT NULL,
   line_type TEXT NOT NULL DEFAULT 'service' CHECK (line_type IN ('goods', 'service')),
+  service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
   FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
   FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
 );

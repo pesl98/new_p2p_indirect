@@ -272,6 +272,8 @@ Catalog, requisition, and PO lines store `line_type` (`goods` | `service`). Defa
 
 An explicit `line_type` on create wins over category. The stored type is what GRN, SES, and match use — they do not re-derive at control time.
 
+Service lines may also store `service_basis` (`lump_sum` | `hours` | `days`). Goods lines store NULL (a basis sent on a goods line is dropped). Omitted basis on a service keeps legacy unit quantity, such as software seats. Lump sum quantity is a whole number of fixed-fee occurrences; hours and days are whole time units. `unit_price` is the fee or rate in integer cents. Line total remains `quantity × unit_price`. Acceptance is an SES (`decided_by`, `decided_at`, `quantity_accepted`); match uses that accepted quantity and does not consult GRN. Existing customer databases gain a nullable `service_basis` column; NULL leaves current lines unchanged.
+
 ## Master data (suppliers & catalog)
 
 Suppliers and catalog items are **edit + soft-deactivate**, not hard-delete. Historical PR / PO / invoice / GRN / SES lines keep their FKs (no `ON DELETE CASCADE` on those tables).
@@ -279,7 +281,7 @@ Suppliers and catalog items are **edit + soft-deactivate**, not hard-delete. His
 | Resource | Update | Status | Delete |
 | --- | --- | --- | --- |
 | Supplier | `PATCH /api/suppliers/:id` (name, contact, email, phone, address, payment_terms, status). `code` is **immutable**. | `active` \| `inactive` \| `under_review` (also `PATCH /api/suppliers/:id/status`) | **405** — deactivate instead |
-| Catalog item | `PATCH /api/catalog/:id` (sku, name, description, category, unit, unit_price cents, preferred_supplier_id, lead_time_days, image_url, line_type, status) | `active` \| `inactive` (also `PATCH /api/catalog/:id/status`) | **405** — deactivate instead |
+| Catalog item | `PATCH /api/catalog/:id` (sku, name, description, category, unit, unit_price cents, preferred_supplier_id, lead_time_days, image_url, line_type, service_basis, status) | `active` \| `inactive` (also `PATCH /api/catalog/:id/status`) | **405** — deactivate instead |
 
 List filters:
 

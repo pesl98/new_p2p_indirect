@@ -1,5 +1,5 @@
 import { asCents, formatCents, toQty } from './money.js';
-import { isServiceLine } from './lineType.js';
+import { isServiceLine, quantityPhrase } from './lineType.js';
 
 /**
  * Price tolerance for 3-way match: 1% of the PO unit price in cents,
@@ -69,7 +69,10 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
       );
     }
     if (status !== 'fail' && claimedQty < poOrderedQty && cumulativeInvoicedQty < poOrderedQty) {
-      messages.push(`Partial billing: ${cumulativeInvoicedQty} of ${poOrderedQty} units billed.`);
+      const noun = poItem.service_basis
+        ? quantityPhrase(poItem.service_basis, poOrderedQty).replace(/^\d+\s/, '')
+        : 'units';
+      messages.push(`Partial billing: ${cumulativeInvoicedQty} of ${poOrderedQty} ${noun} billed.`);
     }
 
     if (absPriceDiff === 0) {
@@ -96,10 +99,11 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     }
 
     if (messages.length === 0) {
+      const claimed = quantityPhrase(serviceLine ? poItem.service_basis : null, claimedQty);
       messages.push(
         serviceLine
-          ? `Exact SES-backed match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
-          : `Exact match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
+          ? `Exact SES-backed match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
+          : `Exact match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
       );
     }
 

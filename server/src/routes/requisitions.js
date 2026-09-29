@@ -2,7 +2,7 @@ import express from 'express';
 import { insertApprovalChain } from '../approvalPolicy.js';
 import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
-import { normalizeLineType } from '../lineType.js';
+import { normalizeLineType, resolveServiceBasis } from '../lineType.js';
 import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
 import { assertActiveCatalogItem, assertActiveSupplierForBuyer } from '../masterData.js';
 import {
@@ -213,14 +213,15 @@ router.post('/', async (req, res) => {
 
       // Insert line items
       const insertItem = db.prepare(`
-        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type, service_basis)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const item of items) {
         const qty = toQty(item.quantity);
         const unitPrice = asCents(item.unit_price);
         const category = item.category || 'Office Supplies';
+        const lineType = normalizeLineType(item.line_type, category);
         await insertItem.run(
           prId,
           item.catalog_item_id || null,
@@ -230,7 +231,8 @@ router.post('/', async (req, res) => {
           unitPrice,
           lineTotalCents(qty, unitPrice),
           item.estimated_supplier_id || 1,
-          normalizeLineType(item.line_type, category)
+          lineType,
+          resolveServiceBasis(item.service_basis, lineType)
         );
       }
 

@@ -216,6 +216,7 @@ test('contracts lifecycle and renewal generator', async (t) => {
     assert.equal(prItems[0].unit_price, 54000);
     assert.equal(prItems[0].total_price, 540000);
     assert.equal(prItems[0].line_type, 'service');
+    assert.equal(prItems[0].service_basis, null);
     assert.equal(prItems[0].estimated_supplier_id, 1);
 
     const approvals = await db.prepare(

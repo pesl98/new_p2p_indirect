@@ -82,7 +82,8 @@ router.get('/:id', async (req, res) => {
         poi.quantity as ordered_quantity,
         poi.unit_price,
         poi.quantity_accepted as po_quantity_accepted,
-        poi.line_type
+        poi.line_type,
+        poi.service_basis
       FROM service_entry_sheet_items si
       JOIN po_items poi ON si.po_item_id = poi.id
       WHERE si.ses_id = ?

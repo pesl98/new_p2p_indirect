@@ -1,6 +1,6 @@
 import express from 'express';
 import { asCents } from '../money.js';
-import { normalizeLineType } from '../lineType.js';
+import { normalizeLineType, resolveServiceBasis } from '../lineType.js';
 import {
   MasterDataError,
   assertAssignableSupplier,
@@ -95,7 +95,7 @@ router.post('/', async (req, res) => {
     const db = req.db;
     const {
       sku, name, description, category, unit, unit_price,
-      preferred_supplier_id, lead_time_days, image_url, line_type, status
+      preferred_supplier_id, lead_time_days, image_url, line_type, service_basis, status
     } = req.body;
     if (!sku || !String(sku).trim()) {
       throw new MasterDataError('SKU is required', 400);
@@ -107,15 +107,16 @@ router.post('/', async (req, res) => {
       throw new MasterDataError('Category is required', 400);
     }
     const resolvedType = normalizeLineType(line_type, category);
+    const resolvedBasis = resolveServiceBasis(service_basis, resolvedType);
     const resolvedStatus = normalizeCatalogStatus(status) || 'active';
     const preferred = preferred_supplier_id ? await assertAssignableSupplier(db, preferred_supplier_id) : null;
 
     const stmt = await db.prepare(`
       INSERT INTO catalog_items (
         sku, name, description, category, unit, unit_price,
-        preferred_supplier_id, lead_time_days, image_url, line_type, status
+        preferred_supplier_id, lead_time_days, image_url, line_type, service_basis, status
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     let result;
     try {
@@ -130,6 +131,7 @@ router.post('/', async (req, res) => {
         lead_time_days || 3,
         image_url || '📦',
         resolvedType,
+        resolvedBasis,
         resolvedStatus
       );
     } catch (error) {
@@ -168,6 +170,10 @@ async function applyCatalogPatch(db, id, body) {
     })
     : null;
 
+  const nextLineType = body.line_type !== undefined
+    ? normalizeLineType(body.line_type, nextCategory)
+    : current.line_type;
+  const basisInput = body.service_basis !== undefined ? body.service_basis : current.service_basis;
   const next = {
     sku: nextSku,
     name: nextName,
@@ -180,9 +186,8 @@ async function applyCatalogPatch(db, id, body) {
       ? Number(body.lead_time_days)
       : current.lead_time_days,
     image_url: body.image_url !== undefined ? (body.image_url || '📦') : current.image_url,
-    line_type: body.line_type !== undefined
-      ? normalizeLineType(body.line_type, nextCategory)
-      : current.line_type,
+    line_type: nextLineType,
+    service_basis: resolveServiceBasis(basisInput, nextLineType),
     status: body.status !== undefined
       ? (normalizeCatalogStatus(body.status) || current.status || 'active')
       : (current.status || 'active')
@@ -192,7 +197,7 @@ async function applyCatalogPatch(db, id, body) {
     await db.prepare(`
       UPDATE catalog_items
       SET sku = ?, name = ?, description = ?, category = ?, unit = ?, unit_price = ?,
-          preferred_supplier_id = ?, lead_time_days = ?, image_url = ?, line_type = ?, status = ?
+          preferred_supplier_id = ?, lead_time_days = ?, image_url = ?, line_type = ?, service_basis = ?, status = ?
       WHERE id = ?
     `).run(
       next.sku,
@@ -205,6 +210,7 @@ async function applyCatalogPatch(db, id, body) {
       next.lead_time_days,
       next.image_url,
       next.line_type,
+      next.service_basis,
       next.status,
       id
     );

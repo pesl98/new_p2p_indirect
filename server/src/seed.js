@@ -142,6 +142,8 @@ await db.transaction(async () => {
   await insertCatalog.run('SKU-SRV-001', 'Enterprise UX Audit & Design System Sprint', 'Two-week dedicated product design sprint and component audit', 'Consulting & Professional Services', 'sprint', 850000, 5, 14, '📐');
   await insertCatalog.run('SKU-SRV-002', 'SOC 2 Type II Annual Security Penetration Test', 'Full external threat simulation, vulnerability assessment, and report', 'Consulting & Professional Services', 'engagement', 1250000, 5, 21, '🛡️');
   await insertCatalog.run('SKU-SRV-003', 'Executive Team Coaching & Alignment Workshop', 'Two-day facilitator-led offsite strategy alignment workshop', 'Consulting & Professional Services', 'event', 620000, 5, 10, '👥');
+  await insertCatalog.run('SKU-SRV-004', 'Senior Consultant — Hourly Advisory', 'Time-based professional services billed by the hour', 'Consulting & Professional Services', 'hour', 18500, 5, 5, '⏱️');
+  await insertCatalog.run('SKU-SRV-005', 'On-site Implementation Day', 'One consultant on site for a day, billed by the day', 'Consulting & Professional Services', 'day', 145000, 5, 7, '📅');
 
   await db.exec(`
     UPDATE catalog_items
@@ -151,13 +153,18 @@ await db.transaction(async () => {
       'Software & Cloud',
       'Marketing & Events',
       'Travel & Subscriptions'
-    )
+    );
+    UPDATE catalog_items SET service_basis = 'lump_sum'
+      WHERE sku IN ('SKU-SRV-001', 'SKU-SRV-002', 'SKU-SRV-003');
+    UPDATE catalog_items SET service_basis = 'hours' WHERE sku = 'SKU-SRV-004';
+    UPDATE catalog_items SET service_basis = 'days' WHERE sku = 'SKU-SRV-005';
   `);
 
   // 6. Purchase Requisitions & Items
   // Document trail demos:
   //   PR-2026-001 — complete goods path: PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid
-  //   PR-2026-005 — complete service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched)
+  //   PR-2026-005 — complete lump-sum service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched, no GRN)
+  //   PR-2026-011 — draft time-based service (16 hours + 2 days). Accept on SES, not a GRN.
   //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
   // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay).
   // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × $749.00 = $1,498.00.
@@ -228,7 +235,10 @@ await db.transaction(async () => {
       'Software & Cloud',
       'Marketing & Events',
       'Travel & Subscriptions'
-    )
+    );
+    UPDATE requisition_items
+    SET service_basis = 'lump_sum'
+    WHERE line_type = 'service' AND category = 'Consulting & Professional Services';
   `);
 
   // 7. Approval Requests
@@ -606,6 +616,9 @@ await db.transaction(async () => {
       'Marketing & Events',
       'Travel & Subscriptions'
     );
+    UPDATE po_items
+    SET service_basis = 'lump_sum'
+    WHERE line_type = 'service' AND category = 'Consulting & Professional Services';
     UPDATE po_items SET quantity_accepted = 1 WHERE id = 3;
   `);
 
@@ -980,8 +993,8 @@ await db.transaction(async () => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertContractItem = db.prepare(`
-    INSERT INTO contract_items (contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO contract_items (contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type, service_basis)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const figEnd = utcYmdOffset(20);
@@ -990,16 +1003,16 @@ await db.transaction(async () => {
   const apexEnd = utcYmdOffset(120);
 
   await insertContract.run(1, 'CNT-2026-001', 2, 1, 'Figma Enterprise Organization Subscription', 'Software & Cloud', utcYmdOffset(-345), figEnd, 30, 540000, 1, 'active', 'Annual enterprise tier with unlimited design workspaces. 30 days written notice required.');
-  await insertContractItem.run(1, 5, 'Figma Organization Annual User License', 10, 54000, 540000, 'service');
+  await insertContractItem.run(1, 5, 'Figma Organization Annual User License', 10, 54000, 540000, 'service', null);
 
   await insertContract.run(2, 'CNT-2026-002', 2, 2, 'Slack Enterprise Grid Annual Agreement', 'Software & Cloud', utcYmdOffset(-275), slackEnd, 60, 900000, 1, 'active', 'Enterprise grid corporate communications. 60 days advance cancellation notice.');
-  await insertContractItem.run(2, 6, 'Slack Enterprise Grid Annual Subscription', 50, 18000, 900000, 'service');
+  await insertContractItem.run(2, 6, 'Slack Enterprise Grid Annual Subscription', 50, 18000, 900000, 'service', null);
 
   await insertContract.run(3, 'CNT-2026-003', 4, 3, 'CleanPro Commercial Facilities & Janitorial Master Agreement', 'Facilities & MRO', utcYmdOffset(-357), cleanEnd, 30, 1200000, 1, 'active', 'Daily commercial facility cleaning and maintenance across HQ wings.');
-  await insertContractItem.run(3, null, 'Annual Comprehensive Facility Cleaning & Janitorial Retainer', 1, 1200000, 1200000, 'service');
+  await insertContractItem.run(3, null, 'Annual Comprehensive Facility Cleaning & Janitorial Retainer', 1, 1200000, 1200000, 'service', 'lump_sum');
 
   await insertContract.run(4, 'CNT-2026-004', 5, 1, 'Apex Strategic Design & UX On-Demand Retainer', 'Consulting & Professional Services', utcYmdOffset(-250), apexEnd, 30, 1700000, 0, 'active', 'Bi-weekly sprint design advisory and product design system support.');
-  await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service');
+  await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service', 'lump_sum');
 
   // Live auto-assign walkthrough: Alice's extra Figma seat is already proposed against
   // CNT-2026-001 so Bob (or Priya via the seeded OOO delegation) can allow/refuse.
@@ -1019,6 +1032,33 @@ await db.transaction(async () => {
   await db.prepare(`UPDATE requisition_items SET line_type = 'service' WHERE requisition_id = 10`).run();
   await insertApproval.run(10, 2, 1, 'pending', null, null);
 
+  // Time-based service draft (hours + days). Not approved, so it does not move budget.
+  // Close it later with a service entry sheet — there is no GRN on this path.
+  await insertPR.run(
+    11,
+    'PR-2026-011',
+    1,
+    2,
+    'draft',
+    586000,
+    'Apex advisory for the SOC 2 remediation follow-up: 16 hours plus 2 on-site days. Service lines are accepted on a service entry sheet, not a goods receipt.',
+    '2026-10-30',
+    'Medium',
+    '0 days'
+  );
+  await insertPRItem.run(11, 20, 'Senior Consultant — Hourly Advisory', 'Consulting & Professional Services', 16, 18500, 296000, 5);
+  await insertPRItem.run(11, 21, 'On-site Implementation Day', 'Consulting & Professional Services', 2, 145000, 290000, 5);
+  await db.prepare(`
+    UPDATE requisition_items
+    SET line_type = 'service', service_basis = 'hours'
+    WHERE requisition_id = 11 AND catalog_item_id = 20
+  `).run();
+  await db.prepare(`
+    UPDATE requisition_items
+    SET line_type = 'service', service_basis = 'days'
+    WHERE requisition_id = 11 AND catalog_item_id = 21
+  `).run();
+
   // 12. Audit Logs
   const insertAudit = db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
@@ -1037,7 +1077,7 @@ await db.transaction(async () => {
   await insertAudit.run('requisition', 5, 'APPROVED', 'David Miller', 'Final approval and ITE budget commit for PR-2026-005', '-9 days');
   await insertAudit.run('purchase_order', 3, 'ISSUED', 'Carol Zhang', 'PO-2026-003 issued to Apex Advisory & Digital', '-9 days');
   await insertAudit.run('service_entry_sheet', 1, 'CREATED', 'Alice Chen', 'SES-2026-001 recorded acceptance of SOC 2 engagement', '-2 days');
-  await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003 (1 unit)', '-2 days');
+  await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003: service delivered (1 lump sum).', '-2 days');
   await insertAudit.run('invoice', 3, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-AAD-5501 SES-backed match passed (PO+SES+invoice)', '-1 days');
   await insertAudit.run('invoice', 4, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-7701 flagged price_variance (400¢ over PO)', '-1 days');
   await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '0 days');

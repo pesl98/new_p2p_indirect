@@ -1,6 +1,6 @@
 import { nextDocumentNumber } from './docNumbers.js';
 import { formatCents, asCents } from './money.js';
-import { normalizeLineType } from './lineType.js';
+import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 
 export class PurchaseOrderError extends Error {
   constructor(message, statusCode = 400) {
@@ -231,9 +231,9 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
     const insertPOItem = db.prepare(`
       INSERT INTO po_items (
         po_id, requisition_item_id, item_description, category, quantity,
-        unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type
+        unit_price, total_price, quantity_received, quantity_accepted, quantity_invoiced, line_type, service_basis
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
     `);
 
     for (const supplierId of supplierIds) {
@@ -264,6 +264,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
       const poId = Number(poResult.lastInsertRowid);
 
       for (const item of items) {
+        const lineType = normalizeLineType(item.line_type, item.category);
         await insertPOItem.run(
           poId,
           item.id,
@@ -272,7 +273,8 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
           item.quantity,
           item.unit_price,
           item.total_price,
-          normalizeLineType(item.line_type, item.category)
+          lineType,
+          resolveServiceBasis(item.service_basis, lineType)
         );
       }
 

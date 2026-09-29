@@ -1,6 +1,6 @@
 import { nextDocumentNumber } from './docNumbers.js';
 import { formatCents, lineTotalCents, requireIntegerCents, toQty } from './money.js';
-import { normalizeLineType } from './lineType.js';
+import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { insertApprovalChain } from './approvalPolicy.js';
 
 export class ContractError extends Error {
@@ -143,13 +143,15 @@ function parseContractItems(items, category) {
       throw new ContractError(`items[${index}].quantity must be a positive whole number`);
     }
     const unitPrice = centsField(item.unit_price, `items[${index}].unit_price`);
+    const lineType = normalizeLineType(item.line_type, category);
     return {
       catalog_item_id: item.catalog_item_id || null,
       description,
       quantity: qty,
       unit_price: unitPrice,
       total_price: lineTotalCents(qty, unitPrice),
-      line_type: normalizeLineType(item.line_type, category)
+      line_type: lineType,
+      service_basis: resolveServiceBasis(item.service_basis, lineType)
     };
   });
 }
@@ -301,8 +303,8 @@ export async function createContract(db, payload = {}) {
     if (parsedItems.length > 0) {
       const insertItem = db.prepare(`
         INSERT INTO contract_items (
-          contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type, service_basis
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const item of parsedItems) {
@@ -313,7 +315,8 @@ export async function createContract(db, payload = {}) {
           item.quantity,
           item.unit_price,
           item.total_price,
-          item.line_type
+          item.line_type,
+          item.service_basis
         );
       }
     }
@@ -422,14 +425,15 @@ export async function createRenewalRequisition(db, contractId, {
 
     const insertItem = db.prepare(`
       INSERT INTO requisition_items (
-        requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type, service_basis
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     if (contract.items && contract.items.length > 0) {
       for (const item of contract.items) {
         const qty = toQty(item.quantity);
         const unitPrice = centsField(item.unit_price, 'unit_price');
+        const lineType = normalizeLineType(item.line_type, contract.category);
         await insertItem.run(
           prId,
           item.catalog_item_id || null,
@@ -439,10 +443,12 @@ export async function createRenewalRequisition(db, contractId, {
           unitPrice,
           lineTotalCents(qty, unitPrice),
           contract.supplier_id,
-          normalizeLineType(item.line_type, contract.category)
+          lineType,
+          resolveServiceBasis(item.service_basis, lineType)
         );
       }
     } else {
+      const lineType = normalizeLineType('service', contract.category);
       await insertItem.run(
         prId,
         null,
@@ -452,7 +458,8 @@ export async function createRenewalRequisition(db, contractId, {
         acv,
         acv,
         contract.supplier_id,
-        normalizeLineType('service', contract.category)
+        lineType,
+        resolveServiceBasis('lump_sum', lineType)
       );
     }
 
