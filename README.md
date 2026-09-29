@@ -52,7 +52,8 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
 
 5. **Service Entry Sheets (SES)**
    - Acceptance flow for **service** PO lines (consulting, SaaS, marketing): draft → submitted → accepted/rejected.
-   - Line-by-line accepted quantity; amount is qty × PO unit price in integer cents. Numbered `SES-YYYY-NNN`.
+   - A service line is a **lump sum**, **hours**, or **days** (or a legacy unit quantity such as seats). Amount is qty × rate in integer cents.
+   - Line-by-line accepted quantity; amount is qty × PO unit price in integer cents. Numbered `SES-YYYY-NNN`. Acceptance records who accepted, when, and that the service was delivered. No GRN.
    - Accepting an SES increments `po_items.quantity_accepted` (parallel to GRN `quantity_received`).
    - **Over-acceptance is blocked (HTTP 400)** unless `allow_over_acceptance: true` (audited exception).
 

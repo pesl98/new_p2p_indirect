@@ -184,7 +184,7 @@ Each subsection is **what ships**, then **known limits**. Seed document numbers 
 **Shipped**
 
 - Draft PR with catalog lines and/or ad-hoc/custom lines. Numbered `PR-YYYY-NNN` (MAX-suffix). Cost center, needed-by, justification, priority (`Low` | `Medium` | `High` | `Urgent`).
-- Line money: `qty × unit_price` in integer cents. Quantities are whole units.
+- Line money: `qty × unit_price` in integer cents. Quantities are whole units. A service line may be a lump sum, hours, or days (see [§5.5](#55-grn--ses--dual-match)).
 - Submit (`POST /api/requisitions/:id/submit`) inserts the sequential approval chain (`insertApprovalChain`). Status: `draft` → `pending_approval` (schema CHECK also lists `submitted`; the API writes `pending_approval`).
 - **Contract auto-assign** (`server/src/contractAssignment.js`) after lines exist on create, and on submit of a draft still in `contract_use_status = none`. Fail-soft: a matcher exception **never** blocks PR create.
 
@@ -280,6 +280,23 @@ Steps are **sequential, not parallel**:
 
 ### 5.5 GRN / SES / dual match
 
+**Goods vs service**
+
+A requisition or PO line is **goods** or **service** (`line_type`). Category suggests the default (consulting, software, marketing, travel → service; hardware, office, facilities, and anything else → goods). An explicit `line_type` on create wins, and that stored type is what GRN, service acceptance, and match use. Goods behavior is unchanged: the line is closed by a goods receipt, and invoice match is PO vs GRN vs invoice.
+
+A service line may also set `service_basis`. Money stays integer cents (`quantity × unit_price`):
+
+| Basis | Quantity | Unit price |
+| --- | --- | --- |
+| `lump_sum` | Whole number of fixed-fee occurrences (usually 1) | Fee for one occurrence |
+| `hours` | Whole hours | Rate per hour |
+| `days` | Whole days | Rate per day |
+| omitted | Legacy unit quantity (software seats, licenses) | Price per unit |
+
+Services do **not** go through goods receipt. A GRN that includes a service line is **400**. The line is closed by a service entry sheet acceptance: status `accepted` records who accepted (`decided_by`), when (`decided_at`), and that the service was delivered (`quantity_accepted`). Invoice match uses that accepted quantity and does not require a GRN.
+
+Demo: **PR-2026-005** → **PO-2026-003** → **SES-2026-001** → **INV-AAD-5501** is the completed lump-sum consulting path (no GRN). **PR-2026-011** is a draft with 16 hours and 2 days so the time-based path is visible. Seat-based software (Figma, Slack) stays a service with no basis.
+
 **Goods receipt (GRN)** — goods lines only
 
 - Line-by-line qty received, condition (`good` / `damaged` / `partial` / `incorrect_item`), carrier / delivery slip. Numbered `GRN-YYYY-NNN`.
@@ -311,7 +328,7 @@ Overall `match_status`: `perfect_match` | `tolerated_match` | `quantity_variance
 
 **Limits**
 
-- SES is quantity-based; not free-form T&M amount match.
+- Hours and days are still whole quantities times a cent rate. There is no free-form dollar amount that ignores quantity.
 - `tolerated_match` invoices are already `matched` and are **not** hard-queued on the Exception Workbench.
 
 ### 5.6 Exception workbench + Buyer Inbox

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
-import { isServiceLine, lineTypeLabel } from '../lineType';
+import { formatLineQuantity, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 import ChangeOrderModal from '../components/ChangeOrderModal';
 
@@ -353,14 +353,14 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         <td className="py-2.5 px-3 font-medium text-slate-900">{item.item_description}</td>
                         <td className="py-2.5 px-3">
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${service ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
-                            {lineTypeLabel(item)}
+                            {lineTypeWithBasisLabel(item)}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-slate-500">{item.category}</td>
-                        <td className="py-2.5 px-3 text-center font-semibold">{item.quantity}</td>
+                        <td className="py-2.5 px-3 text-center font-semibold">{formatLineQuantity(item)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <span className={`font-semibold ${fulfilled >= item.quantity ? 'text-emerald-700' : 'text-amber-600'}`}>
-                            {fulfilled} {service ? 'SES' : 'GRN'}
+                            {formatLineQuantity({ quantity: fulfilled, service_basis: service ? item.service_basis : null })} {service ? 'SES' : 'GRN'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">${formatMoney(item.unit_price)}</td>

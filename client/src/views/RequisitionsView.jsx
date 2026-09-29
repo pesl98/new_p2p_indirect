@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, toCents } from '../money';
-import { lineTypeFromCategory, lineTypeLabel } from '../lineType';
+import { formatLineQuantity, lineTypeFromCategory, lineTypeWithBasisLabel, serviceRateLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 
 export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
@@ -48,6 +48,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
   // Custom item inputs
   const [customDesc, setCustomDesc] = useState('');
   const [customCat, setCustomCat] = useState('Office Supplies');
+  const [customLineType, setCustomLineType] = useState('goods');
+  const [customBasis, setCustomBasis] = useState('');
   const [customPrice, setCustomPrice] = useState('');
   const [customQty, setCustomQty] = useState(1);
   const [customSupplierId, setCustomSupplierId] = useState(1);
@@ -132,6 +134,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
           item_description: catItem.name,
           category: catItem.category,
           line_type: catItem.line_type || lineTypeFromCategory(catItem.category),
+          service_basis: catItem.service_basis || null,
           quantity: 1,
           unit_price: catItem.unit_price,
           estimated_supplier_id: catItem.preferred_supplier_id
@@ -140,15 +143,33 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
     }
   };
 
+  const handleCustomCategory = (category) => {
+    const nextType = lineTypeFromCategory(category);
+    setCustomCat(category);
+    setCustomLineType(nextType);
+    setCustomBasis(nextType === 'service' ? (customBasis || 'lump_sum') : '');
+  };
+
+  const handleCustomLineType = (lineType) => {
+    setCustomLineType(lineType);
+    if (lineType === 'service') {
+      setCustomBasis(customBasis || 'lump_sum');
+    } else {
+      setCustomBasis('');
+    }
+  };
+
   const handleAddCustomItem = () => {
     if (!customDesc || !customPrice) return;
+    const lineType = customLineType === 'service' ? 'service' : 'goods';
     setCartItems([
       ...cartItems,
       {
         catalog_item_id: null,
         item_description: customDesc,
         category: customCat,
-        line_type: lineTypeFromCategory(customCat),
+        line_type: lineType,
+        service_basis: lineType === 'service' ? (customBasis || 'lump_sum') : null,
         quantity: Number(customQty) || 1,
         unit_price: toCents(customPrice),
         estimated_supplier_id: Number(customSupplierId)
@@ -505,7 +526,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     <div className="grid grid-cols-2 gap-2">
                       <select
                         value={customCat}
-                        onChange={(e) => setCustomCat(e.target.value)}
+                        onChange={(e) => handleCustomCategory(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
                       >
                         <option value="IT Hardware">IT Hardware</option>
@@ -525,16 +546,43 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={customLineType}
+                        onChange={(e) => handleCustomLineType(e.target.value)}
+                        className="p-2 border border-slate-200 rounded-lg text-xs"
+                      >
+                        <option value="goods">Goods</option>
+                        <option value="service">Service</option>
+                      </select>
+                      {customLineType === 'service' ? (
+                        <select
+                          value={customBasis || 'lump_sum'}
+                          onChange={(e) => setCustomBasis(e.target.value)}
+                          className="p-2 border border-slate-200 rounded-lg text-xs"
+                        >
+                          <option value="lump_sum">Lump sum</option>
+                          <option value="hours">Hours</option>
+                          <option value="days">Days</option>
+                        </select>
+                      ) : (
+                        <div className="p-2 text-[11px] text-slate-500 flex items-center">Received on a GRN</div>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
                       <input
                         type="number"
-                        placeholder="Unit Price ($)"
+                        placeholder={customLineType === 'service'
+                          ? (customBasis === 'hours' ? 'Rate per hour ($)' : customBasis === 'days' ? 'Rate per day ($)' : 'Lump sum ($)')
+                          : 'Unit Price ($)'}
                         value={customPrice}
                         onChange={(e) => setCustomPrice(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
                       />
                       <input
                         type="number"
-                        placeholder="Quantity"
+                        placeholder={customLineType === 'service'
+                          ? (customBasis === 'hours' ? 'Hours' : customBasis === 'days' ? 'Days' : 'Occurrences')
+                          : 'Quantity'}
                         value={customQty}
                         min="1"
                         onChange={(e) => setCustomQty(e.target.value)}
@@ -649,11 +697,13 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                               <div className="font-semibold text-slate-900">
                                 {item.item_description}
                                 <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.line_type === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
-                                  {lineTypeLabel(item)}
+                                  {lineTypeWithBasisLabel(item)}
                                 </span>
                               </div>
                               <div className="text-[11px] text-slate-500">
-                                {item.quantity} × ${formatMoney(item.unit_price)} = ${formatMoney(item.quantity * item.unit_price)}
+                                {formatLineQuantity(item)} × ${formatMoney(item.unit_price)}
+                                {serviceRateLabel(item.service_basis) ? ` ${serviceRateLabel(item.service_basis)}` : ''}
+                                {' '}= ${formatMoney(item.quantity * item.unit_price)}
                               </div>
                             </div>
                             <button
@@ -822,7 +872,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           <td className="py-2 px-3 font-medium text-slate-900">
                             {item.item_description}
                             <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.line_type === 'service' || lineTypeFromCategory(item.category) === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
-                              {lineTypeLabel(item)}
+                              {lineTypeWithBasisLabel(item)}
                             </span>
                           </td>
                           <td className="py-2 px-3 text-slate-500">{item.category}</td>
@@ -831,7 +881,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                               <span className="text-rose-600">Unassigned</span>
                             )}
                           </td>
-                          <td className="py-2 px-3">{item.quantity}</td>
+                          <td className="py-2 px-3">{formatLineQuantity(item)}</td>
                           <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>
                           <td className="py-2 px-3 text-right font-bold text-slate-900">${formatMoney(item.total_price)}</td>
                         </tr>

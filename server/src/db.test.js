@@ -334,6 +334,7 @@ describe('Turso/SQLite schema migrations', () => {
     await applySchema(db);
 
     assert.ok(columnNames(db, 'catalog_items').includes('status'));
+    assert.ok(columnNames(db, 'catalog_items').includes('service_basis'));
     assert.equal(
       db.prepare(`SELECT status FROM catalog_items WHERE id = 1`).get().status,
       'active'
