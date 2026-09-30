@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
-import { formatLineQuantity, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
+import { formatLineQuantity, isConsignmentLine, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 import ChangeOrderModal from '../components/ChangeOrderModal';
 
@@ -169,7 +169,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         <div className="text-[10px] text-slate-400">{po.supplier_code}</div>
                       </td>
                       <td className="py-3 px-4 text-slate-600 font-mono">
-                        {po.pr_number || 'Direct Order'}
+                        {po.order_source === 'consignment' ? 'Consignment' : (po.pr_number || 'Direct Order')}
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-900 text-sm">
                         ${formatMoney(po.total_amount)}
@@ -184,7 +184,13 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
                           {fulfilled} of {po.total_qty_ordered} units fulfilled ({pct}%)
-                          {(po.service_line_count > 0 && po.goods_line_count > 0) ? ' · mixed PO' : po.service_line_count > 0 ? ' · SES' : ' · GRN'}
+                          {po.order_source === 'consignment'
+                            ? ' · consignment'
+                            : (po.service_line_count > 0 && po.goods_line_count > 0)
+                              ? ' · mixed PO'
+                              : po.service_line_count > 0
+                                ? ' · SES'
+                                : ' · GRN'}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-slate-500">{po.issue_date}</td>
@@ -347,7 +353,12 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   <tbody className="divide-y divide-slate-100">
                     {selectedPO.items?.map((item) => {
                       const service = isServiceLine(item);
-                      const fulfilled = service ? (item.quantity_accepted || 0) : item.quantity_received;
+                      const consignment = isConsignmentLine(item);
+                      const fulfilled = service
+                        ? (item.quantity_accepted || 0)
+                        : consignment
+                          ? (item.quantity_consumed || 0)
+                          : item.quantity_received;
                       return (
                       <tr key={item.id}>
                         <td className="py-2.5 px-3 font-medium text-slate-900">{item.item_description}</td>
@@ -360,7 +371,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         <td className="py-2.5 px-3 text-center font-semibold">{formatLineQuantity(item)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <span className={`font-semibold ${fulfilled >= item.quantity ? 'text-emerald-700' : 'text-amber-600'}`}>
-                            {formatLineQuantity({ quantity: fulfilled, service_basis: service ? item.service_basis : null })} {service ? 'SES' : 'GRN'}
+                            {formatLineQuantity({ quantity: fulfilled, service_basis: service ? item.service_basis : null })} {service ? 'SES' : consignment ? 'drawn' : 'GRN'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">${formatMoney(item.unit_price)}</td>
@@ -387,7 +398,9 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                 <div>
                   <span className="font-bold text-slate-700 block mb-1">Standard Purchase Terms:</span>
                   <p className="leading-relaxed">
-                    Goods are received on a GRN; services are accepted on a Service Entry Sheet. Invoices must reference Purchase Order #{selectedPO.po_number}. Goods match PO+GRN+invoice; services match PO+SES+invoice.
+                    {selectedPO.order_source === 'consignment'
+                      ? `This PO is a consignment draw-down. Supplier-owned stock was issued into company use. Invoice match uses the drawn quantity. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
+                      : `Goods are received on a GRN; services are accepted on a Service Entry Sheet. Invoices must reference Purchase Order #${selectedPO.po_number}. Goods match PO+GRN+invoice; services match PO+SES+invoice.`}
                   </p>
                 </div>
                 <div className="border border-dashed border-slate-300 rounded-xl p-3 flex flex-col justify-between">

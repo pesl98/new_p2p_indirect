@@ -178,6 +178,8 @@ async function loadMatchContext(db, invoiceId, poId) {
       poi.total_price as po_total_price,
       poi.quantity_received as po_quantity_received,
       poi.quantity_accepted as po_quantity_accepted,
+      poi.quantity_consumed as po_quantity_consumed,
+      poi.receipt_basis as receipt_basis,
       poi.line_type as po_line_type,
       poi.item_description as po_description
     FROM invoice_items ii
@@ -186,7 +188,7 @@ async function loadMatchContext(db, invoiceId, poId) {
   `).all(invoiceId);
 
   const matchResults = await db.prepare(`
-    SELECT mr.*, poi.item_description, poi.line_type
+    SELECT mr.*, poi.item_description, poi.line_type, poi.receipt_basis
     FROM match_results mr
     LEFT JOIN po_items poi ON mr.po_item_id = poi.id
     WHERE mr.invoice_id = ?

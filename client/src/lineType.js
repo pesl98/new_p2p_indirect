@@ -18,6 +18,18 @@ export function isServiceLine(item) {
   return lineTypeOf(item) === 'service';
 }
 
+export function isConsignmentLine(item) {
+  return item?.receipt_basis === 'consignment';
+}
+
+/** Short receipt-basis label for match and invoice lines. */
+export function receiptBasisLabel(item) {
+  if (!item) return 'GRN';
+  if (item.line_type === 'service' || item.po_line_type === 'service') return 'SES';
+  if (item.receipt_basis === 'consignment') return 'consignment';
+  return 'GRN';
+}
+
 export function lineTypeLabel(itemOrType) {
   const type = typeof itemOrType === 'string' ? itemOrType : lineTypeOf(itemOrType);
   return type === 'service' ? 'Service' : 'Goods';

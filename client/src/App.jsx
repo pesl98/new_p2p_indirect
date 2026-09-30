@@ -6,6 +6,7 @@ import RequisitionsView from './views/RequisitionsView';
 import ApprovalsView from './views/ApprovalsView';
 import PurchaseOrdersView from './views/PurchaseOrdersView';
 import GoodsReceiptView from './views/GoodsReceiptView';
+import ConsignmentView from './views/ConsignmentView';
 import ServiceEntrySheetsView from './views/ServiceEntrySheetsView';
 import InvoicesMatchingView from './views/InvoicesMatchingView';
 import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
@@ -283,6 +284,14 @@ export default function App() {
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
               focusId={navFocus?.focusId}
+            />
+          )}
+
+          {activeTab === 'consignment' && (
+            <ConsignmentView
+              currentUser={currentUser}
+              onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
             />
           )}
 

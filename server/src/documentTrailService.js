@@ -43,6 +43,7 @@ const KIND_ORDER = {
   purchase_order: 4,
   change_order: 5,
   goods_receipt: 6,
+  consignment_issue: 6,
   service_entry_sheet: 7,
   invoice: 8,
   exception: 9,
@@ -89,6 +90,8 @@ function tabForKind(kind) {
       return 'purchase_orders';
     case 'goods_receipt':
       return 'goods_receipt';
+    case 'consignment_issue':
+      return 'consignment';
     case 'service_entry_sheet':
       return 'service_entry';
     case 'invoice':
@@ -449,6 +452,35 @@ async function loadChangeOrderEvents(db, poId) {
     }));
 }
 
+async function loadConsignmentIssues(db, poId) {
+  const rows = await db.prepare(`
+    SELECT
+      ci.*,
+      u.name as issued_by_name,
+      c.sku,
+      c.name as item_name
+    FROM consignment_issues ci
+    JOIN users u ON ci.issued_by = u.id
+    JOIN catalog_items c ON ci.catalog_item_id = c.id
+    WHERE ci.po_id = ?
+    ORDER BY ci.id ASC
+  `).all(poId);
+  return rows.map((row) => ({
+    id: row.id,
+    issue_number: row.issue_number,
+    quantity: row.quantity,
+    unit_price: row.unit_price,
+    amount_cents: row.amount_cents,
+    location_label: row.location_label,
+    issue_date: row.issue_date,
+    notes: row.notes,
+    sku: row.sku,
+    item_name: row.item_name,
+    issued_by_name: row.issued_by_name,
+    created_at: toIsoTimestamp(row.created_at)
+  }));
+}
+
 async function loadPoLineSummary(db, poId) {
   return await db.prepare(`
     SELECT
@@ -465,8 +497,10 @@ async function loadPurchaseOrderBranches(db, poRows) {
     const lines = await loadPoLineSummary(db, po.id);
     const goodsReceipts = await loadGoodsReceipts(db, po.id);
     const serviceEntrySheets = await loadServiceEntrySheets(db, po.id);
+    const consignmentIssues = await loadConsignmentIssues(db, po.id);
     const invoices = await loadInvoiceRows(db, po.id);
     const changeOrderEvents = await loadChangeOrderEvents(db, po.id);
+    const consignmentDrawdown = po.order_source === 'consignment' || consignmentIssues.length > 0;
     return {
       id: po.id,
       po_number: po.po_number,
@@ -487,11 +521,15 @@ async function loadPurchaseOrderBranches(db, poRows) {
       revision: po.revision ?? 0,
       change_order_count: po.change_order_count ?? 0,
       change_order_events: changeOrderEvents,
+      order_source: po.order_source || 'standard',
       goods_receipts: goodsReceipts,
       service_entry_sheets: serviceEntrySheets,
+      consignment_issues: consignmentIssues,
       invoices,
       receiving: {
-        goods: goodsReceipts.length > 0 ? 'recorded' : ((lines?.goods_line_count || 0) > 0 ? 'not_started' : 'not_applicable'),
+        goods: consignmentDrawdown
+          ? 'consignment'
+          : (goodsReceipts.length > 0 ? 'recorded' : ((lines?.goods_line_count || 0) > 0 ? 'not_started' : 'not_applicable')),
         services: serviceEntrySheets.length > 0 ? 'recorded' : ((lines?.service_line_count || 0) > 0 ? 'not_started' : 'not_applicable')
       }
     };
@@ -511,7 +549,14 @@ function buildStages({ requisition, approvals, purchaseOrders }) {
   const approvalPending = approvals.some((step) => step.status === 'pending');
   const hasPos = purchaseOrders.length > 0;
   const hasReceiving = purchaseOrders.some(
-    (po) => po.goods_receipts.length > 0 || po.service_entry_sheets.length > 0
+    (po) => po.goods_receipts.length > 0
+      || po.service_entry_sheets.length > 0
+      || po.receiving?.goods === 'consignment'
+  );
+  const consignmentOnly = hasReceiving && purchaseOrders.every(
+    (po) => po.receiving?.goods === 'consignment' || (
+      po.goods_receipts.length === 0 && po.service_entry_sheets.length === 0 && (po.goods_line_count || 0) === 0 && (po.service_line_count || 0) === 0
+    )
   );
   const invoices = purchaseOrders.flatMap((po) => po.invoices);
   const hasInvoice = invoices.length > 0;
@@ -542,7 +587,7 @@ function buildStages({ requisition, approvals, purchaseOrders }) {
     },
     {
       key: 'receiving',
-      label: 'GRN / SES',
+      label: consignmentOnly ? 'Consignment issue' : 'GRN / SES',
       status: stageStatus({ complete: hasReceiving, current: false })
     },
     {
@@ -671,6 +716,25 @@ function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents 
         supplier_name: po.supplier_name,
         source: 'audit',
         tab: 'purchase_orders'
+      }));
+    }
+
+    for (const issue of po.consignment_issues || []) {
+      events.push(timelineEvent({
+        id: `consignment_issue:${issue.id}`,
+        kind: 'consignment_issue',
+        entity_type: 'consignment_issue',
+        entity_id: issue.id,
+        number: issue.issue_number,
+        title: 'Consignment issue',
+        status: 'issued',
+        at: toIsoTimestamp(issue.issue_date) || issue.created_at,
+        actor_name: issue.issued_by_name,
+        details: issue.notes || `${issue.quantity} ${issue.item_name || ''} drawn at ${issue.location_label}`.trim(),
+        amount_cents: issue.amount_cents,
+        po_id: po.id,
+        po_number: po.po_number,
+        supplier_name: po.supplier_name
       }));
     }
 

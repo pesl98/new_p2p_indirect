@@ -567,6 +567,37 @@ async function migratePurchaseRequisitionContractLink(database) {
   }
 }
 
+const PURCHASE_ORDERS_ORDER_SOURCE_COLUMN_SQL =
+  `ALTER TABLE purchase_orders ADD COLUMN order_source TEXT NOT NULL DEFAULT 'standard'`;
+
+const PO_ITEMS_RECEIPT_BASIS_COLUMN_SQL =
+  `ALTER TABLE po_items ADD COLUMN receipt_basis TEXT NOT NULL DEFAULT 'grn'`;
+
+const PO_ITEMS_QUANTITY_CONSUMED_COLUMN_SQL =
+  `ALTER TABLE po_items ADD COLUMN quantity_consumed INTEGER NOT NULL DEFAULT 0`;
+
+/**
+ * Existing databases gain consignment balances plus PO columns that mark a
+ * draw-down. schema.sql CREATE TABLE IF NOT EXISTS covers the new tables.
+ * CHECK on order_source / receipt_basis is enforced for new databases;
+ * added columns on older tables use the DEFAULT and application checks.
+ */
+async function migrateConsignmentStock(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('purchase_orders') && !(await tableHasColumn(database, 'purchase_orders', 'order_source'))) {
+    await maybe(database.exec(PURCHASE_ORDERS_ORDER_SOURCE_COLUMN_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'receipt_basis'))) {
+    await maybe(database.exec(PO_ITEMS_RECEIPT_BASIS_COLUMN_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'quantity_consumed'))) {
+    await maybe(database.exec(PO_ITEMS_QUANTITY_CONSUMED_COLUMN_SQL));
+  }
+}
+
 async function migratePurchaseOrderChangeOrders(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -600,6 +631,7 @@ export async function applySchema(database) {
   await migratePurchaseRequisitionContractLink(database);
   await migratePaymentRuns(database);
   await migrateUsersAuth(database);
+  await migrateConsignmentStock(database);
   return database;
 }
 

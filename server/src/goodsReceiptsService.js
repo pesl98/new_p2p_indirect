@@ -1,6 +1,6 @@
 import { toQty } from './money.js';
 import { nextDocumentNumber } from './docNumbers.js';
-import { isServiceLine } from './lineType.js';
+import { isConsignmentLine, isServiceLine } from './lineType.js';
 import { refreshPoFulfillmentStatus } from './poFulfillment.js';
 
 export class GoodsReceiptError extends Error {
@@ -62,6 +62,11 @@ export async function createGoodsReceipt(db, payload) {
       if (isServiceLine(poItem)) {
         throw new GoodsReceiptError(
           `PO line ${poItem.id} (${poItem.item_description}) is a service line. Accept it on a Service Entry Sheet, not a GRN.`
+        );
+      }
+      if (isConsignmentLine(poItem) || po.order_source === 'consignment') {
+        throw new GoodsReceiptError(
+          `PO line ${poItem.id} (${poItem.item_description}) is a consignment draw-down. Supplier-owned stock is issued from Consignment, not received on a GRN.`
         );
       }
 

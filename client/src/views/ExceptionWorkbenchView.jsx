@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, toCents } from '../money';
-import { lineTypeLabel } from '../lineType';
+import { lineTypeLabel, receiptBasisLabel } from '../lineType';
 
 const DISPOSITIONS = [
   {
@@ -323,7 +323,7 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                           {res.ordered_qty} @ ${formatMoney(res.po_unit_price)}
                         </td>
                         <td className="py-2.5 px-3 text-center bg-amber-50/30 font-semibold">
-                          {res.received_qty} {res.line_type === 'service' ? 'SES' : 'GRN'}
+                          {res.received_qty} {receiptBasisLabel(res)}
                         </td>
                         <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">
                           {res.invoiced_qty} @ ${formatMoney(res.invoice_unit_price)}

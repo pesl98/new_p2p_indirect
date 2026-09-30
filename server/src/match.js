@@ -1,5 +1,5 @@
 import { asCents, formatCents, toQty } from './money.js';
-import { isServiceLine, quantityPhrase } from './lineType.js';
+import { isConsignmentLine, isServiceLine, quantityPhrase } from './lineType.js';
 
 /**
  * Price tolerance for 3-way match: 1% of the PO unit price in cents,
@@ -18,7 +18,8 @@ export function priceToleranceCents(poUnitPriceCents) {
  *
  * Goods lines: 3-way (PO vs GRN `quantity_received` vs invoice).
  * Service lines: SES-backed 2-way (PO vs accepted SES `quantity_accepted` vs invoice).
- * Physical GRN is not required for service lines.
+ * Consignment lines: PO vs draw-down `quantity_consumed` vs invoice. GRN is not consulted.
+ * Physical GRN is not required for service lines or consignment draw-downs.
  *
  * Quantity: fail if prior `po_items.quantity_invoiced` + this claim exceeds
  * the line's receipt basis (GRN or SES) or ordered qty. This function must be
@@ -38,11 +39,20 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     if (!poItem) continue;
 
     const serviceLine = isServiceLine(poItem);
+    const consignmentLine = !serviceLine && isConsignmentLine(poItem);
     const claimedQty = toQty(item.quantity_invoiced);
     const invoicedPrice = asCents(item.unit_price);
     const poPrice = asCents(poItem.unit_price);
-    const receiptQty = serviceLine ? toQty(poItem.quantity_accepted) : toQty(poItem.quantity_received);
-    const receiptLabel = serviceLine ? 'accepted on SES' : 'physically received on GRN';
+    const receiptQty = serviceLine
+      ? toQty(poItem.quantity_accepted)
+      : consignmentLine
+        ? toQty(poItem.quantity_consumed)
+        : toQty(poItem.quantity_received);
+    const receiptLabel = serviceLine
+      ? 'accepted on SES'
+      : consignmentLine
+        ? 'drawn from consignment'
+        : 'physically received on GRN';
     const poOrderedQty = toQty(poItem.quantity);
     const priorInvoicedQty = toQty(poItem.quantity_invoiced);
     const cumulativeInvoicedQty = priorInvoicedQty + claimedQty;
@@ -103,7 +113,9 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
       messages.push(
         serviceLine
           ? `Exact SES-backed match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
-          : `Exact match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
+          : consignmentLine
+            ? `Exact consignment match: ${claimed} at $${formatCents(invoicedPrice)} matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.`
+            : `Exact match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
       );
     }
 

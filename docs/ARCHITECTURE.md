@@ -333,7 +333,17 @@ Exception: body includes `allow_over_receipt: true`. The GRN is stored, PO qty r
 
 Partial receipts at or below remaining ordered qty are allowed. Over-receipt is an exception path, not silent.
 
-GRN is goods-only. Posting a service line on a GRN returns **400**.
+GRN is goods-only. Posting a service line on a GRN returns **400**. Posting a consignment draw-down line (`receipt_basis = consignment`) also returns **400**.
+
+## Consignment stock
+
+Supplier-owned inventory at the buyer site, tracked on `consignment_balances` (supplier, catalog goods item, free-text `location_label`, quantity on hand, agreed unit price in cents). There is no location master.
+
+- **Receive** (`POST /api/consignment/receipts`, `CSN-YYYY-NNN`) increases on-hand only. No PO, no GRN, no invoice, and `quantity_received` is not touched.
+- **Issue** (`POST /api/consignment/issues`, `CSI-YYYY-NNN`) decreases on-hand and creates a PO with `order_source = consignment`. The line stores `receipt_basis = consignment` and `quantity_consumed`. `quantity_received` stays 0. PO fulfillment treats the line as received because it was drawn. AP invoices that PO; match uses `quantity_consumed`.
+- Owned stock shown beside consignment is cumulative GRN quantity. The two balances are not added together.
+
+Demo: **CSN-2026-001** (12 sanitizer stands) → **CSI-2026-001** / **PO-2026-015** (4 drawn) → **INV-FCJ-4402**. **CSN-2026-002** is 20 cases of copy paper still on hand.
 
 ## Service entry sheets (SES)
 
@@ -353,7 +363,8 @@ SES is service-only. Posting a goods line on an SES returns **400**.
 
 Receipt basis is per line:
 
-- **Goods:** physically received (`quantity_received` from GRNs)
+- **Goods:** physically received (`quantity_received` from GRNs). Unchanged when `receipt_basis` is `grn` (the default).
+- **Consignment draw-down:** `quantity_consumed`. Physical GRN is not consulted.
 - **Services:** SES-accepted (`quantity_accepted`). Physical GRN is not required and is not consulted.
 
 Quantity fail if:
@@ -528,7 +539,7 @@ Seed: **CNT-2026-001** Figma (10 × $540.00) is the expiring-soon 1-click walkth
 
 ## Document numbers
 
-`PR-` / `PO-` / `GRN-` / `SES-` / `CO-` / `CNT-` / `PAY-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, `co_number`, `contract_number`, and `run_number` are UNIQUE.
+`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, `receipt_number`, `issue_number`, `co_number`, `contract_number`, and `run_number` are UNIQUE.
 
 Invoice numbers are unique per supplier: `UNIQUE(supplier_id, invoice_number)`. The same number from two vendors is allowed.
 

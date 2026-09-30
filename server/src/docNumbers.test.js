@@ -23,6 +23,8 @@ describe('document numbering', () => {
     assert.equal(await nextDocumentNumber(db, 'po', 2026), 'PO-2026-001');
     assert.equal(await nextDocumentNumber(db, 'grn', 2026), 'GRN-2026-001');
     assert.equal(await nextDocumentNumber(db, 'ses', 2026), 'SES-2026-001');
+    assert.equal(await nextDocumentNumber(db, 'csn', 2026), 'CSN-2026-001');
+    assert.equal(await nextDocumentNumber(db, 'csi', 2026), 'CSI-2026-001');
     assert.equal(await nextDocumentNumber(db, 'co', 2026), 'CO-2026-001');
     assert.equal(await nextDocumentNumber(db, 'cnt', 2026), 'CNT-2026-001');
     assert.equal(await nextDocumentNumber(db, 'pay', 2026), 'PAY-2026-001');

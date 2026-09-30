@@ -10,6 +10,9 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'consignment_issues',
+  'consignment_receipts',
+  'consignment_balances',
   'payment_run_items',
   'payment_runs',
   'invoice_duplicate_flags',
@@ -176,6 +179,9 @@ await db.transaction(async () => {
   // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
   // Payment run: INV-WED-4419 + INV-FCJ-9920 are approved and on draft PAY-2026-001.
   // Leave INV-FCJ-8810 as the AP Aging single mark-paid practice invoice.
+  // Consignment: CSN-2026-001 received 12 sanitizer stands (supplier-owned, no GRN).
+  // CSI-2026-001 issued 4 into use as PO-2026-015; INV-FCJ-4402 matches the draw-down.
+  // CSN-2026-002 leaves 20 cases of copy paper on hand at HQ facilities cage for a live issue.
   // Contracts hub: CNT-2026-001 Figma (expiring soon) is the 1-click renewal walkthrough.
   // PR-2026-010 is the auto-assign walkthrough (Figma seat proposed against CNT-2026-001).
   // Do not convert that live renewal onto INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
@@ -564,6 +570,29 @@ await db.transaction(async () => {
   );
   await insertPOItem.run(14, 14, null, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO', 1, 14500, 14500, 1, 1);
 
+  // Consignment draw-down. quantity_received stays 0 — this is not a GRN.
+  // 4 stands × $145.00 = $580.00. On-hand after the issue is 8 (receipt of 12).
+  await db.prepare(`
+    INSERT INTO purchase_orders (
+      id, po_number, requisition_id, supplier_id, created_by, status, total_amount,
+      issue_date, expected_delivery_date, payment_terms, shipping_address, notes, order_source
+    ) VALUES (
+      15, 'PO-2026-015', NULL, 4, 3, 'received', 58000,
+      '2026-09-18', '2026-09-18', 'Net 30', 'HQ facilities cage',
+      'Consignment draw-down CSI-2026-001. Supplier-owned sanitizer stands issued into company use. No GRN.',
+      'consignment'
+    )
+  `).run();
+  await db.prepare(`
+    INSERT INTO po_items (
+      id, po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price,
+      quantity_received, quantity_consumed, quantity_invoiced, line_type, receipt_basis
+    ) VALUES (
+      15, 15, NULL, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO',
+      4, 14500, 58000, 0, 4, 4, 'goods', 'consignment'
+    )
+  `).run();
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -908,6 +937,56 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(12, 14, 'Commercial Touchless Sanitizer & Dispenser Stand', 1, 14500, 14500);
   await insertMatch.run(12, 14, 14, 1, 1, 1, 14500, 14500, 0, 0, 'pass', 'Exact match on quantity (1) and price ($145.00).');
 
+  // Consignment draw-down invoice. Receipt basis is quantity_consumed (4), not a GRN.
+  await insertInvoice.run(
+    13,
+    'INV-FCJ-4402',
+    15,
+    4,
+    '2026-09-20',
+    '2026-10-20',
+    58000,
+    0,
+    58000,
+    'matched',
+    'perfect_match',
+    null,
+    'Consignment match against CSI-2026-001 and PO-2026-015. Four stands drawn from supplier-owned stock. No GRN.'
+  );
+  await insertInvoiceItem.run(13, 15, 'Commercial Touchless Sanitizer & Dispenser Stand', 4, 14500, 58000);
+  await insertMatch.run(
+    13, 15, 15, 4, 4, 4, 14500, 14500, 0, 0, 'pass',
+    'Exact consignment match: 4 units at $145.00 matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.'
+  );
+
+  const sanitizerItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-FAC-003'`).get();
+  const paperItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-OFF-004'`).get();
+  await db.prepare(`
+    INSERT INTO consignment_balances (
+      id, supplier_id, catalog_item_id, location_label, quantity_on_hand, unit_price, notes, status
+    ) VALUES
+      (1, 4, ?, 'HQ facilities cage', 8, 14500, 'Vendor-owned sanitizer stands staged in the facilities cage.', 'active'),
+      (2, 3, ?, 'HQ facilities cage', 20, 5800, 'Vendor-owned copy paper. Not yet drawn into company use.', 'active')
+  `).run(sanitizerItem.id, paperItem.id);
+  await db.prepare(`
+    INSERT INTO consignment_receipts (
+      id, receipt_number, balance_id, supplier_id, catalog_item_id, location_label,
+      quantity, unit_price, received_by, receipt_date, notes
+    ) VALUES
+      (1, 'CSN-2026-001', 1, 4, ?, 'HQ facilities cage', 12, 14500, 3, '2026-09-10', 'Supplier delivered 12 stands. Still owned by FacilityCare.'),
+      (2, 'CSN-2026-002', 2, 3, ?, 'HQ facilities cage', 20, 5800, 3, '2026-09-12', 'Supplier delivered 20 cases. Still owned by WorkSpace.')
+  `).run(sanitizerItem.id, paperItem.id);
+  await db.prepare(`
+    INSERT INTO consignment_issues (
+      id, issue_number, balance_id, supplier_id, catalog_item_id, location_label,
+      quantity, unit_price, amount_cents, po_id, po_item_id, issued_by, issue_date, notes
+    ) VALUES (
+      1, 'CSI-2026-001', 1, 4, ?, 'HQ facilities cage',
+      4, 14500, 58000, 15, 15, 3, '2026-09-18',
+      'Four stands placed in the lobby. Payable PO-2026-015.'
+    )
+  `).run(sanitizerItem.id);
+
   const insertDupFlag = db.prepare(`
     INSERT INTO invoice_duplicate_flags (
       invoice_id, candidate_invoice_id, match_rule,
@@ -1113,6 +1192,10 @@ await db.transaction(async () => {
   await insertAudit.run('requisition', 9, 'APPROVED', 'Sofia Berg', 'Approved PR-2026-009 for $116.00', '-8 days');
   await insertAudit.run('purchase_order', 8, 'ISSUED', 'Carol Zhang', 'PO-2026-008 issued to FacilityCare & Janitorial Pro', '-20 days');
   await insertAudit.run('purchase_order', 9, 'ISSUED', 'Carol Zhang', 'PO-2026-009 issued to WorkSpace Ergonomics Depot', '-8 days');
+  await insertAudit.run('consignment_receipt', 1, 'RECEIVED', 'Carol Zhang', 'Recorded CSN-2026-001: 12 SKU-FAC-003 from FacilityCare at HQ facilities cage. Supplier-owned; no GRN.', '-20 days');
+  await insertAudit.run('consignment_receipt', 2, 'RECEIVED', 'Carol Zhang', 'Recorded CSN-2026-002: 20 SKU-OFF-004 from WorkSpace at HQ facilities cage. Supplier-owned; no GRN.', '-18 days');
+  await insertAudit.run('consignment_issue', 1, 'ISSUED', 'Carol Zhang', 'Issued CSI-2026-001: 4 SKU-FAC-003 from HQ facilities cage onto PO-2026-015. No GRN.', '-12 days');
+  await insertAudit.run('purchase_order', 15, 'ISSUED', 'Carol Zhang', 'PO-2026-015 opened for consignment draw-down CSI-2026-001 (4 × Commercial Touchless Sanitizer & Dispenser Stand).', '-12 days');
   await insertAudit.run('purchase_order', 10, 'ISSUED', 'Carol Zhang', 'PO-2026-010 issued to TechSupply Global', '-14 days');
   await insertAudit.run('goods_receipt', 5, 'RECEIVED', 'Carol Zhang', 'GRN-2026-005 confirmed first-aid station received', '-17 days');
   await insertAudit.run('goods_receipt', 6, 'RECEIVED', 'Carol Zhang', 'GRN-2026-006 confirmed 2 cases of copy paper received', '-4 days');

@@ -1,5 +1,5 @@
 /**
- * Sequential document numbers (PR-/PO-/GRN-/SES-/CO-/CNT-/PAY-YYYY-NNN).
+ * Sequential document numbers (PR-/PO-/GRN-/SES-/CSN-/CSI-/CO-/CNT-/PAY-YYYY-NNN).
  *
  * Uses MAX of the numeric suffix for the current year, not COUNT(*)+1.
  * COUNT(*)+1 collides after deletes or when numbers are not dense (seed gaps).
@@ -11,6 +11,8 @@ const DOC_KINDS = {
   po: { table: 'purchase_orders', column: 'po_number', prefix: 'PO' },
   grn: { table: 'goods_receipts', column: 'grn_number', prefix: 'GRN' },
   ses: { table: 'service_entry_sheets', column: 'ses_number', prefix: 'SES' },
+  csn: { table: 'consignment_receipts', column: 'receipt_number', prefix: 'CSN' },
+  csi: { table: 'consignment_issues', column: 'issue_number', prefix: 'CSI' },
   co: { table: 'po_change_orders', column: 'co_number', prefix: 'CO' },
   cnt: { table: 'contracts', column: 'contract_number', prefix: 'CNT' },
   pay: { table: 'payment_runs', column: 'run_number', prefix: 'PAY' }

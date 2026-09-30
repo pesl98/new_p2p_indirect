@@ -6,6 +6,7 @@ import {
   CheckSquare,
   ShoppingCart,
   PackageCheck,
+  Warehouse,
   ClipboardCheck,
   FileSpreadsheet,
   CreditCard,
@@ -106,6 +107,8 @@ function eventIcon(kind) {
       return FileEdit;
     case 'goods_receipt':
       return PackageCheck;
+    case 'consignment_issue':
+      return Warehouse;
     case 'service_entry_sheet':
       return ClipboardCheck;
     case 'invoice':
@@ -346,7 +349,13 @@ export default function DocumentTrailView({ onNavigate, lookupQ }) {
                   </div>
                   <div className="mt-3 text-xs text-slate-600 space-y-1">
                     <div>Amount: <span className="font-semibold">${formatMoney(po.total_amount)}</span></div>
-                    <div>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">not started</span>}</div>
+                    <div>
+                      {po.receiving?.goods === 'consignment' ? (
+                        <>Consignment: {po.consignment_issues?.[0]?.issue_number || 'issued'} <span className="text-slate-400">(no GRN)</span></>
+                      ) : (
+                        <>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">not started</span>}</>
+                      )}
+                    </div>
                     <div>SES: {po.service_entry_sheets[0]?.ses_number || <span className="text-slate-400">not started</span>}</div>
                     <div>
                       Invoice: {po.invoices[0]?.invoice_number || <span className="text-slate-400">not started</span>}

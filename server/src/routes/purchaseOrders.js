@@ -24,9 +24,14 @@ router.get('/', async (req, res) => {
         (SELECT COALESCE(SUM(quantity), 0) FROM po_items WHERE po_id = po.id) as total_qty_ordered,
         (SELECT COALESCE(SUM(quantity_received), 0) FROM po_items WHERE po_id = po.id) as total_qty_received,
         (SELECT COALESCE(SUM(quantity_accepted), 0) FROM po_items WHERE po_id = po.id) as total_qty_accepted,
-        (SELECT COALESCE(SUM(CASE WHEN line_type = 'service' THEN quantity_accepted ELSE quantity_received END), 0) FROM po_items WHERE po_id = po.id) as total_qty_fulfilled,
+        (SELECT COALESCE(SUM(CASE
+          WHEN line_type = 'service' THEN quantity_accepted
+          WHEN receipt_basis = 'consignment' THEN quantity_consumed
+          ELSE quantity_received
+        END), 0) FROM po_items WHERE po_id = po.id) as total_qty_fulfilled,
         (SELECT COUNT(*) FROM po_items WHERE po_id = po.id AND line_type = 'service') as service_line_count,
-        (SELECT COUNT(*) FROM po_items WHERE po_id = po.id AND line_type = 'goods') as goods_line_count,
+        (SELECT COUNT(*) FROM po_items WHERE po_id = po.id AND line_type = 'goods' AND COALESCE(receipt_basis, 'grn') != 'consignment') as goods_line_count,
+        (SELECT COUNT(*) FROM po_items WHERE po_id = po.id AND receipt_basis = 'consignment') as consignment_line_count,
         (SELECT COUNT(*) FROM goods_receipts WHERE po_id = po.id) as receipts_count,
         (SELECT COUNT(*) FROM service_entry_sheets WHERE po_id = po.id) as ses_count,
         (SELECT COUNT(*) FROM invoices WHERE po_id = po.id) as invoices_count

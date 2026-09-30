@@ -102,7 +102,7 @@ export async function createVendorInvoice(db, payload) {
       VALUES ('invoice', ?, '3_WAY_MATCHED', 'System 3-Way Matcher', ?)
     `).run(
       invoiceId,
-      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; services: PO+SES+invoice)`
+      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; consignment: PO+draw-down+invoice; services: PO+SES+invoice)`
     );
 
     // Soft-hold likely duplicates after the invoice exists (same transaction).
