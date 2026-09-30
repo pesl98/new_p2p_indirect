@@ -3,6 +3,9 @@
 -- Service lines may set service_basis (lump_sum | hours | days). Goods lines leave it NULL.
 -- Hours/days quantity is whole hours or days; lump_sum quantity is whole occurrences.
 -- Line total is still quantity × unit_price in integer cents.
+-- Consignment stock is supplier-owned on-hand (consignment_balances). It is not a GRN.
+-- A draw-down sets po_items.receipt_basis = 'consignment' and quantity_consumed.
+-- purchase_orders.order_source = 'consignment' marks that payable. Owned goods stay order_source 'standard'.
 
 -- Step-1 department head lives on departments.approver_user_id (nullable users.id).
 -- Not a SQLite FK because departments is created before users.
@@ -165,6 +168,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   notes TEXT,
   revision INTEGER NOT NULL DEFAULT 0,
   change_order_count INTEGER NOT NULL DEFAULT 0,
+  -- standard = buyer-owned PO (GRN or SES). consignment = draw-down of supplier-owned stock.
+  order_source TEXT NOT NULL DEFAULT 'standard' CHECK (order_source IN ('standard', 'consignment')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id),
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -182,8 +187,11 @@ CREATE TABLE IF NOT EXISTS po_items (
   total_price INTEGER NOT NULL,
   quantity_received INTEGER DEFAULT 0,
   quantity_accepted INTEGER DEFAULT 0,
+  -- Draw-down qty for receipt_basis = 'consignment'. Owned goods leave this at 0 and use GRN.
+  quantity_consumed INTEGER NOT NULL DEFAULT 0,
   quantity_invoiced INTEGER DEFAULT 0,
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
+  receipt_basis TEXT NOT NULL DEFAULT 'grn' CHECK (receipt_basis IN ('grn', 'consignment')),
   service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (requisition_item_id) REFERENCES requisition_items(id)
@@ -436,5 +444,69 @@ CREATE TABLE IF NOT EXISTS payment_run_items (
   UNIQUE(run_id, invoice_id),
   FOREIGN KEY (run_id) REFERENCES payment_runs(id) ON DELETE CASCADE,
   FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+);
+
+-- Supplier-owned inventory at the buyer site. Not company-owned stock and not a GRN.
+-- location_label is free text: ProcureFlow has no location / warehouse master.
+CREATE TABLE IF NOT EXISTS consignment_balances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  supplier_id INTEGER NOT NULL,
+  catalog_item_id INTEGER NOT NULL,
+  location_label TEXT NOT NULL DEFAULT 'Buyer site',
+  quantity_on_hand INTEGER NOT NULL DEFAULT 0 CHECK (quantity_on_hand >= 0),
+  unit_price INTEGER NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(supplier_id, catalog_item_id, location_label),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
+);
+
+-- Inward consignment. Increases on-hand only. Does not insert goods_receipts or a PO.
+CREATE TABLE IF NOT EXISTS consignment_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  receipt_number TEXT UNIQUE NOT NULL,
+  balance_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  catalog_item_id INTEGER NOT NULL,
+  location_label TEXT NOT NULL,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  unit_price INTEGER NOT NULL,
+  received_by INTEGER NOT NULL,
+  receipt_date TEXT NOT NULL,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (balance_id) REFERENCES consignment_balances(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id),
+  FOREIGN KEY (received_by) REFERENCES users(id)
+);
+
+-- Consumption into company use. Decrements on-hand and opens a consignment PO for AP.
+-- Does not post a GRN and does not increment po_items.quantity_received.
+CREATE TABLE IF NOT EXISTS consignment_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_number TEXT UNIQUE NOT NULL,
+  balance_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  catalog_item_id INTEGER NOT NULL,
+  location_label TEXT NOT NULL,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  unit_price INTEGER NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  po_id INTEGER NOT NULL,
+  po_item_id INTEGER NOT NULL,
+  issued_by INTEGER NOT NULL,
+  issue_date TEXT NOT NULL,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (balance_id) REFERENCES consignment_balances(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id),
+  FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
+  FOREIGN KEY (po_item_id) REFERENCES po_items(id),
+  FOREIGN KEY (issued_by) REFERENCES users(id)
 );
 

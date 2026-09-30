@@ -346,6 +346,25 @@ export const api = {
     return jsonOk(r, 'Failed to record goods receipt');
   },
 
+  // Consignment stock (supplier-owned). Separate from GRN.
+  getConsignment: () => fetch(`${API_BASE}/consignment`).then((r) => jsonOk(r, 'Failed to load consignment stock')),
+  receiveConsignment: async (data) => {
+    const r = await fetch(`${API_BASE}/consignment/receipts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to record consignment receipt');
+  },
+  issueConsignment: async (data) => {
+    const r = await fetch(`${API_BASE}/consignment/issues`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to issue consignment stock');
+  },
+
   // Service Entry Sheets
   getServiceEntrySheets: (po_id = '') => {
     const params = new URLSearchParams();

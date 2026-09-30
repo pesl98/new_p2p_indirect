@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, fromCents, toCents } from '../money';
-import { isServiceLine, lineTypeLabel } from '../lineType';
+import { isServiceLine, lineTypeLabel, receiptBasisLabel } from '../lineType';
 
 export default function InvoicesMatchingView({ currentUser, onDataChanged, onNavigate, focusId }) {
   const [invoices, setInvoices] = useState([]);
@@ -93,6 +93,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
         po_unit_price: item.unit_price,
         po_quantity_received: item.quantity_received,
         po_quantity_accepted: item.quantity_accepted || 0,
+        po_quantity_consumed: item.quantity_consumed || 0,
+        receipt_basis: item.receipt_basis || 'grn',
         quantity_invoiced: item.quantity, // default to ordered
         unit_price: fromCents(item.unit_price) // billed price input is dollars
       }));
@@ -437,7 +439,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                               </td>
                               <td className="py-2.5 px-3 text-center text-slate-500">${formatMoney(line.po_unit_price)}</td>
                               <td className="py-2.5 px-3 text-center font-semibold text-slate-800">
-                                {isServiceLine(line) ? `${line.po_quantity_accepted} SES` : `${line.po_quantity_received} GRN`}
+                                {isServiceLine(line)
+                                  ? `${line.po_quantity_accepted} SES`
+                                  : line.receipt_basis === 'consignment'
+                                    ? `${line.po_quantity_consumed} drawn`
+                                    : `${line.po_quantity_received} GRN`}
                               </td>
                               <td className="py-2.5 px-3 text-center">
                                 <input
@@ -466,7 +472,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       </table>
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1.5">
-                      💡 Tip: Edit billed price or quantity to see match exceptions. Service lines need an accepted SES; goods lines need a GRN.
+                      Tip: Edit billed price or quantity to see match exceptions. Service lines need an accepted SES; owned goods need a GRN; consignment lines match the drawn quantity.
                     </p>
                   </div>
                 </>
@@ -523,7 +529,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
               <div>
                 <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2 flex items-center space-x-2">
                   <span>Line Reconciliation Matrix</span>
-                  <span className="text-slate-400 font-normal">(Goods: PO vs GRN vs invoice · Services: PO vs SES vs invoice)</span>
+                  <span className="text-slate-400 font-normal">(Goods: PO vs GRN vs invoice · Consignment: PO vs draw-down vs invoice · Services: PO vs SES vs invoice)</span>
                 </h4>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -556,7 +562,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                             </td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 font-semibold">{res.ordered_qty}</td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">${formatMoney(res.po_unit_price)}</td>
-                            <td className="py-2.5 px-3 text-center bg-amber-50/30 font-bold text-amber-900">{res.received_qty}</td>
+                            <td className="py-2.5 px-3 text-center bg-amber-50/30 font-bold text-amber-900">
+                              {res.received_qty} {receiptBasisLabel(res)}
+                            </td>
                             <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">{res.invoiced_qty}</td>
                             <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">${formatMoney(res.invoice_unit_price)}</td>
                             <td className="py-2.5 px-3 text-center">

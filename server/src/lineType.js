@@ -32,6 +32,11 @@ export function isServiceLine(item) {
   return lineTypeFromCategory(item.category) === 'service';
 }
 
+/** Supplier-owned draw-down. Match and fulfillment use quantity_consumed, not GRN. */
+export function isConsignmentLine(item) {
+  return item?.receipt_basis === 'consignment';
+}
+
 /**
  * How a service line is quantified. Goods lines never store a basis.
  * Omitted basis on a service keeps legacy unit quantity (seats, licenses).

@@ -49,6 +49,14 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
    - Automatically updates PO fulfillment status and calculates unreceived balances.
    - **Over-receipt is blocked (HTTP 400)** unless the request includes explicit `allow_over_receipt: true` (audited exception).
    - Service lines are rejected on a GRN — use a Service Entry Sheet instead.
+   - Consignment draw-down lines are rejected on a GRN — supplier-owned stock is issued from **Consignment Stock**.
+
+**Consignment stock** (supplier-owned inventory at the buyer site)
+
+- Record a consignment receipt (`CSN-YYYY-NNN`) for a supplier, goods catalog item, free-text location, and quantity. On-hand goes up. No purchase order and no GRN — the company does not own the stock yet.
+- The Consignment screen lists that on-hand balance next to company-owned GRN receipts so the two are not mixed.
+- Issue stock into use (`CSI-YYYY-NNN`). On-hand goes down and a consignment PO is created (`order_source = consignment`, `quantity_consumed` set, `quantity_received` left at 0). AP enters the supplier invoice against that PO; match uses the drawn quantity.
+- Seed: **CSN-2026-001** received 12 FacilityCare sanitizer stands at HQ facilities cage. **CSI-2026-001** issued 4 as **PO-2026-015**, matched by **INV-FCJ-4402**. **CSN-2026-002** is 20 cases of WorkSpace copy paper still on hand (issue it from the Consignment screen).
 
 5. **Service Entry Sheets (SES)**
    - Acceptance flow for **service** PO lines (consulting, SaaS, marketing): draft → submitted → accepted/rejected.
@@ -59,6 +67,7 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
 
 6. **Dual Invoice Matching (goods 3-way / services SES-backed)**
    - **Goods lines:** PO vs GRN received vs invoice (unchanged 3-way).
+   - **Consignment draw-down lines:** PO vs quantity consumed vs invoice. Physical GRN is not consulted.
    - **Service lines:** PO vs SES-accepted vs invoice. Physical GRN is not required.
    - Mixed POs combine both; overall invoice status reflects any failing line.
    - Price rules unchanged (exact cents, 1% tolerated warning, else fail).
@@ -285,7 +294,7 @@ Vercel runs `npm run build`, deploys `api/index.js` as one Node Function (`inclu
 
 ---
 
-Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CO-` / `CNT-` / `PAY-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
+Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
 
 Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 
@@ -305,12 +314,13 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items (`source_contract_id` nullable pointer at `contracts.id`; `contract_use_status` `none` | `skipped` | `proposed` | `allowed` | `refused`)
 - `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
 - `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
-- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`, `revision`, `change_order_count`)
+- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `quantity_consumed`, `receipt_basis`, `order_source`, `line_type`, `revision`, `change_order_count`)
 - `po_change_orders` & `po_change_order_items`: Formal PO revisions (`CO-YYYY-NNN`, before/after totals in cents)
-- `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
+- `goods_receipts` & `goods_receipt_items`: Inward receiving records (company-owned goods)
+- `consignment_balances`, `consignment_receipts`, `consignment_issues`: Supplier-owned on-hand (`CSN-` / `CSI-`). Not a GRN.
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
 - `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay; `duplicate_status` `clear` | `suspect` | `confirmed_unique` | `confirmed_duplicate`)
-- `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
+- `match_results`: Line item match logs & variance records (GRN, consignment draw-down, or SES receipt basis)
 - `invoice_exception_dispositions`: Structured AP exception resolutions (accept / short-pay / reject / return-to-buyer)
 - `invoice_duplicate_flags`: Likely-duplicate candidate links + AP dispositions (confirm unique / confirm duplicate)
 - `payment_runs` & `payment_run_items`: AP payment proposals (`PAY-YYYY-NNN`; billed/payable snapshots in integer cents; execute reuses mark-paid)

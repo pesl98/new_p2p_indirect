@@ -6,6 +6,7 @@ import {
   CheckSquare, 
   ShoppingCart, 
   PackageCheck,
+  Warehouse,
   ClipboardCheck,
   FileSpreadsheet, 
   Landmark, 
@@ -81,6 +82,12 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       label: 'Goods Receipt (GRN)',
       icon: PackageCheck,
       desc: 'Physical receiving for goods lines'
+    },
+    {
+      id: 'consignment',
+      label: 'Consignment Stock',
+      icon: Warehouse,
+      desc: 'Supplier-owned inventory at your site'
     },
     {
       id: 'service_entry',

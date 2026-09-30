@@ -11,6 +11,7 @@ import requisitionsRouter from './routes/requisitions.js';
 import approvalsRouter from './routes/approvals.js';
 import purchaseOrdersRouter from './routes/purchaseOrders.js';
 import goodsReceiptsRouter from './routes/goodsReceipts.js';
+import consignmentRouter from './routes/consignment.js';
 import serviceEntrySheetsRouter from './routes/serviceEntrySheets.js';
 import invoicesRouter from './routes/invoices.js';
 import invoiceExceptionsRouter from './routes/invoiceExceptions.js';
@@ -88,6 +89,7 @@ export function createApp(options = {}) {
   app.use('/api/approvals', approvalsRouter);
   app.use('/api/purchase-orders', purchaseOrdersRouter);
   app.use('/api/goods-receipts', goodsReceiptsRouter);
+  app.use('/api/consignment', consignmentRouter);
   app.use('/api/service-entry-sheets', serviceEntrySheetsRouter);
   app.use('/api/invoices', invoicesRouter);
   app.use('/api/invoice-exceptions', invoiceExceptionsRouter);

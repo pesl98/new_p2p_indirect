@@ -9,7 +9,7 @@
  *   - PO must be issued / acknowledged / partially_received / received
  *   - reason + actor_name required
  *   - empty change set (no qty, price, or delivery-notes delta)
- *   - new qty below received (goods), accepted (services), or invoiced
+ *   - new qty below received (goods), accepted (services), drawn (consignment), or invoiced
  *   - net increase above CHANGE_ORDER_INCREASE_CONFIRM_CENTS without confirm_increase
  *
  * Budget: when the PO is linked to a PR/department, committed_amount moves by
@@ -26,8 +26,8 @@ import {
   requireIntegerCents,
   toQty
 } from './money.js';
-import { isServiceLine } from './lineType.js';
-import { refreshPoFulfillmentStatus } from './poFulfillment.js';
+import { isConsignmentLine, isServiceLine } from './lineType.js';
+import { lineFulfilledQty, refreshPoFulfillmentStatus } from './poFulfillment.js';
 
 export { CHANGE_ORDER_INCREASE_CONFIRM_CENTS };
 
@@ -92,18 +92,19 @@ export function requireWholeQty(value, field = 'quantity') {
 
 /** Floor a line cannot be reduced below: fulfillment qty and invoiced qty. */
 export function lineQtyFloor(item) {
-  const fulfilled = isServiceLine(item)
-    ? toQty(item.quantity_accepted)
-    : toQty(item.quantity_received);
-  return Math.max(fulfilled, toQty(item.quantity_invoiced));
+  return Math.max(lineFulfilledQty(item), toQty(item.quantity_invoiced));
 }
 
 export function floorLabel(item) {
   const received = toQty(item.quantity_received);
   const accepted = toQty(item.quantity_accepted);
+  const drawn = toQty(item.quantity_consumed);
   const invoiced = toQty(item.quantity_invoiced);
   if (isServiceLine(item)) {
     return `accepted ${accepted}, invoiced ${invoiced}`;
+  }
+  if (isConsignmentLine(item)) {
+    return `drawn ${drawn}, invoiced ${invoiced}`;
   }
   return `received ${received}, invoiced ${invoiced}`;
 }

@@ -39,6 +39,7 @@ Draft PR → Submit → Sequential approvals → budget commit on final approve
         → Optional PO change order / revision
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice (manual) → dual match
+        → Consignment: supplier-owned on-hand → issue creates a draw-down PO (no GRN) → invoice matches drawn qty
         → Exception workbench (hard failures; optional return_to_buyer → Buyer Inbox)
         → Duplicate suspects (soft hold) → AP approve → AP Aging → Payment run / Mark paid
         (parallel) Contracts hub → 1-click renewal PR → sequential approvals
@@ -61,7 +62,7 @@ Do not promise these. They are **not** in the code:
 - Full segregation of duties on every API route
 - Cron / scheduled jobs (the app is **request-driven**)
 - Native mobile apps
-- Production goods / MRP / inventory / warehouse WMS
+- Production MRP / warehouse WMS (bins, picks, cycle counts). Consignment on-hand is tracked; it is not a WMS.
 
 Honest limits are listed again in [§11 Out of scope](#11-out-of-scope).
 
@@ -137,7 +138,8 @@ The SPA is a tab switcher (`client/src/App.jsx`). There is no React Router.
 | Approvals Inbox | Everyone (inbox filtered by persona id) | Current **pending** step only |
 | Delegations | `approver` / `procurement` / `finance` / `admin` | OOO substitute |
 | Purchase Orders (PO) | Everyone | Convert, print (`window.print`), change order, status |
-| Goods Receipt (GRN) | Everyone | Goods lines only |
+| Goods Receipt (GRN) | Everyone | Company-owned goods lines only |
+| Consignment Stock | Everyone | Supplier-owned on-hand; issue creates a draw-down PO |
 | Service Entry (SES) | Everyone | Service lines: draft → submitted → accepted/rejected |
 | Invoices & Matching | Everyone | Manual invoice against a PO; match matrix; approve / mark paid |
 | Exception Workbench | Everyone | Hard dual-match failures |
@@ -303,6 +305,17 @@ Demo: **PR-2026-005** → **PO-2026-003** → **SES-2026-001** → **INV-AAD-550
 - Increments `po_items.quantity_received`. Partial receipts at or below remaining ordered qty are allowed.
 - Over-receipt **400** unless `allow_over_receipt: true` (audited `OVER_RECEIPT_OVERRIDE`).
 - Service lines on a GRN → **400** (use SES).
+- Consignment draw-down lines on a GRN → **400** (stock was already supplier-owned; issue it from Consignment).
+
+**Consignment stock** — supplier-owned inventory at the buyer site
+
+Consignment is not company-owned stock and it is not a goods receipt. Receiving consignment (`CSN-YYYY-NNN`) increases `consignment_balances.quantity_on_hand` for a supplier, catalog goods item, and free-text `location_label`. ProcureFlow has no location master; the label is only a site note. No PO, GRN, or invoice is created, and `po_items.quantity_received` does not change.
+
+Issuing stock into company use (`CSI-YYYY-NNN`) decreases that on-hand balance and creates a purchase order with `order_source = consignment`. The PO line is still `line_type = goods`, but `receipt_basis = consignment` and `quantity_consumed` equals the issued quantity. `quantity_received` stays 0. AP records the supplier invoice against that PO; match uses the drawn quantity. There is no requisition and no budget commit on the issue itself — budget still moves on the PR approval path and on invoice approve when a department is linked.
+
+Owned stock in the Consignment screen is the sum of GRN `quantity_received` (company-owned receipts). It is listed separately from consignment on-hand. A normal goods PO is unchanged: match still requires a GRN.
+
+Demo: **CSN-2026-001** received 12 FacilityCare sanitizer stands at **HQ facilities cage** (supplier-owned). **CSI-2026-001** issued 4 into use as **PO-2026-015** (no GRN). **INV-FCJ-4402** is a perfect match against the 4 drawn units. **CSN-2026-002** leaves 20 cases of WorkSpace copy paper on hand for a live issue. Owned GRN receipts for the same sanitizer SKU (lobby restock) stay on the goods-receipt side.
 
 **Service entry sheet (SES)** — service lines only
 
@@ -315,7 +328,8 @@ Demo: **PR-2026-005** → **PO-2026-003** → **SES-2026-001** → **INV-AAD-550
 
 | Line type | Receipt basis |
 | --- | --- |
-| Goods | GRN `quantity_received` (3-way: PO vs GRN vs invoice) |
+| Goods (`receipt_basis` `grn`, the default) | GRN `quantity_received` (3-way: PO vs GRN vs invoice) |
+| Consignment draw-down (`receipt_basis` `consignment`) | `quantity_consumed` (PO vs draw-down vs invoice). Physical GRN is not consulted. |
 | Service | SES `quantity_accepted` (physical GRN is not required and is not consulted) |
 
 Quantity fail if prior invoiced + this claim > receipt basis **or** > ordered. Mixed POs combine both; one failing line flags the invoice.
@@ -505,6 +519,8 @@ Allocated with **MAX of the numeric suffix** for the current calendar year (`ser
 | Purchase order | `PO-YYYY-NNN` | `purchase_orders.po_number` |
 | Goods receipt | `GRN-YYYY-NNN` | `goods_receipts.grn_number` |
 | Service entry | `SES-YYYY-NNN` | `service_entry_sheets.ses_number` |
+| Consignment receipt | `CSN-YYYY-NNN` | `consignment_receipts.receipt_number` |
+| Consignment issue | `CSI-YYYY-NNN` | `consignment_issues.issue_number` |
 | Change order | `CO-YYYY-NNN` | `po_change_orders.co_number` |
 | Contract | `CNT-YYYY-NNN` | `contracts.contract_number` |
 | Payment run | `PAY-YYYY-NNN` | `payment_runs.run_number` |
@@ -649,6 +665,8 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 | Fiscal years other than 2026 | Hardcoded in budget queries. |
 | `approval_limit` as a routing gate | Stored and displayed; policy uses PR total + roles. |
 | Header persona switcher on customers | Off unless `DEMO_PERSONA_SWITCHER=1`. |
+| Warehouse WMS / location master | Consignment uses a free-text `location_label`. No bins, picks, or cycle counts. |
+| Metered utilities (water, electricity, gas) | Not implemented. |
 
 More control-model detail: [ARCHITECTURE.md — Known demo limits](ARCHITECTURE.md#known-demo-limits-out-of-scope).
 
