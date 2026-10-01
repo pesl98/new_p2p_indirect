@@ -31,7 +31,7 @@ Env:
   SMOKE_TIMEOUT_MS         Per-request timeout (default ${DEFAULT_TIMEOUT_MS})
 
 Does not seed. Real customer: onboard:customer --apply --smoke (that command waits for Production Ready first). Stepped: turso:customer → vercel:customer --apply (also waits for Ready) → provision:customer -- --with-org → smoke.
-See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 function write(stream, text) {

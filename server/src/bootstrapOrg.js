@@ -68,7 +68,7 @@ Three tiers:
   org skeleton     npm run bootstrap-org          (this command; non-destructive)
   demo wipe        npm run seed                   (DESTRUCTIVE personas)
 
-See docs/CUSTOMER_ONBOARDING.md §11 and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md (cost centers). docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 function formatUsdFromCents(cents) {

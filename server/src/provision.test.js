@@ -424,6 +424,16 @@ describe('schema and docs stay aligned with provision', () => {
     assert.match(readme, /bootstrap-org/);
     assert.match(readme, /npm run smoke/);
     assert.match(readme, /\.env\.example/);
+    assert.match(readme, /docs\/DEPLOY_MANUAL\.md/);
+    const manual = fs.readFileSync(path.join(repoRoot, 'docs/SYSTEM_MANUAL.md'), 'utf8');
+    assert.match(manual, /DEPLOY_MANUAL\.md/);
+    const deployManual = fs.readFileSync(path.join(repoRoot, 'docs/DEPLOY_MANUAL.md'), 'utf8');
+    assert.match(deployManual, /npm run onboard:customer/);
+    assert.match(deployManual, /npm run offboard:customer -- --slug acme --apply --confirm-slug acme/);
+    assert.match(deployManual, /VERCEL_READY_TIMEOUT_MS/);
+    assert.match(deployManual, /turso db create procureflow-/);
+    assert.match(deployment, /DEPLOY_MANUAL\.md/);
+    assert.match(onboarding, /DEPLOY_MANUAL\.md/);
   });
 
   test('CLI entrypoints and npm scripts exist', () => {

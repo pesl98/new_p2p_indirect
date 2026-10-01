@@ -91,7 +91,7 @@ Stepped (same sequence, secrets copied by hand):
   turso:customer --apply → vercel:customer --apply (ensure + link + env)
   → provision:customer -- --with-org → smoke
 
-See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 function write(stream, text) {
