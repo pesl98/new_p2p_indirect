@@ -1,6 +1,6 @@
 # ProcureFlow architecture
 
-Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite locally (`better-sqlite3`) or Turso (libSQL **SQL-over-HTTP** `/v2/pipeline`) on Vercel. Money is integer **cents**. Quantities are whole units.
+Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite locally (`better-sqlite3`) or Turso (libSQL **SQL-over-HTTP** `/v2/pipeline`) on Vercel. Money is integer **cents**. Discrete quantities are whole units. Metered utility and vendor-managed bulk quantities are integer milli-units (scale 1000).
 
 **Operator/owner entry point (capabilities + new-customer deploy):** [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md).
 
@@ -333,7 +333,7 @@ Exception: body includes `allow_over_receipt: true`. The GRN is stored, PO qty r
 
 Partial receipts at or below remaining ordered qty are allowed. Over-receipt is an exception path, not silent.
 
-GRN is goods-only. Posting a service line on a GRN returns **400**. Posting a consignment draw-down line (`receipt_basis = consignment`) also returns **400**.
+GRN is goods-only. Posting a service line on a GRN returns **400**. Posting a consignment draw-down line (`receipt_basis = consignment`) also returns **400**. Posting a utility or bulk payable (`settlement_kind` `utility` or `bulk`) also returns **400**.
 
 ## Consignment stock
 
@@ -344,6 +344,25 @@ Supplier-owned inventory at the buyer site, tracked on `consignment_balances` (s
 - Owned stock shown beside consignment is cumulative GRN quantity. The two balances are not added together.
 
 Demo: **CSN-2026-001** (12 sanitizer stands) → **CSI-2026-001** / **PO-2026-015** (4 drawn) → **INV-FCJ-4402**. **CSN-2026-002** is 20 cases of copy paper still on hand.
+
+Discrete consignment is whole catalog units and a free-text `location_label`. It does not store measured volume, weight, or a container/silo.
+
+## Metered utilities
+
+Ongoing water, electricity, and gas supply lives on `utility_arrangements` (`UTA-YYYY-NNN`: supplier, type, meter, unit of measure, cents per 1.000 of that unit). `POST /api/utilities/consumptions` (`UCN-YYYY-NNN`) records a reading difference or a billed quantity and opens a payable. `settlement_kind = utility`. `quantity` and `quantity_consumed` are milli-units (`quantity_scale = 1000`). `quantity_received` stays 0. No GRN. Match uses `quantity_consumed`.
+
+`order_source` stays `standard` and `receipt_basis` stays `grn`. Those checks are only `standard|consignment` and `grn|consignment`. The measured path is `settlement_kind`, so discrete consignment queries are unchanged.
+
+Demo: **UTA-2026-001** / **UCN-2026-001** / **PO-2026-016** / **INV-MGU-0901** (842.500 kWh). **UTA-2026-003** gas is uninvoiced (**PO-2026-017**). **UTA-2026-002** water has no reading.
+
+## Vendor-managed bulk
+
+`bulk_containers` (`BVL-YYYY-NNN`) is a container or silo: catalog goods item, capacity, unit of measure, and current level, all in milli-units. It is not `consignment_balances.location_label`.
+
+- **Fill** (`POST /api/bulk-vessels/fills`, `BFL-YYYY-NNN`) increases level only. No PO and no GRN.
+- **Draw** (`POST /api/bulk-vessels/draws`, `BDR-YYYY-NNN`) decreases level and opens a payable with `settlement_kind = bulk`, `quantity_consumed` set, `quantity_received` 0. Match uses that quantity. No GRN.
+
+Demo: **BVL-2026-001** LN2 silo → **BFL-2026-001** (3200.000 kg) → **BDR-2026-001** / **PO-2026-018** (450.250 kg) → **INV-NIG-1801**. **BVL-2026-002** argon tube bank is filled and not drawn.
 
 ## Service entry sheets (SES)
 
@@ -365,6 +384,7 @@ Receipt basis is per line:
 
 - **Goods:** physically received (`quantity_received` from GRNs). Unchanged when `receipt_basis` is `grn` (the default).
 - **Consignment draw-down:** `quantity_consumed`. Physical GRN is not consulted.
+- **Utility and bulk:** `quantity_consumed` in milli-units. Physical GRN is not consulted. Invoice quantity is the measured amount (up to 3 decimal places), stored as milli-units.
 - **Services:** SES-accepted (`quantity_accepted`). Physical GRN is not required and is not consulted.
 
 Quantity fail if:

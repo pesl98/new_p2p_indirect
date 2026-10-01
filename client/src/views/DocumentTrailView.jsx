@@ -7,6 +7,8 @@ import {
   ShoppingCart,
   PackageCheck,
   Warehouse,
+  Gauge,
+  Cylinder,
   ClipboardCheck,
   FileSpreadsheet,
   CreditCard,
@@ -110,6 +112,10 @@ function eventIcon(kind) {
       return PackageCheck;
     case 'consignment_issue':
       return Warehouse;
+    case 'utility_consumption':
+      return Gauge;
+    case 'bulk_draw':
+      return Cylinder;
     case 'service_entry_sheet':
       return ClipboardCheck;
     case 'invoice':
@@ -367,6 +373,10 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                     <div>
                       {po.receiving?.goods === 'consignment' ? (
                         <>Consignment: {po.consignment_issues?.[0]?.issue_number || 'issued'} <span className="text-slate-400">(no GRN)</span></>
+                      ) : po.receiving?.goods === 'utility' ? (
+                        <>Utility: {po.utility_consumptions?.[0]?.consumption_number || 'recorded'} <span className="text-slate-400">(no GRN)</span></>
+                      ) : po.receiving?.goods === 'bulk' ? (
+                        <>Bulk draw: {po.bulk_draws?.[0]?.draw_number || 'drawn'} <span className="text-slate-400">(no GRN)</span></>
                       ) : (
                         <>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">not started</span>}</>
                       )}

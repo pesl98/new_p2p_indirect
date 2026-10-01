@@ -7,6 +7,8 @@ import ApprovalsView from './views/ApprovalsView';
 import PurchaseOrdersView from './views/PurchaseOrdersView';
 import GoodsReceiptView from './views/GoodsReceiptView';
 import ConsignmentView from './views/ConsignmentView';
+import UtilitiesView from './views/UtilitiesView';
+import BulkVesselsView from './views/BulkVesselsView';
 import ServiceEntrySheetsView from './views/ServiceEntrySheetsView';
 import InvoicesMatchingView from './views/InvoicesMatchingView';
 import ExceptionWorkbenchView from './views/ExceptionWorkbenchView';
@@ -295,6 +297,20 @@ export default function App() {
             <ConsignmentView
               currentUser={currentUser}
               onDataChanged={fetchCoreData}
+              onNavigate={handleNavigate}
+            />
+          )}
+
+          {activeTab === 'utilities' && (
+            <UtilitiesView
+              currentUser={currentUser}
+              onNavigate={handleNavigate}
+            />
+          )}
+
+          {activeTab === 'bulk' && (
+            <BulkVesselsView
+              currentUser={currentUser}
               onNavigate={handleNavigate}
             />
           )}

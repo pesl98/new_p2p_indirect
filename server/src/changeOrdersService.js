@@ -10,6 +10,7 @@
  *   - reason + actor_name required
  *   - empty change set (no qty, price, or delivery-notes delta)
  *   - new qty below received (goods), accepted (services), drawn (consignment), or invoiced
+ *   - measured utility / bulk payables (amend the reading or draw, not the PO line)
  *   - net increase above CHANGE_ORDER_INCREASE_CONFIRM_CENTS without confirm_increase
  *
  * Budget: when the PO is linked to a PR/department, committed_amount moves by
@@ -26,7 +27,7 @@ import {
   requireIntegerCents,
   toQty
 } from './money.js';
-import { isConsignmentLine, isServiceLine } from './lineType.js';
+import { isConsignmentLine, isMeasuredSettlement, isServiceLine } from './lineType.js';
 import { lineFulfilledQty, refreshPoFulfillmentStatus } from './poFulfillment.js';
 
 export { CHANGE_ORDER_INCREASE_CONFIRM_CENTS };
@@ -243,6 +244,12 @@ export async function applyPurchaseOrderChangeOrder(db, poId, payload = {}) {
   const po = await loadPurchaseOrder(db, poId);
   if (!po) {
     throw new ChangeOrderError('Purchase Order not found', 404);
+  }
+  if (isMeasuredSettlement(po)) {
+    throw new ChangeOrderError(
+      `Purchase order ${po.po_number} records measured consumption. ` +
+      'Change the utility reading or bulk draw; a change order does not apply.'
+    );
   }
   if (!AMENDABLE_PO_STATUSES.includes(po.status)) {
     throw new ChangeOrderError(
