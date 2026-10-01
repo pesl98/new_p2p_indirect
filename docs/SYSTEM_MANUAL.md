@@ -40,6 +40,8 @@ Draft PR → Submit → Sequential approvals → budget commit on final approve
         → Goods: GRN          ──┐
         → Services: SES accept ─┴→ Vendor invoice (manual) → dual match
         → Consignment: supplier-owned on-hand → issue creates a draw-down PO (no GRN) → invoice matches drawn qty
+        → Utilities: arrangement → measured reading → payable PO (no GRN) → invoice matches consumed qty
+        → Bulk: container/silo level → measured draw → payable PO (no GRN) → invoice matches drawn qty
         → Exception workbench (hard failures; optional return_to_buyer → Buyer Inbox)
         → Duplicate suspects (soft hold) → AP approve → AP Aging → Payment run / Mark paid
         (parallel) Contracts hub → 1-click renewal PR → sequential approvals
@@ -139,7 +141,9 @@ The SPA is a tab switcher (`client/src/App.jsx`). There is no React Router.
 | Delegations | `approver` / `procurement` / `finance` / `admin` | OOO substitute |
 | Purchase Orders (PO) | Everyone | Convert, print (`window.print`), change order, status |
 | Goods Receipt (GRN) | Everyone | Company-owned goods lines only |
-| Consignment Stock | Everyone | Supplier-owned on-hand; issue creates a draw-down PO |
+| Consignment Stock | Everyone | Supplier-owned whole units; free-text location; issue creates a draw-down PO |
+| Metered Utilities | Everyone | Water, electricity, gas billed by measured consumption; no GRN |
+| Vendor-Managed Bulk | Everyone | Container or silo level; measured draw opens a payable; no GRN |
 | Service Entry (SES) | Everyone | Service lines: draft → submitted → accepted/rejected |
 | Invoices & Matching | Everyone | Manual invoice against a PO; match matrix; approve / mark paid |
 | Exception Workbench | Everyone | Hard dual-match failures |
@@ -317,6 +321,22 @@ Owned stock in the Consignment screen is the sum of GRN `quantity_received` (com
 
 Demo: **CSN-2026-001** received 12 FacilityCare sanitizer stands at **HQ facilities cage** (supplier-owned). **CSI-2026-001** issued 4 into use as **PO-2026-015** (no GRN). **INV-FCJ-4402** is a perfect match against the 4 drawn units. **CSN-2026-002** leaves 20 cases of WorkSpace copy paper on hand for a live issue. Owned GRN receipts for the same sanitizer SKU (lobby restock) stay on the goods-receipt side.
 
+Discrete consignment does **not** cover metered utilities or vendor-managed bulk. Those use milli-unit quantities (`quantity_scale = 1000`) and their own tables.
+
+**Metered utilities** — ongoing consumption billing
+
+Water, electricity, and gas are not one-off goods purchase orders. An arrangement (`UTA-YYYY-NNN`) is the standing supply: supplier, utility type, meter, unit of measure, and price in cents per 1.000 of that unit. Recording a meter reading or a billed quantity (`UCN-YYYY-NNN`) opens a payable with `settlement_kind = utility`. `quantity` and `quantity_consumed` are milli-units (842.500 kWh is stored as 842500). `quantity_received` stays 0. No GRN is posted. AP invoices that PO; match uses the measured quantity the same way it uses drawn consignment quantity or accepted service quantity.
+
+`order_source` stays `standard` and `receipt_basis` stays `grn` because those checks only allow the discrete values. The measured path is `settlement_kind`, not a reuse of consignment.
+
+Demo: **UTA-2026-001** HQ electricity, meter **E-104**. **UCN-2026-001** records 842.500 kWh as **PO-2026-016**, matched by **INV-MGU-0901**. **UTA-2026-003** gas (**UCN-2026-002** / **PO-2026-017**) is waiting for an invoice. **UTA-2026-002** water has no reading yet.
+
+**Vendor-managed bulk** — pipeline materials in a container or silo
+
+Gases and fluids stay supplier-owned until drawn. A vessel (`BVL-YYYY-NNN`) is a real holding location: container or silo, capacity, unit of measure, and current measured level. It is not a free-text `location_label`. A fill (`BFL-YYYY-NNN`) increases the level only. A draw (`BDR-YYYY-NNN`) decreases the level and opens a payable with `settlement_kind = bulk`, milli-unit `quantity_consumed`, and `quantity_received` 0. No GRN. Match uses the drawn quantity.
+
+Demo: **BVL-2026-001** LN2 silo (capacity 5000.000 kg) was filled with 3200.000 kg, then **BDR-2026-001** drew 450.250 kg as **PO-2026-018**, matched by **INV-NIG-1801**. Level left is 2749.750 kg. **BVL-2026-002** argon tube bank is filled and not yet drawn.
+
 **Service entry sheet (SES)** — service lines only
 
 - `draft` → `submitted` → `accepted` | `rejected`. Numbered `SES-YYYY-NNN`.
@@ -330,6 +350,7 @@ Demo: **CSN-2026-001** received 12 FacilityCare sanitizer stands at **HQ facilit
 | --- | --- |
 | Goods (`receipt_basis` `grn`, the default) | GRN `quantity_received` (3-way: PO vs GRN vs invoice) |
 | Consignment draw-down (`receipt_basis` `consignment`) | `quantity_consumed` (PO vs draw-down vs invoice). Physical GRN is not consulted. |
+| Utility or bulk (`settlement_kind` `utility` or `bulk`) | `quantity_consumed` in milli-units (PO vs measured consumption vs invoice). Physical GRN is not consulted. |
 | Service | SES `quantity_accepted` (physical GRN is not required and is not consulted) |
 
 Quantity fail if prior invoiced + this claim > receipt basis **or** > ordered. Mixed POs combine both; one failing line flags the invoice.
@@ -497,7 +518,7 @@ Surfaces when present: PR header, sequential approval steps, linked PO branch(es
 
 SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`, payment-run snapshots) store **integer USD cents**. The API returns cents. The client converts at edges (`client/src/money.js`, `server/src/money.js`).
 
-Do not mix float dollars with cents in the same field. Line totals are `qty * unit_price_cents` with integer arithmetic. Quantities are whole units.
+Do not mix float dollars with cents in the same field. Whole-unit line totals are `qty * unit_price_cents`. Discrete quantities (goods, services, consignment) are whole units. Utility and bulk quantities are integer milli-units (scale 1000); the line amount is `round(milli × unit_price_cents / 1000)`.
 
 | Constant | Cents | Dollars |
 | --- | --- | --- |
@@ -524,6 +545,11 @@ Allocated with **MAX of the numeric suffix** for the current calendar year (`ser
 | Change order | `CO-YYYY-NNN` | `po_change_orders.co_number` |
 | Contract | `CNT-YYYY-NNN` | `contracts.contract_number` |
 | Payment run | `PAY-YYYY-NNN` | `payment_runs.run_number` |
+| Utility arrangement | `UTA-YYYY-NNN` | `utility_arrangements.arrangement_number` |
+| Utility consumption | `UCN-YYYY-NNN` | `utility_consumptions.consumption_number` |
+| Bulk vessel | `BVL-YYYY-NNN` | `bulk_containers.container_number` |
+| Bulk fill | `BFL-YYYY-NNN` | `bulk_fills.fill_number` |
+| Bulk draw | `BDR-YYYY-NNN` | `bulk_draws.draw_number` |
 
 Invoice numbers are **vendor-assigned** strings, unique per supplier: `UNIQUE(supplier_id, invoice_number)`.
 
@@ -665,8 +691,7 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 | Fiscal years other than 2026 | Hardcoded in budget queries. |
 | `approval_limit` as a routing gate | Stored and displayed; policy uses PR total + roles. |
 | Header persona switcher on customers | Off unless `DEMO_PERSONA_SWITCHER=1`. |
-| Warehouse WMS / location master | Consignment uses a free-text `location_label`. No bins, picks, or cycle counts. |
-| Metered utilities (water, electricity, gas) | Not implemented. |
+| Warehouse WMS | Discrete consignment is still a free-text `location_label`. Bulk vessels store capacity, unit, and level only. No bins, picks, or cycle counts. |
 
 More control-model detail: [ARCHITECTURE.md — Known demo limits](ARCHITECTURE.md#known-demo-limits-out-of-scope).
 

@@ -32,9 +32,17 @@ export function isServiceLine(item) {
   return lineTypeFromCategory(item.category) === 'service';
 }
 
-/** Supplier-owned draw-down. Match and fulfillment use quantity_consumed, not GRN. */
+/** Supplier-owned discrete draw-down. Match and fulfillment use quantity_consumed, not GRN. */
 export function isConsignmentLine(item) {
   return item?.receipt_basis === 'consignment';
+}
+
+/**
+ * Metered utility or vendor-managed bulk payable.
+ * Quantity columns are milli-units (quantity_scale 1000). Not discrete consignment.
+ */
+export function isMeasuredSettlement(item) {
+  return item?.settlement_kind === 'utility' || item?.settlement_kind === 'bulk';
 }
 
 /**

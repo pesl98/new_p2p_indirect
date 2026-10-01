@@ -7,6 +7,8 @@ import {
   ShoppingCart, 
   PackageCheck,
   Warehouse,
+  Gauge,
+  Cylinder,
   ClipboardCheck,
   FileSpreadsheet, 
   Landmark, 
@@ -88,6 +90,18 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       label: 'Consignment Stock',
       icon: Warehouse,
       desc: 'Supplier-owned inventory at your site'
+    },
+    {
+      id: 'utilities',
+      label: 'Metered Utilities',
+      icon: Gauge,
+      desc: 'Water, electricity, and gas by consumption'
+    },
+    {
+      id: 'bulk',
+      label: 'Vendor-Managed Bulk',
+      icon: Cylinder,
+      desc: 'Measured gas and fluid in a container or silo'
     },
     {
       id: 'service_entry',

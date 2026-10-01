@@ -365,6 +365,50 @@ export const api = {
     return jsonOk(r, 'Failed to issue consignment stock');
   },
 
+  getUtilities: () => fetch(`${API_BASE}/utilities`).then((r) => jsonOk(r, 'Failed to load utility arrangements')),
+  openUtilityArrangement: async (data) => {
+    const r = await fetch(`${API_BASE}/utilities/arrangements`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to open utility arrangement');
+  },
+  recordUtilityConsumption: async (data) => {
+    const r = await fetch(`${API_BASE}/utilities/consumptions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to record utility consumption');
+  },
+
+  getBulkVessels: () => fetch(`${API_BASE}/bulk-vessels`).then((r) => jsonOk(r, 'Failed to load vendor-managed bulk')),
+  registerBulkVessel: async (data) => {
+    const r = await fetch(`${API_BASE}/bulk-vessels/containers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to register vessel');
+  },
+  fillBulkVessel: async (data) => {
+    const r = await fetch(`${API_BASE}/bulk-vessels/fills`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to fill vessel');
+  },
+  drawBulkVessel: async (data) => {
+    const r = await fetch(`${API_BASE}/bulk-vessels/draws`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to draw from vessel');
+  },
+
   // Service Entry Sheets
   getServiceEntrySheets: (po_id = '') => {
     const params = new URLSearchParams();

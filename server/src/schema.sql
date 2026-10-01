@@ -1,11 +1,16 @@
 -- Schema for Non-Production Procurement Application
--- Money columns are INTEGER cents (USD minor units). Quantities are INTEGER whole units.
+-- Money columns are INTEGER cents (USD minor units).
+-- Discrete quantities (goods, services, consignment) are INTEGER whole units.
+-- Metered utilities and vendor-managed bulk store measured qty as milli-units
+-- (quantity_scale = 1000). Line amount is round(milli × unit_price / 1000).
 -- Service lines may set service_basis (lump_sum | hours | days). Goods lines leave it NULL.
 -- Hours/days quantity is whole hours or days; lump_sum quantity is whole occurrences.
--- Line total is still quantity × unit_price in integer cents.
+-- Line total for whole units is quantity × unit_price in integer cents.
 -- Consignment stock is supplier-owned on-hand (consignment_balances). It is not a GRN.
--- A draw-down sets po_items.receipt_basis = 'consignment' and quantity_consumed.
+-- A discrete draw-down sets po_items.receipt_basis = 'consignment' and quantity_consumed.
 -- purchase_orders.order_source = 'consignment' marks that payable. Owned goods stay order_source 'standard'.
+-- Utility and bulk payables keep order_source 'standard' and receipt_basis 'grn' (those CHECKs
+-- are not the measured path). settlement_kind is 'utility' or 'bulk', quantity_consumed is milli-units.
 
 -- Step-1 department head lives on departments.approver_user_id (nullable users.id).
 -- Not a SQLite FK because departments is created before users.
@@ -168,8 +173,11 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   notes TEXT,
   revision INTEGER NOT NULL DEFAULT 0,
   change_order_count INTEGER NOT NULL DEFAULT 0,
-  -- standard = buyer-owned PO (GRN or SES). consignment = draw-down of supplier-owned stock.
+  -- standard = buyer-owned PO (GRN or SES). consignment = discrete draw-down of supplier-owned stock.
   order_source TEXT NOT NULL DEFAULT 'standard' CHECK (order_source IN ('standard', 'consignment')),
+  -- purchase = owned goods/services, or discrete consignment (see order_source).
+  -- utility / bulk = measured consumption payable. Not a GRN and not discrete consignment.
+  settlement_kind TEXT NOT NULL DEFAULT 'purchase' CHECK (settlement_kind IN ('purchase', 'utility', 'bulk')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id),
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -193,6 +201,10 @@ CREATE TABLE IF NOT EXISTS po_items (
   line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
   receipt_basis TEXT NOT NULL DEFAULT 'grn' CHECK (receipt_basis IN ('grn', 'consignment')),
   service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
+  -- 1 = whole units. 1000 = milli-units of unit_of_measure (utility and bulk only).
+  quantity_scale INTEGER NOT NULL DEFAULT 1 CHECK (quantity_scale IN (1, 1000)),
+  unit_of_measure TEXT,
+  settlement_kind TEXT NOT NULL DEFAULT 'purchase' CHECK (settlement_kind IN ('purchase', 'utility', 'bulk')),
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (requisition_item_id) REFERENCES requisition_items(id)
 );
@@ -508,5 +520,118 @@ CREATE TABLE IF NOT EXISTS consignment_issues (
   FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
   FOREIGN KEY (po_item_id) REFERENCES po_items(id),
   FOREIGN KEY (issued_by) REFERENCES users(id)
+);
+
+-- Ongoing metered supply (water, electricity, gas). Not a goods PO and not consignment stock.
+CREATE TABLE IF NOT EXISTS utility_arrangements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  arrangement_number TEXT UNIQUE NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  utility_type TEXT NOT NULL CHECK (utility_type IN ('water', 'electricity', 'gas')),
+  name TEXT NOT NULL,
+  meter_label TEXT NOT NULL,
+  unit_of_measure TEXT NOT NULL,
+  unit_price INTEGER NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+-- One measured billing period. Opens a utility payable. Does not insert goods_receipts.
+-- Quantities are milli-units of unit_of_measure (scale 1000).
+CREATE TABLE IF NOT EXISTS utility_consumptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  consumption_number TEXT UNIQUE NOT NULL,
+  arrangement_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  reading_previous_milli INTEGER,
+  reading_current_milli INTEGER,
+  quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
+  unit_of_measure TEXT NOT NULL,
+  unit_price INTEGER NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  po_id INTEGER NOT NULL,
+  po_item_id INTEGER NOT NULL,
+  recorded_by INTEGER NOT NULL,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (arrangement_id) REFERENCES utility_arrangements(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
+  FOREIGN KEY (po_item_id) REFERENCES po_items(id),
+  FOREIGN KEY (recorded_by) REFERENCES users(id)
+);
+
+-- Vendor-managed container or silo. A real holding location, not a free-text note.
+-- Level and capacity are milli-units. Stock stays supplier-owned until drawn.
+CREATE TABLE IF NOT EXISTS bulk_containers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  container_number TEXT UNIQUE NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  catalog_item_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  vessel_type TEXT NOT NULL CHECK (vessel_type IN ('container', 'silo')),
+  unit_of_measure TEXT NOT NULL,
+  capacity_milli INTEGER NOT NULL CHECK (capacity_milli > 0),
+  level_milli INTEGER NOT NULL DEFAULT 0 CHECK (level_milli >= 0),
+  unit_price INTEGER NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(supplier_id, name),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id),
+  CHECK (level_milli <= capacity_milli)
+);
+
+-- Inward fill. Increases measured level only. Does not insert goods_receipts or a PO.
+CREATE TABLE IF NOT EXISTS bulk_fills (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fill_number TEXT UNIQUE NOT NULL,
+  container_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  catalog_item_id INTEGER NOT NULL,
+  quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
+  unit_of_measure TEXT NOT NULL,
+  unit_price INTEGER NOT NULL,
+  level_after_milli INTEGER NOT NULL,
+  filled_by INTEGER NOT NULL,
+  fill_date TEXT NOT NULL,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (container_id) REFERENCES bulk_containers(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id),
+  FOREIGN KEY (filled_by) REFERENCES users(id)
+);
+
+-- Measured draw into company use. Decrements level and opens a bulk payable. No GRN.
+CREATE TABLE IF NOT EXISTS bulk_draws (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  draw_number TEXT UNIQUE NOT NULL,
+  container_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  catalog_item_id INTEGER NOT NULL,
+  quantity_milli INTEGER NOT NULL CHECK (quantity_milli > 0),
+  unit_of_measure TEXT NOT NULL,
+  unit_price INTEGER NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  level_after_milli INTEGER NOT NULL,
+  po_id INTEGER NOT NULL,
+  po_item_id INTEGER NOT NULL,
+  drawn_by INTEGER NOT NULL,
+  draw_date TEXT NOT NULL,
+  notes TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (container_id) REFERENCES bulk_containers(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id),
+  FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
+  FOREIGN KEY (po_item_id) REFERENCES po_items(id),
+  FOREIGN KEY (drawn_by) REFERENCES users(id)
 );
 

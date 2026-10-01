@@ -1,5 +1,16 @@
 import { applySchema, getDb } from './db.js';
 import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
+import { measuredAmountCents } from './measuredQty.js';
+
+const ELECTRICITY_MILLI = 842500;
+const ELECTRICITY_PRICE = 18;
+const ELECTRICITY_AMOUNT = measuredAmountCents(ELECTRICITY_MILLI, ELECTRICITY_PRICE);
+const GAS_MILLI = 310250;
+const GAS_PRICE = 95;
+const GAS_AMOUNT = measuredAmountCents(GAS_MILLI, GAS_PRICE);
+const NITROGEN_MILLI = 450250;
+const NITROGEN_PRICE = 125;
+const NITROGEN_AMOUNT = measuredAmountCents(NITROGEN_MILLI, NITROGEN_PRICE);
 
 console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
 console.warn('Do not run this against a live customer database.');
@@ -10,6 +21,11 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'bulk_draws',
+  'bulk_fills',
+  'bulk_containers',
+  'utility_consumptions',
+  'utility_arrangements',
   'consignment_issues',
   'consignment_receipts',
   'consignment_balances',
@@ -115,6 +131,8 @@ await db.transaction(async () => {
   await insertSupplier.run(4, 'FacilityCare & Janitorial Pro', 'SUP-FCJ', 'Maria Gonzalez', 'orders@facilitycare.com', '+1 (555) 901-2345', '77 Commerce Rd, Chicago, IL', 'Net 30', 4.6, 'active');
   await insertSupplier.run(5, 'Apex Advisory & Digital', 'SUP-AAD', 'Dr. Liam Sterling', 'engagements@apexadvisory.com', '+1 (555) 432-1098', '350 Park Avenue, New York, NY', 'Net 60', 5.0, 'active');
   await insertSupplier.run(6, 'FastTrack Express Freight', 'SUP-FEF', 'Tim O’Brian', 'dispatch@fasttracklogistics.com', '+1 (555) 678-9012', '12 Airport Loop, Dallas, TX', 'Net 15', 4.5, 'active');
+  await insertSupplier.run(7, 'MetroGrid Utilities', 'SUP-MGU', 'Helen Cho', 'billing@metrogrid.example', '+1 (555) 210-4400', '1 Utility Plaza, Austin, TX', 'Net 30', 4.4, 'active');
+  await insertSupplier.run(8, 'Northwind Industrial Gases', 'SUP-NIG', 'Omar Haddad', 'bulk@northwindgases.example', '+1 (555) 773-0190', '900 Pipeline Road, Houston, TX', 'Net 30', 4.7, 'active');
 
   // 5. Non-Production Catalog Items — unit_price in cents
   const insertCatalog = db.prepare(`
@@ -141,6 +159,8 @@ await db.transaction(async () => {
   await insertCatalog.run('SKU-FAC-001', 'Blueair Pro XL Commercial HEPA Air Purifier', 'Commercial grade air filtration for meeting rooms and open spaces', 'Facilities & MRO', 'each', 89000, 4, 3, '💨');
   await insertCatalog.run('SKU-FAC-002', 'OSHA 4-Shelf Industrial First Aid Station', 'Compliant wall-mounted emergency medical care unit', 'Facilities & MRO', 'kit', 21000, 4, 2, '🩹');
   await insertCatalog.run('SKU-FAC-003', 'Commercial Touchless Sanitizer & Dispenser Stand', 'Floor-standing automatic sensor sanitizer station', 'Facilities & MRO', 'set', 14500, 4, 2, '🧴');
+  await insertCatalog.run('SKU-GAS-001', 'Industrial liquid nitrogen', 'Vendor-managed cryogenic nitrogen for the LN2 silo', 'Facilities & MRO', 'kg', 125, 8, 5, '🧪');
+  await insertCatalog.run('SKU-GAS-002', 'Welding-grade argon', 'Vendor-managed argon in a tube bank', 'Facilities & MRO', 'm3', 480, 8, 4, '🛢️');
 
   await insertCatalog.run('SKU-SRV-001', 'Enterprise UX Audit & Design System Sprint', 'Two-week dedicated product design sprint and component audit', 'Consulting & Professional Services', 'sprint', 850000, 5, 14, '📐');
   await insertCatalog.run('SKU-SRV-002', 'SOC 2 Type II Annual Security Penetration Test', 'Full external threat simulation, vulnerability assessment, and report', 'Consulting & Professional Services', 'engagement', 1250000, 5, 21, '🛡️');
@@ -182,6 +202,10 @@ await db.transaction(async () => {
   // Consignment: CSN-2026-001 received 12 sanitizer stands (supplier-owned, no GRN).
   // CSI-2026-001 issued 4 into use as PO-2026-015; INV-FCJ-4402 matches the draw-down.
   // CSN-2026-002 leaves 20 cases of copy paper on hand at HQ facilities cage for a live issue.
+  // Utilities: UTA-2026-001 electricity UCN-2026-001 / PO-2026-016 / INV-MGU-0901 (matched, no GRN).
+  // UTA-2026-003 gas UCN-2026-002 / PO-2026-017 is uninvoiced. UTA-2026-002 water has no reading yet.
+  // Bulk: BVL-2026-001 LN2 silo filled then BDR-2026-001 / PO-2026-018 / INV-NIG-1801.
+  // BVL-2026-002 argon tube bank is filled and not yet drawn.
   // Contracts hub: CNT-2026-001 Figma (expiring soon) is the 1-click renewal walkthrough.
   // PR-2026-010 is the auto-assign walkthrough (Figma seat proposed against CNT-2026-001).
   // Do not convert that live renewal onto INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
@@ -593,6 +617,42 @@ await db.transaction(async () => {
     )
   `).run();
 
+  // Metered utility payables. quantity_* is milli-units (scale 1000). No GRN.
+  // Electricity 842.500 kWh × $0.18 = $151.65. Gas 310.250 therm × $0.95 is not invoiced yet.
+  await db.prepare(`
+    INSERT INTO purchase_orders (
+      id, po_number, requisition_id, supplier_id, created_by, status, total_amount,
+      issue_date, expected_delivery_date, payment_terms, shipping_address, notes,
+      order_source, settlement_kind
+    ) VALUES
+      (16, 'PO-2026-016', NULL, 7, 3, 'received', ?, '2026-09-30', '2026-09-30', 'Net 30', 'Meter E-104',
+        'Utility consumption UCN-2026-001 on UTA-2026-001. Electricity billed by measured usage. No GRN.',
+        'standard', 'utility'),
+      (17, 'PO-2026-017', NULL, 7, 3, 'received', ?, '2026-09-30', '2026-09-30', 'Net 30', 'Meter G-7',
+        'Utility consumption UCN-2026-002 on UTA-2026-003. Gas billed by measured usage. No invoice yet. No GRN.',
+        'standard', 'utility'),
+      (18, 'PO-2026-018', NULL, 8, 3, 'received', ?, '2026-09-18', '2026-09-18', 'Net 30', 'LN2 silo S-1',
+        'Bulk draw BDR-2026-001 from BVL-2026-001. Supplier-owned nitrogen drawn from the silo. No GRN.',
+        'standard', 'bulk')
+  `).run(ELECTRICITY_AMOUNT, GAS_AMOUNT, NITROGEN_AMOUNT);
+  await db.prepare(`
+    INSERT INTO po_items (
+      id, po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price,
+      quantity_received, quantity_consumed, quantity_invoiced, line_type, receipt_basis,
+      quantity_scale, unit_of_measure, settlement_kind
+    ) VALUES
+      (16, 16, NULL, 'HQ campus electricity (E-104) 2026-09-01 to 2026-09-30', 'Facilities & MRO',
+        ?, ?, ?, 0, ?, ?, 'goods', 'grn', 1000, 'kWh', 'utility'),
+      (17, 17, NULL, 'HQ natural gas (G-7) 2026-09-01 to 2026-09-30', 'Facilities & MRO',
+        ?, ?, ?, 0, ?, 0, 'goods', 'grn', 1000, 'therm', 'utility'),
+      (18, 18, NULL, 'Industrial liquid nitrogen drawn from LN2 silo S-1', 'Facilities & MRO',
+        ?, ?, ?, 0, ?, ?, 'goods', 'grn', 1000, 'kg', 'bulk')
+  `).run(
+    ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT, ELECTRICITY_MILLI, ELECTRICITY_MILLI,
+    GAS_MILLI, GAS_PRICE, GAS_AMOUNT, GAS_MILLI,
+    NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_AMOUNT, NITROGEN_MILLI, NITROGEN_MILLI
+  );
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -959,6 +1019,48 @@ await db.transaction(async () => {
     'Exact consignment match: 4 units at $145.00 matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.'
   );
 
+  await insertInvoice.run(
+    14,
+    'INV-MGU-0901',
+    16,
+    7,
+    '2026-10-01',
+    '2026-10-31',
+    ELECTRICITY_AMOUNT,
+    0,
+    ELECTRICITY_AMOUNT,
+    'matched',
+    'perfect_match',
+    null,
+    'Measured match against UCN-2026-001 and PO-2026-016. 842.500 kWh of electricity. No GRN.'
+  );
+  await insertInvoiceItem.run(14, 16, 'HQ campus electricity (E-104) 2026-09-01 to 2026-09-30', ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT);
+  await insertMatch.run(
+    14, 16, 16, ELECTRICITY_MILLI, ELECTRICITY_MILLI, ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_PRICE, 0, 0, 'pass',
+    'Exact measured match: 842.500 kWh at $0.18 matches the utility consumption. No GRN was posted.'
+  );
+
+  await insertInvoice.run(
+    15,
+    'INV-NIG-1801',
+    18,
+    8,
+    '2026-09-20',
+    '2026-10-20',
+    NITROGEN_AMOUNT,
+    0,
+    NITROGEN_AMOUNT,
+    'matched',
+    'perfect_match',
+    null,
+    'Measured match against BDR-2026-001 and PO-2026-018. 450.250 kg drawn from the LN2 silo. No GRN.'
+  );
+  await insertInvoiceItem.run(15, 18, 'Industrial liquid nitrogen drawn from LN2 silo S-1', NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_AMOUNT);
+  await insertMatch.run(
+    15, 18, 18, NITROGEN_MILLI, NITROGEN_MILLI, NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_PRICE, 0, 0, 'pass',
+    'Exact measured match: 450.250 kg at $1.25 matches the bulk draw-down. No GRN was posted.'
+  );
+
   const sanitizerItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-FAC-003'`).get();
   const paperItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-OFF-004'`).get();
   await db.prepare(`
@@ -986,6 +1088,58 @@ await db.transaction(async () => {
       'Four stands placed in the lobby. Payable PO-2026-015.'
     )
   `).run(sanitizerItem.id);
+
+  const nitrogenItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-GAS-001'`).get();
+  const argonItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-GAS-002'`).get();
+  await db.prepare(`
+    INSERT INTO utility_arrangements (
+      id, arrangement_number, supplier_id, utility_type, name, meter_label,
+      unit_of_measure, unit_price, notes, status
+    ) VALUES
+      (1, 'UTA-2026-001', 7, 'electricity', 'HQ campus electricity', 'E-104', 'kWh', ?, 'Main campus meter. Billed from the monthly reading.', 'active'),
+      (2, 'UTA-2026-002', 7, 'water', 'HQ domestic water', 'W-12', 'm3', 210, 'No consumption recorded yet. Enter a reading from Metered Utilities.', 'active'),
+      (3, 'UTA-2026-003', 7, 'gas', 'HQ natural gas', 'G-7', 'therm', ?, 'September usage is on PO-2026-017 and still needs a supplier invoice.', 'active')
+  `).run(ELECTRICITY_PRICE, GAS_PRICE);
+  await db.prepare(`
+    INSERT INTO utility_consumptions (
+      id, consumption_number, arrangement_id, supplier_id, period_start, period_end,
+      reading_previous_milli, reading_current_milli, quantity_milli, unit_of_measure,
+      unit_price, amount_cents, po_id, po_item_id, recorded_by, notes
+    ) VALUES
+      (1, 'UCN-2026-001', 1, 7, '2026-09-01', '2026-09-30', 10240000, 11082500, ?, 'kWh', ?, ?, 16, 16, 3,
+        'Meter E-104 advanced 842.500 kWh. Payable PO-2026-016. Matched by INV-MGU-0901.'),
+      (2, 'UCN-2026-002', 3, 7, '2026-09-01', '2026-09-30', NULL, NULL, ?, 'therm', ?, ?, 17, 17, 3,
+        'Billed quantity from the gas utility. Payable PO-2026-017 is waiting for the invoice.')
+  `).run(
+    ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT,
+    GAS_MILLI, GAS_PRICE, GAS_AMOUNT
+  );
+  await db.prepare(`
+    INSERT INTO bulk_containers (
+      id, container_number, supplier_id, catalog_item_id, name, vessel_type,
+      unit_of_measure, capacity_milli, level_milli, unit_price, notes, status
+    ) VALUES
+      (1, 'BVL-2026-001', 8, ?, 'LN2 silo S-1', 'silo', 'kg', 5000000, 2749750, ?, 'Cryogenic silo at the facilities yard. Supplier-owned until drawn.', 'active'),
+      (2, 'BVL-2026-002', 8, ?, 'Argon tube bank A-3', 'container', 'm3', 800000, 640000, 480, 'Filled and not yet drawn. Draw it from Vendor-Managed Bulk.', 'active')
+  `).run(nitrogenItem.id, NITROGEN_PRICE, argonItem.id);
+  await db.prepare(`
+    INSERT INTO bulk_fills (
+      id, fill_number, container_id, supplier_id, catalog_item_id, quantity_milli,
+      unit_of_measure, unit_price, level_after_milli, filled_by, fill_date, notes
+    ) VALUES
+      (1, 'BFL-2026-001', 1, 8, ?, 3200000, 'kg', ?, 3200000, 3, '2026-09-08', 'Supplier filled the silo. Still owned by Northwind. No GRN.'),
+      (2, 'BFL-2026-002', 2, 8, ?, 640000, 'm3', 480, 640000, 3, '2026-09-09', 'Tube bank delivered full. Still supplier-owned. No GRN.')
+  `).run(nitrogenItem.id, NITROGEN_PRICE, argonItem.id);
+  await db.prepare(`
+    INSERT INTO bulk_draws (
+      id, draw_number, container_id, supplier_id, catalog_item_id, quantity_milli,
+      unit_of_measure, unit_price, amount_cents, level_after_milli,
+      po_id, po_item_id, drawn_by, draw_date, notes
+    ) VALUES (
+      1, 'BDR-2026-001', 1, 8, ?, 450250, 'kg', ?, ?, 2749750,
+      18, 18, 3, '2026-09-18', '450.250 kg drawn into the lab. Payable PO-2026-018. No GRN.'
+    )
+  `).run(nitrogenItem.id, NITROGEN_PRICE, NITROGEN_AMOUNT);
 
   const insertDupFlag = db.prepare(`
     INSERT INTO invoice_duplicate_flags (
@@ -1316,10 +1470,21 @@ await db.transaction(async () => {
     UPDATE goods_receipts SET created_at = '2026-09-07 15:00:00' WHERE id = 11;
     UPDATE invoices SET created_at = datetime('now', '-8 days') WHERE id = 11;
     UPDATE invoices SET created_at = datetime('now', '-7 days') WHERE id = 12;
+
+    UPDATE purchase_orders SET created_at = '2026-09-30 09:00:00' WHERE id IN (16, 17);
+    UPDATE purchase_orders SET created_at = '2026-09-18 11:00:00' WHERE id = 18;
+    UPDATE utility_consumptions SET created_at = '2026-09-30 09:05:00' WHERE id IN (1, 2);
+    UPDATE bulk_fills SET created_at = '2026-09-08 08:00:00' WHERE id = 1;
+    UPDATE bulk_fills SET created_at = '2026-09-09 08:00:00' WHERE id = 2;
+    UPDATE bulk_draws SET created_at = '2026-09-18 11:05:00' WHERE id = 1;
+    UPDATE invoices SET created_at = '2026-10-01 10:00:00' WHERE id = 14;
+    UPDATE invoices SET created_at = '2026-09-20 10:00:00' WHERE id = 15;
   `);
 
 });
 
 console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
+console.log('   Utilities: UTA-2026-001 electricity (INV-MGU-0901 matched), UTA-2026-003 gas awaiting invoice, UTA-2026-002 water with no reading.');
+console.log('   Bulk: LN2 silo BVL-2026-001 drawn as PO-2026-018 (INV-NIG-1801). Argon tube bank BVL-2026-002 is filled and not drawn.');
 console.log(`   Demo login (local only): alice.chen@company.com / ${DEMO_SEED_PASSWORD}`);
 console.log('   Same password for Bob, Carol, David, Elena, Priya, James, Sofia. Never use this in a customer DB.');

@@ -18,11 +18,28 @@ import {
 import { api } from '../api';
 import { documentTrailLookupForPurchaseOrder } from '../documentTrailNav';
 import { formatMoney } from '../money';
-import { formatLineQuantity, isConsignmentLine, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
+import { formatLineQuantity, isConsignmentLine, isMeasuredSettlement, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
+import { formatMeasured } from '../measuredQty';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 import ChangeOrderModal from '../components/ChangeOrderModal';
 
 const AMENDABLE_PO_STATUSES = ['issued', 'acknowledged', 'partially_received', 'received'];
+
+function poOrigin(po) {
+  if (po.order_source === 'consignment') return 'Consignment';
+  if (po.settlement_kind === 'utility') return 'Utility';
+  if (po.settlement_kind === 'bulk') return 'Bulk draw';
+  return po.pr_number || 'Direct Order';
+}
+
+function fulfillmentNote(po) {
+  if (po.order_source === 'consignment') return ' · consignment';
+  if (po.settlement_kind === 'utility') return ' · utility reading';
+  if (po.settlement_kind === 'bulk') return ' · bulk draw';
+  if (po.service_line_count > 0 && po.goods_line_count > 0) return ' · mixed PO';
+  if (po.service_line_count > 0) return ' · SES';
+  return ' · GRN';
+}
 
 export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, convertRequisitionId }) {
   const [orders, setOrders] = useState([]);
@@ -171,7 +188,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         <div className="text-[10px] text-slate-400">{po.supplier_code}</div>
                       </td>
                       <td className="py-3 px-4 text-slate-600 font-mono">
-                        {po.order_source === 'consignment' ? 'Consignment' : (po.pr_number || 'Direct Order')}
+                        {poOrigin(po)}
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-900 text-sm">
                         ${formatMoney(po.total_amount)}
@@ -185,14 +202,10 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                           />
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
-                          {fulfilled} of {po.total_qty_ordered} units fulfilled ({pct}%)
-                          {po.order_source === 'consignment'
-                            ? ' · consignment'
-                            : (po.service_line_count > 0 && po.goods_line_count > 0)
-                              ? ' · mixed PO'
-                              : po.service_line_count > 0
-                                ? ' · SES'
-                                : ' · GRN'}
+                          {isMeasuredSettlement(po)
+                            ? `${formatMeasured(fulfilled, po.measured_uom)} of ${formatMeasured(po.total_qty_ordered, po.measured_uom)} fulfilled (${pct}%)`
+                            : `${fulfilled} of ${po.total_qty_ordered} units fulfilled (${pct}%)`}
+                          {fulfillmentNote(po)}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-slate-500">{po.issue_date}</td>
@@ -288,7 +301,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   <GitBranch className="w-3.5 h-3.5" />
                   <span>Document trail</span>
                 </button>
-                {AMENDABLE_PO_STATUSES.includes(selectedPO.status) && (
+                {AMENDABLE_PO_STATUSES.includes(selectedPO.status) && !isMeasuredSettlement(selectedPO) && (
                   <button
                     onClick={() => setShowChangeOrder(true)}
                     className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg font-medium flex items-center space-x-1"
@@ -363,10 +376,11 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   <tbody className="divide-y divide-slate-100">
                     {selectedPO.items?.map((item) => {
                       const service = isServiceLine(item);
+                      const measured = isMeasuredSettlement(item);
                       const consignment = isConsignmentLine(item);
                       const fulfilled = service
                         ? (item.quantity_accepted || 0)
-                        : consignment
+                        : (measured || consignment)
                           ? (item.quantity_consumed || 0)
                           : item.quantity_received;
                       return (
@@ -381,7 +395,12 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         <td className="py-2.5 px-3 text-center font-semibold">{formatLineQuantity(item)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <span className={`font-semibold ${fulfilled >= item.quantity ? 'text-emerald-700' : 'text-amber-600'}`}>
-                            {formatLineQuantity({ quantity: fulfilled, service_basis: service ? item.service_basis : null })} {service ? 'SES' : consignment ? 'drawn' : 'GRN'}
+                            {formatLineQuantity({
+                              quantity: fulfilled,
+                              quantity_scale: item.quantity_scale,
+                              unit_of_measure: item.unit_of_measure,
+                              service_basis: service ? item.service_basis : null
+                            })} {service ? 'SES' : measured ? 'consumed' : consignment ? 'drawn' : 'GRN'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">${formatMoney(item.unit_price)}</td>
@@ -410,7 +429,11 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   <p className="leading-relaxed">
                     {selectedPO.order_source === 'consignment'
                       ? `This PO is a consignment draw-down. Supplier-owned stock was issued into company use. Invoice match uses the drawn quantity. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
-                      : `Goods are received on a GRN; services are accepted on a Service Entry Sheet. Invoices must reference Purchase Order #${selectedPO.po_number}. Goods match PO+GRN+invoice; services match PO+SES+invoice.`}
+                      : selectedPO.settlement_kind === 'utility'
+                        ? `This PO bills measured utility consumption. Invoice match uses the recorded usage. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
+                        : selectedPO.settlement_kind === 'bulk'
+                          ? `This PO is a vendor-managed bulk draw-down. Invoice match uses the measured quantity taken from the vessel. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
+                          : `Goods are received on a GRN; services are accepted on a Service Entry Sheet. Invoices must reference Purchase Order #${selectedPO.po_number}. Goods match PO+GRN+invoice; services match PO+SES+invoice.`}
                   </p>
                 </div>
                 <div className="border border-dashed border-slate-300 rounded-xl p-3 flex flex-col justify-between">

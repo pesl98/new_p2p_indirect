@@ -1,6 +1,6 @@
 import { lineTotalCents, toQty } from './money.js';
 import { nextDocumentNumber } from './docNumbers.js';
-import { isServiceLine, quantityPhrase } from './lineType.js';
+import { isMeasuredSettlement, isServiceLine, quantityPhrase } from './lineType.js';
 import { refreshPoFulfillmentStatus } from './poFulfillment.js';
 
 export class ServiceEntrySheetError extends Error {
@@ -37,6 +37,14 @@ async function collectOverAcceptances(db, poId, items) {
     if (!poItem) {
       throw new ServiceEntrySheetError(
         `PO line ${item.po_item_id} was not found on this purchase order.`
+      );
+    }
+    if (isMeasuredSettlement(poItem)) {
+      const where = poItem.settlement_kind === 'bulk'
+        ? 'Draw it from the vendor-managed vessel'
+        : 'Record it on Metered Utilities';
+      throw new ServiceEntrySheetError(
+        `PO line ${poItem.id} (${poItem.item_description}) is measured consumption. ${where}, not a service entry sheet or a GRN.`
       );
     }
     if (!isServiceLine(poItem)) {

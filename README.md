@@ -58,6 +58,20 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
 - Issue stock into use (`CSI-YYYY-NNN`). On-hand goes down and a consignment PO is created (`order_source = consignment`, `quantity_consumed` set, `quantity_received` left at 0). AP enters the supplier invoice against that PO; match uses the drawn quantity.
 - Seed: **CSN-2026-001** received 12 FacilityCare sanitizer stands at HQ facilities cage. **CSI-2026-001** issued 4 as **PO-2026-015**, matched by **INV-FCJ-4402**. **CSN-2026-002** is 20 cases of WorkSpace copy paper still on hand (issue it from the Consignment screen).
 
+**Metered utilities** (water, electricity, gas billed by consumption)
+
+- Open a supply arrangement (`UTA-YYYY-NNN`) with a meter, unit of measure, and price per unit. That is not a goods purchase order.
+- Record a meter reading or billed quantity (`UCN-YYYY-NNN`). Usage is stored to 3 decimal places (milli-units). A payable PO is created (`settlement_kind = utility`, `quantity_consumed` set, `quantity_received` left at 0). No GRN.
+- AP matches the supplier invoice to that measured quantity.
+- Seed: **UTA-2026-001** HQ electricity, **UCN-2026-001** / **PO-2026-016** / **INV-MGU-0901** (842.500 kWh). **UTA-2026-003** gas (**PO-2026-017**) is waiting for an invoice. **UTA-2026-002** water has no reading yet.
+
+**Vendor-managed bulk** (gases and fluids in a container or silo)
+
+- A vessel (`BVL-YYYY-NNN`) has a type (container or silo), capacity, unit of measure, and current measured level. It is not the free-text consignment location, and quantity is not a whole catalog unit.
+- Fill (`BFL-YYYY-NNN`) increases supplier-owned level. No PO and no GRN.
+- Draw (`BDR-YYYY-NNN`) decreases the level and opens a payable (`settlement_kind = bulk`) the same way a consignment issue does: `quantity_consumed` set, no GRN. AP matches the drawn quantity.
+- Seed: **BVL-2026-001** LN2 silo, draw **BDR-2026-001** / **PO-2026-018** / **INV-NIG-1801** (450.250 kg). **BVL-2026-002** argon tube bank is filled and not yet drawn.
+
 5. **Service Entry Sheets (SES)**
    - Acceptance flow for **service** PO lines (consulting, SaaS, marketing): draft → submitted → accepted/rejected.
    - A service line is a **lump sum**, **hours**, or **days** (or a legacy unit quantity such as seats). Amount is qty × rate in integer cents.
@@ -68,6 +82,7 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
 6. **Dual Invoice Matching (goods 3-way / services SES-backed)**
    - **Goods lines:** PO vs GRN received vs invoice (unchanged 3-way).
    - **Consignment draw-down lines:** PO vs quantity consumed vs invoice. Physical GRN is not consulted.
+   - **Utility and bulk lines:** PO vs measured quantity consumed vs invoice. Physical GRN is not consulted.
    - **Service lines:** PO vs SES-accepted vs invoice. Physical GRN is not required.
    - Mixed POs combine both; overall invoice status reflects any failing line.
    - Price rules unchanged (exact cents, 1% tolerated warning, else fail).
@@ -314,13 +329,15 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items (`source_contract_id` nullable pointer at `contracts.id`; `contract_use_status` `none` | `skipped` | `proposed` | `allowed` | `refused`)
 - `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
 - `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
-- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `quantity_consumed`, `receipt_basis`, `order_source`, `line_type`, `revision`, `change_order_count`)
+- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `quantity_consumed`, `receipt_basis`, `order_source`, `settlement_kind`, `quantity_scale`, `line_type`, `revision`, `change_order_count`)
 - `po_change_orders` & `po_change_order_items`: Formal PO revisions (`CO-YYYY-NNN`, before/after totals in cents)
 - `goods_receipts` & `goods_receipt_items`: Inward receiving records (company-owned goods)
-- `consignment_balances`, `consignment_receipts`, `consignment_issues`: Supplier-owned on-hand (`CSN-` / `CSI-`). Not a GRN.
+- `consignment_balances`, `consignment_receipts`, `consignment_issues`: Supplier-owned whole units (`CSN-` / `CSI-`) at a free-text location. Not a GRN.
+- `utility_arrangements`, `utility_consumptions`: Metered water, electricity, and gas (`UTA-` / `UCN-`). Consumption opens a payable. Not a GRN.
+- `bulk_containers`, `bulk_fills`, `bulk_draws`: Vendor-managed container or silo (`BVL-` / `BFL-` / `BDR-`). Measured level; a draw opens a payable. Not discrete consignment and not a GRN.
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
 - `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay; `duplicate_status` `clear` | `suspect` | `confirmed_unique` | `confirmed_duplicate`)
-- `match_results`: Line item match logs & variance records (GRN, consignment draw-down, or SES receipt basis)
+- `match_results`: Line item match logs & variance records (GRN, consignment draw-down, measured utility/bulk consumption, or SES receipt basis)
 - `invoice_exception_dispositions`: Structured AP exception resolutions (accept / short-pay / reject / return-to-buyer)
 - `invoice_duplicate_flags`: Likely-duplicate candidate links + AP dispositions (confirm unique / confirm duplicate)
 - `payment_runs` & `payment_run_items`: AP payment proposals (`PAY-YYYY-NNN`; billed/payable snapshots in integer cents; execute reuses mark-paid)

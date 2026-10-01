@@ -598,6 +598,42 @@ async function migrateConsignmentStock(database) {
   }
 }
 
+const PURCHASE_ORDERS_SETTLEMENT_KIND_SQL =
+  `ALTER TABLE purchase_orders ADD COLUMN settlement_kind TEXT NOT NULL DEFAULT 'purchase' CHECK (settlement_kind IN ('purchase', 'utility', 'bulk'))`;
+
+const PO_ITEMS_SETTLEMENT_KIND_SQL =
+  `ALTER TABLE po_items ADD COLUMN settlement_kind TEXT NOT NULL DEFAULT 'purchase' CHECK (settlement_kind IN ('purchase', 'utility', 'bulk'))`;
+
+const PO_ITEMS_QUANTITY_SCALE_SQL =
+  `ALTER TABLE po_items ADD COLUMN quantity_scale INTEGER NOT NULL DEFAULT 1 CHECK (quantity_scale IN (1, 1000))`;
+
+const PO_ITEMS_UNIT_OF_MEASURE_SQL =
+  `ALTER TABLE po_items ADD COLUMN unit_of_measure TEXT`;
+
+/**
+ * Existing databases gain utility/bulk tables from schema.sql and measured
+ * payable columns here. Discrete consignment columns are left unchanged.
+ * settlement_kind CHECK is on the new column (SQLite allows that on ADD COLUMN).
+ */
+async function migrateMeasuredSettlement(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('purchase_orders') && !(await tableHasColumn(database, 'purchase_orders', 'settlement_kind'))) {
+    await maybe(database.exec(PURCHASE_ORDERS_SETTLEMENT_KIND_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'quantity_scale'))) {
+    await maybe(database.exec(PO_ITEMS_QUANTITY_SCALE_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'unit_of_measure'))) {
+    await maybe(database.exec(PO_ITEMS_UNIT_OF_MEASURE_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'settlement_kind'))) {
+    await maybe(database.exec(PO_ITEMS_SETTLEMENT_KIND_SQL));
+  }
+}
+
 async function migratePurchaseOrderChangeOrders(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -632,6 +668,7 @@ export async function applySchema(database) {
   await migratePaymentRuns(database);
   await migrateUsersAuth(database);
   await migrateConsignmentStock(database);
+  await migrateMeasuredSettlement(database);
   return database;
 }
 
