@@ -19,6 +19,7 @@ import {
   Banknote
 } from 'lucide-react';
 import { api } from '../api';
+import { documentTrailQueryFromLookup } from '../documentTrailNav';
 import { formatMoney } from '../money';
 
 const STAGE_ICONS = {
@@ -126,7 +127,7 @@ function eventIcon(kind) {
   }
 }
 
-export default function DocumentTrailView({ onNavigate, lookupQ }) {
+export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState({ requisitions: [], purchase_orders: [], invoices: [] });
   const [trail, setTrail] = useState(null);
@@ -161,10 +162,24 @@ export default function DocumentTrailView({ onNavigate, lookupQ }) {
     }
   };
 
+  const lookupKey = JSON.stringify(
+    documentTrailQueryFromLookup(
+      lookup && (
+        lookup.po_id != null
+        || lookup.po_number
+        || lookup.requisition_id != null
+        || lookup.pr_number
+        || lookup.q
+      )
+        ? lookup
+        : (lookupQ ? { q: lookupQ } : null)
+    )
+  );
+
   useEffect(() => {
     loadSuggestions('');
-    loadTrail({ q: lookupQ || 'PR-2026-001' });
-  }, [lookupQ]);
+    loadTrail(JSON.parse(lookupKey));
+  }, [lookupKey]);
 
   const handleSearch = (event) => {
     event.preventDefault();

@@ -247,7 +247,11 @@ export default function App() {
           )}
 
           {activeTab === 'document_trail' && (
-            <DocumentTrailView onNavigate={handleNavigate} lookupQ={navFocus?.q} />
+            <DocumentTrailView
+              onNavigate={handleNavigate}
+              lookupQ={navFocus?.q}
+              lookup={navFocus}
+            />
           )}
 
           {activeTab === 'requisitions' && (

@@ -12,9 +12,11 @@ import {
   Building2, 
   X,
   ExternalLink,
-  FileEdit
+  FileEdit,
+  GitBranch
 } from 'lucide-react';
 import { api } from '../api';
+import { documentTrailLookupForPurchaseOrder } from '../documentTrailNav';
 import { formatMoney } from '../money';
 import { formatLineQuantity, isConsignmentLine, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
@@ -272,12 +274,20 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden">
             {/* Modal Controls */}
-            <div className="p-4 bg-slate-800 text-white flex items-center justify-between">
+            <div className="p-4 bg-slate-800 text-white flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center space-x-2 text-xs">
                 <FileText className="w-4 h-4 text-emerald-400" />
                 <span className="font-bold">Official Purchase Order Document</span>
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.('document_trail', documentTrailLookupForPurchaseOrder(selectedPO))}
+                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg font-medium flex items-center space-x-1"
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  <span>Document trail</span>
+                </button>
                 {AMENDABLE_PO_STATUSES.includes(selectedPO.status) && (
                   <button
                     onClick={() => setShowChangeOrder(true)}
