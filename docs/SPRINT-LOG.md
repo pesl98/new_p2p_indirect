@@ -45,7 +45,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 
 | Sprint | Date | Goal | PR | Title | Merge SHA | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | _(opened with this change; number filled after the PR exists)_ | Sprint 1 — Full authorization rewrite | | done |
+| 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | [#46](https://github.com/pesl98/new_p2p_indirect/pull/46) | Sprint 1 — Full authorization rewrite | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -53,7 +53,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 
 **Goal:** End demo-open / body-persona auth. The signed-in user is the actor on mutating routes and on sensitive reads (approvals inbox, buyer inbox, AP). Fail closed. Design the session so OIDC/SAML can mint the same cookie later. Do not build SSO here.
 
-**PR:** filled in after open. Merge SHA stays blank until merge.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/46 (#46). Merge SHA stays blank until merge.
 
 **Status:** done (awaiting Architect + Peter review; do not merge from this PR).
 
