@@ -159,7 +159,7 @@ export default function ConvertRequisitionModal({
     try {
       const converted = await api.createPOFromRequisition({
         requisition_id: selectedPR.id,
-        created_by: currentUser?.id || 3,
+        created_by: currentUser?.id,
         shipping_address: shippingAddress,
         notes: poNotes || undefined,
         payment_terms: paymentTerms,

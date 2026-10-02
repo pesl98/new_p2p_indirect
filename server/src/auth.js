@@ -2,7 +2,11 @@
  * Per-tenant session auth (httpOnly cookie + bcrypt password hashes).
  *
  * Identity is local to the connected database (SQLite file or Turso DB).
- * There is no org_id / shared-row tenancy and no SSO in this phase.
+ * There is no org_id / shared-row tenancy. SSO / SAML / OIDC is not implemented
+ * in this phase. When it is, the IdP callback should resolve an external
+ * subject to a local `users.id` and call `signSessionToken`. The `pf_session`
+ * cookie stays the only request identity — do not add a second header or
+ * accept persona ids from the body.
  *
  * Cookie payload is HMAC-SHA256 signed — not a JWT library. SESSION_SECRET
  * must be set in customer deploys; local/dev falls back to an insecure default.
@@ -18,6 +22,12 @@ export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** Documented local-demo password only. Never a production secret. */
 export const DEMO_SEED_PASSWORD = 'ProcureFlow!demo';
+
+/**
+ * Active identity provider. `local` is email + password in this database.
+ * Reserved for a later OIDC/SAML plug-in; it does not enable SSO.
+ */
+export const IDENTITY_PROVIDER = 'local';
 
 const DEV_SESSION_SECRET = 'procureflow-dev-insecure-session-secret';
 
@@ -39,7 +49,8 @@ export function loadAuthConfig(env = process.env, overrides = {}) {
     cookieSecure,
     demoPersonaSwitcher: overrides.demoPersonaSwitcher ?? isDemoPersonaSwitcher(env),
     sessionTtlSeconds: overrides.sessionTtlSeconds || SESSION_TTL_SECONDS,
-    usingDevSecret: !String(overrides.sessionSecret || env.SESSION_SECRET || '').trim()
+    usingDevSecret: !String(overrides.sessionSecret || env.SESSION_SECRET || '').trim(),
+    identityProvider: IDENTITY_PROVIDER
   };
 }
 

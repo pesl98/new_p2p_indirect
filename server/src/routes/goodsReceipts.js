@@ -1,4 +1,5 @@
 import express from 'express';
+import { withSessionActor } from '../requestActor.js';
 import { createGoodsReceipt } from '../goodsReceiptsService.js';
 
 const router = express.Router();
@@ -75,7 +76,11 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const db = req.db;
-    const result = await createGoodsReceipt(db, req.body);
+    const body = withSessionActor(req, req.body, {
+      ids: ['received_by'],
+      names: ['actor_name']
+    });
+    const result = await createGoodsReceipt(db, body);
     res.status(201).json({
       receiptId: result.grId,
       grnNumber: result.grnNumber,

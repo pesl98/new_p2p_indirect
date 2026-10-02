@@ -25,6 +25,7 @@ import AdminUsersView from './views/AdminUsersView';
 import LoginView from './views/LoginView';
 import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
 import { api } from './api';
+import { DEMO_SEED_PASSWORD } from './demoAuth';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -42,7 +43,7 @@ export default function App() {
 
   const demoSwitcher = Boolean(authConfig?.demoPersonaSwitcher);
   const bootstrapNeeded = Boolean(authConfig?.bootstrapNeeded) && !sessionUser;
-  const needsLogin = Boolean(authConfig) && !sessionUser && !demoSwitcher;
+  const needsLogin = Boolean(authConfig) && !sessionUser;
 
   const fetchCoreData = async ({ preferUser } = {}) => {
     try {
@@ -57,8 +58,6 @@ export default function App() {
       } else if (sessionUser) {
         const fresh = list.find((u) => u.id === sessionUser.id) || sessionUser;
         setCurrentUser(fresh);
-      } else if (demoSwitcher && list.length > 0) {
-        setCurrentUser((prev) => prev || list.find((u) => u.status !== 'inactive') || list[0]);
       }
       if (metrics) setAnalytics(metrics);
     } catch (err) {
@@ -92,12 +91,12 @@ export default function App() {
 
   useEffect(() => {
     if (!authConfig) return;
-    if (!sessionUser && !demoSwitcher) {
+    if (!sessionUser) {
       setLoading(false);
       return;
     }
-    fetchCoreData({ preferUser: sessionUser || undefined });
-  }, [authConfig, sessionUser, demoSwitcher]);
+    fetchCoreData({ preferUser: sessionUser });
+  }, [authConfig, sessionUser]);
 
   useEffect(() => {
     if (!['finance', 'admin'].includes(currentUser?.role)) {
@@ -147,24 +146,29 @@ export default function App() {
     return () => { cancelled = true; };
   }, [currentUser, analytics]);
 
-  const handleSelectUser = (user) => {
-    setCurrentUser(user);
-    if (user?.role !== 'admin' && (activeTab === 'org_admin' || activeTab === 'user_admin')) {
+  const handleSelectUser = async (user) => {
+    if (!demoSwitcher || !user?.email || user.id === sessionUser?.id) return;
+    const result = await api.login(user.email, DEMO_SEED_PASSWORD);
+    const signedIn = result.user;
+    setSessionUser(signedIn);
+    setCurrentUser(signedIn);
+    setAuthConfig((prev) => prev ? { ...prev, bootstrapNeeded: false } : prev);
+    if (signedIn?.role !== 'admin' && (activeTab === 'org_admin' || activeTab === 'user_admin')) {
       setActiveTab('dashboard');
     }
-    if (user?.role !== 'requester' && activeTab === 'buyer_inbox') {
+    if (signedIn?.role !== 'requester' && activeTab === 'buyer_inbox') {
       setActiveTab('dashboard');
     }
-    if (!DELEGATION_ROLES.includes(user?.role) && activeTab === 'delegations') {
+    if (!DELEGATION_ROLES.includes(signedIn?.role) && activeTab === 'delegations') {
       setActiveTab('dashboard');
     }
-    if (!['finance', 'admin'].includes(user?.role) && activeTab === 'ap_aging') {
+    if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'ap_aging') {
       setActiveTab('dashboard');
     }
-    if (!['finance', 'admin'].includes(user?.role) && activeTab === 'payment_runs') {
+    if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'payment_runs') {
       setActiveTab('dashboard');
     }
-    if (!['finance', 'admin'].includes(user?.role) && activeTab === 'duplicate_suspects') {
+    if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'duplicate_suspects') {
       setActiveTab('dashboard');
     }
   };

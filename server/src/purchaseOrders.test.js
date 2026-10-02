@@ -12,6 +12,11 @@ import {
   annotateResolvedSupplier,
   listSupplierRemaps
 } from './purchaseOrdersService.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(3, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -588,7 +593,7 @@ describe('POST /api/purchase-orders/from-requisition', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/purchase-orders/from-requisition`, {
+      const response = await authed(`${base}/api/purchase-orders/from-requisition`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -608,7 +613,7 @@ describe('POST /api/purchase-orders/from-requisition', () => {
       assert.equal(body.purchase_orders[1].supplier_name, 'CloudCore Software LLC');
       assert.match(body.message, /2 purchase orders/i);
 
-      const detail = await fetch(`${base}/api/requisitions/${prId}`);
+      const detail = await authed(`${base}/api/requisitions/${prId}`);
       const pr = await detail.json();
       assert.equal(pr.status, 'converted_to_po');
       assert.equal(pr.items[0].resolved_supplier_id, 1);
@@ -635,7 +640,7 @@ describe('POST /api/purchase-orders/from-requisition', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/purchase-orders/from-requisition`, {
+      const response = await authed(`${base}/api/purchase-orders/from-requisition`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requisition_id: prId, created_by: 3 })

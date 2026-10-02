@@ -18,12 +18,15 @@ Usage:
 Checks (exit 1 if any fail):
   GET /api/health          status=ok, db=sqlite|turso-http
   GET /api/auth/config     auth=session, bootstrapNeeded boolean
-  GET /api/users           JSON array (empty tenant → [])
+  GET /api/users           401 without a session (directory is session-gated)
   GET /api/auth/me         401 without a session cookie
-  GET /api/departments     JSON array
-  GET /api/catalog         JSON array
+  GET /api/departments     401 without a session
+  GET /api/catalog         401 without a session
   POST /api/auth/login     optional, when --email/--password (or SMOKE_*) set
   GET  /api/auth/me        optional, session user after login
+  GET /api/users           optional, JSON array after login
+  GET /api/departments     optional, JSON array after login
+  GET /api/catalog         optional, JSON array after login
 
 Env:
   BASE_URL                 Default ${DEFAULT_BASE_URL}
@@ -274,6 +277,15 @@ export function checkUnauthenticatedMeResponse({ status, json, text } = {}) {
   return pass('GET /api/auth/me', '401 unauthenticated (session gate ok)', { status });
 }
 
+export function checkUnauthenticatedResource(name, { status, json, text } = {}) {
+  const hint = configErrorHint(status, json, text);
+  if (hint) return fail(name, hint, { status });
+  if (status !== 401) {
+    return fail(name, `expected HTTP 401 without a session, got ${status}`, { status, json });
+  }
+  return pass(name, '401 unauthenticated', { status });
+}
+
 export function checkJsonArrayResponse(name, { status, json, text } = {}) {
   const hint = configErrorHint(status, json, text);
   if (hint) return fail(name, hint, { status });
@@ -388,11 +400,12 @@ export async function runSmokeChecks({
   }
 
   try {
-    checks.push(checkUsersResponse(await get('/api/users'), {
-      bootstrapNeeded: authConfig?.bootstrapNeeded
-    }));
+    checks.push(checkUnauthenticatedResource(
+      'GET /api/users (no session)',
+      await get('/api/users')
+    ));
   } catch (error) {
-    checks.push(fail('GET /api/users', describeFetchError(error, `${origin}/api/users`)));
+    checks.push(fail('GET /api/users (no session)', describeFetchError(error, `${origin}/api/users`)));
   }
 
   try {
@@ -402,15 +415,21 @@ export async function runSmokeChecks({
   }
 
   try {
-    checks.push(checkJsonArrayResponse('GET /api/departments', await get('/api/departments')));
+    checks.push(checkUnauthenticatedResource(
+      'GET /api/departments (no session)',
+      await get('/api/departments')
+    ));
   } catch (error) {
-    checks.push(fail('GET /api/departments', describeFetchError(error, `${origin}/api/departments`)));
+    checks.push(fail('GET /api/departments (no session)', describeFetchError(error, `${origin}/api/departments`)));
   }
 
   try {
-    checks.push(checkJsonArrayResponse('GET /api/catalog', await get('/api/catalog')));
+    checks.push(checkUnauthenticatedResource(
+      'GET /api/catalog (no session)',
+      await get('/api/catalog')
+    ));
   } catch (error) {
-    checks.push(fail('GET /api/catalog', describeFetchError(error, `${origin}/api/catalog`)));
+    checks.push(fail('GET /api/catalog (no session)', describeFetchError(error, `${origin}/api/catalog`)));
   }
 
   if (wantLogin) {
@@ -423,10 +442,26 @@ export async function runSmokeChecks({
       const loginCheck = checkLoginResponse(login);
       checks.push(loginCheck);
       if (loginCheck.ok) {
-        const me = await get('/api/auth/me', {
-          headers: { Cookie: login.cookie }
-        });
+        const authed = { headers: { Cookie: login.cookie } };
+        const me = await get('/api/auth/me', authed);
         checks.push(checkAuthenticatedMeResponse(me, { email }));
+        try {
+          checks.push(checkUsersResponse(await get('/api/users', authed), {
+            bootstrapNeeded: authConfig?.bootstrapNeeded
+          }));
+        } catch (error) {
+          checks.push(fail('GET /api/users', describeFetchError(error, `${origin}/api/users`)));
+        }
+        try {
+          checks.push(checkJsonArrayResponse('GET /api/departments', await get('/api/departments', authed)));
+        } catch (error) {
+          checks.push(fail('GET /api/departments', describeFetchError(error, `${origin}/api/departments`)));
+        }
+        try {
+          checks.push(checkJsonArrayResponse('GET /api/catalog', await get('/api/catalog', authed)));
+        } catch (error) {
+          checks.push(fail('GET /api/catalog', describeFetchError(error, `${origin}/api/catalog`)));
+        }
       }
     } catch (error) {
       checks.push(fail('POST /api/auth/login', describeFetchError(error, `${origin}/api/auth/login`)));

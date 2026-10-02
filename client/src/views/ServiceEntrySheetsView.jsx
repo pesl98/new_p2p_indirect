@@ -123,7 +123,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
     try {
       const created = await api.createServiceEntrySheet({
         po_id: Number(selectedPOId),
-        created_by: currentUser?.id || 1,
+        created_by: currentUser?.id,
         service_period_start: periodStart || null,
         service_period_end: periodEnd || null,
         notes: sesNotes,
@@ -165,7 +165,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
   const handleAccept = async (id) => {
     try {
       await api.acceptServiceEntrySheet(id, {
-        decided_by: currentUser?.id || 3,
+        decided_by: currentUser?.id,
         actor_name: currentUser?.name || 'Procurement Officer',
         decision_comments: decisionComments,
         allow_over_acceptance: allowOverAcceptance
@@ -181,7 +181,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
   const handleReject = async (id) => {
     try {
       await api.rejectServiceEntrySheet(id, {
-        decided_by: currentUser?.id || 3,
+        decided_by: currentUser?.id,
         actor_name: currentUser?.name || 'Procurement Officer',
         decision_comments: decisionComments
       });

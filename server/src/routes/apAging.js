@@ -1,7 +1,9 @@
 import express from 'express';
 import { listApAging } from '../apAgingService.js';
+import { AP_ROLES, requireRole } from '../requestActor.js';
 
 const router = express.Router();
+router.use(requireRole(...AP_ROLES));
 
 function httpError(res, error) {
   const status = error.statusCode || 500;
@@ -9,7 +11,7 @@ function httpError(res, error) {
   return res.status(status).json({ error: error.message });
 }
 
-// AP payment aging / payables queue. Demo-open (no JWT), same as invoices.
+// AP payment aging / payables queue. Finance or admin session.
 router.get('/', async (req, res) => {
   try {
     const payload = await listApAging(req.db, {

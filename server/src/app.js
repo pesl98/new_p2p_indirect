@@ -30,6 +30,7 @@ import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
+import { requireApiSession } from './requestActor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +80,7 @@ export function createApp(options = {}) {
   });
 
   app.use(attachSession);
+  app.use(requireApiSession);
 
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);

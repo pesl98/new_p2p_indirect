@@ -135,7 +135,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
     try {
       await api.createGoodsReceipt({
         po_id: Number(selectedPOId),
-        received_by: currentUser?.id || 3,
+        received_by: currentUser?.id,
         receipt_date: receiptDate,
         carrier_tracking: carrierTracking,
         delivery_note_number: deliveryNote,

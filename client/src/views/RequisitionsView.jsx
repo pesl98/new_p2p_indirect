@@ -195,7 +195,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
     }
     try {
       const payload = {
-        requester_id: currentUser?.id || 1,
+        requester_id: currentUser?.id,
         department_id: departmentId,
         justification,
         needed_by_date: neededByDate,

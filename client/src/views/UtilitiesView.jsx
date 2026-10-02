@@ -214,7 +214,7 @@ function OpenModal({ suppliers, currentUser, onClose, onSaved }) {
         unit_of_measure: unitOfMeasure,
         unit_price: toCents(unitPrice),
         notes,
-        opened_by: currentUser?.id || 3,
+        opened_by: currentUser?.id,
         actor_name: currentUser?.name
       });
       await onSaved(result);
@@ -295,7 +295,7 @@ function RecordModal({ arrangement, currentUser, onClose, onSaved }) {
         period_start: periodStart,
         period_end: periodEnd,
         notes,
-        recorded_by: currentUser?.id || 3,
+        recorded_by: currentUser?.id,
         actor_name: currentUser?.name
       };
       if (mode === 'readings') {

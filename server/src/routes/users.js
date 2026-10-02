@@ -26,9 +26,8 @@ function bcryptRounds(req) {
   return (req.authConfig || loadAuthConfig()).bcryptRounds;
 }
 
-// List all users (with department details). GET stays demo-open so the
-// optional persona switcher can load people without a session. Mutating
-// routes require a logged-in admin (req.user) — see docs/ARCHITECTURE.md.
+// Directory of users. Requires a session (see requireApiSession). Mutating
+// routes require a logged-in admin (req.user). Password hashes are never returned.
 router.get('/', async (req, res) => {
   try {
     const users = await listUsers(req.db, { status: req.query.status });
