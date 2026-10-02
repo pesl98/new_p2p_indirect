@@ -4,6 +4,11 @@ import http from 'node:http';
 import { createMemoryDatabase } from './db.js';
 import { createApp } from './app.js';
 import { loadDbConfig } from './dbConfig.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -49,7 +54,7 @@ describe('supplier master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/suppliers/1`, {
+      const { status, body } = await json(await authed(`${base}/api/suppliers/1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -65,7 +70,7 @@ describe('supplier master data', () => {
       assert.equal(status, 400);
       assert.match(body.error, /immutable/i);
 
-      const ok = await json(await fetch(`${base}/api/suppliers/1`, {
+      const ok = await json(await authed(`${base}/api/suppliers/1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -96,7 +101,7 @@ describe('supplier master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/suppliers/1/status`, {
+      const { status, body } = await json(await authed(`${base}/api/suppliers/1/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'inactive' })
@@ -111,12 +116,12 @@ describe('supplier master data', () => {
       const po = db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE supplier_id = 1`).get();
       assert.equal(po.n, 1);
 
-      const listed = await json(await fetch(`${base}/api/suppliers?status=active`));
+      const listed = await json(await authed(`${base}/api/suppliers?status=active`));
       assert.equal(listed.status, 200);
       assert.equal(listed.body.some((s) => s.id === 1), false);
       assert.equal(listed.body.some((s) => s.id === 2), true);
 
-      const all = await json(await fetch(`${base}/api/suppliers`));
+      const all = await json(await authed(`${base}/api/suppliers`));
       const inactive = all.body.find((s) => s.id === 1);
       assert.ok(inactive);
       assert.equal(inactive.status, 'inactive');
@@ -128,7 +133,7 @@ describe('supplier master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const conflict = await json(await fetch(`${base}/api/suppliers`, {
+      const conflict = await json(await authed(`${base}/api/suppliers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Clone', code: 'SUP-TSG' })
@@ -136,7 +141,7 @@ describe('supplier master data', () => {
       assert.equal(conflict.status, 409);
       assert.match(conflict.body.error, /code already exists/i);
 
-      const del = await json(await fetch(`${base}/api/suppliers/1`, { method: 'DELETE' }));
+      const del = await json(await authed(`${base}/api/suppliers/1`, { method: 'DELETE' }));
       assert.equal(del.status, 405);
       assert.match(del.body.error, /deactivate/i);
       const still = db.prepare(`SELECT id FROM suppliers WHERE id = 1`).get();
@@ -149,7 +154,7 @@ describe('supplier master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/suppliers/1`, {
+      const { status, body } = await json(await authed(`${base}/api/suppliers/1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'deleted' })
@@ -166,7 +171,7 @@ describe('catalog master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/catalog/1`, {
+      const { status, body } = await json(await authed(`${base}/api/catalog/1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -197,7 +202,7 @@ describe('catalog master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const conflict = await json(await fetch(`${base}/api/catalog/2`, {
+      const conflict = await json(await authed(`${base}/api/catalog/2`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sku: 'SKU-HW-001' })
@@ -205,7 +210,7 @@ describe('catalog master data', () => {
       assert.equal(conflict.status, 409);
       assert.match(conflict.body.error, /sku already exists/i);
 
-      const createConflict = await json(await fetch(`${base}/api/catalog`, {
+      const createConflict = await json(await authed(`${base}/api/catalog`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -218,7 +223,7 @@ describe('catalog master data', () => {
       assert.equal(createConflict.status, 409);
       assert.match(createConflict.body.error, /sku already exists/i);
 
-      const deactivated = await json(await fetch(`${base}/api/catalog/1/status`, {
+      const deactivated = await json(await authed(`${base}/api/catalog/1/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'inactive' })
@@ -226,16 +231,16 @@ describe('catalog master data', () => {
       assert.equal(deactivated.status, 200, deactivated.body.error);
       assert.equal(deactivated.body.status, 'inactive');
 
-      const browse = await json(await fetch(`${base}/api/catalog`));
+      const browse = await json(await authed(`${base}/api/catalog`));
       assert.equal(browse.body.some((item) => item.id === 1), false);
       assert.equal(browse.body.some((item) => item.id === 2), true);
 
-      const admin = await json(await fetch(`${base}/api/catalog?status=all`));
+      const admin = await json(await authed(`${base}/api/catalog?status=all`));
       const inactive = admin.body.find((item) => item.id === 1);
       assert.ok(inactive);
       assert.equal(inactive.status, 'inactive');
 
-      const del = await json(await fetch(`${base}/api/catalog/1`, { method: 'DELETE' }));
+      const del = await json(await authed(`${base}/api/catalog/1`, { method: 'DELETE' }));
       assert.equal(del.status, 405);
       const still = db.prepare(`SELECT id, status FROM catalog_items WHERE id = 1`).get();
       assert.equal(still.status, 'inactive');
@@ -248,7 +253,7 @@ describe('catalog master data', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const createBlocked = await json(await fetch(`${base}/api/catalog`, {
+      const createBlocked = await json(await authed(`${base}/api/catalog`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -262,7 +267,7 @@ describe('catalog master data', () => {
       assert.equal(createBlocked.status, 400);
       assert.match(createBlocked.body.error, /cannot be newly assigned/i);
 
-      const changeBlocked = await json(await fetch(`${base}/api/catalog/2`, {
+      const changeBlocked = await json(await authed(`${base}/api/catalog/2`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ preferred_supplier_id: 1 })
@@ -270,7 +275,7 @@ describe('catalog master data', () => {
       assert.equal(changeBlocked.status, 400);
       assert.match(changeBlocked.body.error, /cannot be newly assigned/i);
 
-      const keepExisting = await json(await fetch(`${base}/api/catalog/1`, {
+      const keepExisting = await json(await authed(`${base}/api/catalog/1`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'MacBook Pro refreshed', preferred_supplier_id: 1 })

@@ -436,9 +436,9 @@ Copy this into the ticket and tick as you go.
 Hand this to the customer with the URL so nobody assumes Coupa-parity.
 
 - **No SSO / SAML / OIDC.** Login is email + bcrypt password in this customer’s database. `SESSION_SECRET` only signs the cookie; it is not an IdP client secret.
-- **Not a full authorization rewrite.** Admin user CRUD uses the session (`req.user`). Many P2P routes still accept body persona ids (`requester_id`, `approver_id`, `actor_name`, …). Anyone who can reach those APIs can still send another person’s id. That is a known phased cut, not a security boundary.
+- **Session required on the P2P API.** Admin user CRUD and department-head assignment use `req.user`. Other routes do too: a body persona id cannot act as someone else. AP actions require finance or admin. SSO is still the next sprint, not this one.
 - **No `org_id` multi-tenancy.** Two customers on one Turso URL is one pile of data.
-- **Persona switcher is demo-only** (`DEMO_PERSONA_SWITCHER=1`). Default customer UI is login.
+- **Persona switcher is demo-only** (`DEMO_PERSONA_SWITCHER=1`). It re-logins with the seed password. Default customer UI is login.
 - **Empty tenant is empty.** No catalog, suppliers, departments, budgets, or sample PRs until you add them. Three tiers: `db:migrate` (schema only) → `bootstrap-org` (five cost centers + FY budgets; non-destructive) → `npm run seed` (**wipe**, not an overlay).
 - **No department/budget create UI.** Operator path is `npm run bootstrap-org`. Map heads in Administration → Department Approvers after users exist.
 - **Fiscal year 2026** is hardcoded in budget queries.

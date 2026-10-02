@@ -16,6 +16,11 @@ import {
   utcTodayYmd
 } from './apAging.js';
 import { listApAging } from './apAgingService.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -436,26 +441,26 @@ describe('GET /api/ap-aging', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const listed = await json(await fetch(`${base}/api/ap-aging?today=2026-09-12`));
+      const listed = await json(await authed(`${base}/api/ap-aging?today=2026-09-12`));
       assert.equal(listed.status, 200);
       assert.equal(listed.body.counts.overdue, 1);
       assert.equal(listed.body.invoices[0].invoice_number, 'INV-HTTP-1');
 
-      const alias = await json(await fetch(`${base}/api/payment-queue?bucket=overdue&today=2026-09-12`));
+      const alias = await json(await authed(`${base}/api/payment-queue?bucket=overdue&today=2026-09-12`));
       assert.equal(alias.status, 200);
       assert.equal(alias.body.invoices.length, 1);
 
-      const empty = await json(await fetch(`${base}/api/ap-aging?bucket=due_soon&today=2026-09-12`));
+      const empty = await json(await authed(`${base}/api/ap-aging?bucket=due_soon&today=2026-09-12`));
       assert.equal(empty.status, 200);
       assert.equal(empty.body.invoices.length, 0);
 
-      const badBucket = await json(await fetch(`${base}/api/ap-aging?bucket=yesterday`));
+      const badBucket = await json(await authed(`${base}/api/ap-aging?bucket=yesterday`));
       assert.equal(badBucket.status, 400);
 
-      const badDays = await json(await fetch(`${base}/api/ap-aging?days=-3`));
+      const badDays = await json(await authed(`${base}/api/ap-aging?days=-3`));
       assert.equal(badDays.status, 400);
 
-      const skipApprove = await json(await fetch(`${base}/api/invoices/${listed.body.invoices[0].id}/mark-paid`, {
+      const skipApprove = await json(await authed(`${base}/api/invoices/${listed.body.invoices[0].id}/mark-paid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payment_reference: 'ACH-X', actor_name: 'David Miller' })

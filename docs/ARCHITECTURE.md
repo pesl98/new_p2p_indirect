@@ -6,11 +6,11 @@ Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite 
 
 This document describes the control model implemented in code.
 
-**Authentication (this phase):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Admin user CRUD uses `req.user` (session), not spoofable body ids. Operator runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md) (first-admin bootstrap, `SESSION_SECRET`, `npm run smoke`).
+**Authentication (Sprint 1):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Every `/api` route except `/api/health` and `/api/auth/*` requires that session and fails closed (401). Approvals, buyer inbox, and AP actions use `req.user`. A body or query persona id (`approver_id`, `requester_id`, `received_by`, `actor_name`, …) that names someone else is rejected (403). Admin user CRUD and department-head assignment require `req.user.role === 'admin'`. AP money movement (approve, mark paid, exception resolve, duplicate resolve, aging, payment runs) requires `finance` or `admin`. Operator runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md). Daily program: [SPRINT-LOG.md](SPRINT-LOG.md).
 
-**Phased cut — legacy persona ids:** most existing P2P mutating routes still trust body fields (`approver_id`, `received_by`, `requester_id`, `actor_name`). Anyone who can reach those APIs can still send any persona id. That is **not** a full SoD rewrite. Follow-up work should require login on those routes and prefer `req.user`. The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`); default customer deploy uses login.
+**Identity provider:** `local` only. SSO / SAML / OIDC is Sprint 2. A later IdP callback should resolve an external subject to `users.id` and call `signSessionToken`. Do not add a second identity header. There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer.
 
-SSO / SAML / OIDC is out of scope (next). There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer.
+**Demo walkthrough:** `npm run seed` (destructive) loads eight personas. Every one signs in with password `ProcureFlow!demo` (example: `elena.rostova@company.com`). `DEMO_PERSONA_SWITCHER=1` shows a header dropdown that **re-logins** with that seed password. It does not swap a client-only persona. Default customer deploy leaves the flag unset.
 
 ## Authentication & admin users
 
@@ -175,7 +175,7 @@ Resolution (`server/src/delegationsService.js`, used by `listApprovalInbox` / `d
 3. Inbox: pending steps assigned to the viewer **or** pending steps whose `approver_id` has a covering delegation to the viewer. Waiting steps stay hidden.
 4. Decide: mapped `approver_id` **or** that covering delegate. Sequential promotion/skip is unchanged.
 
-Fail-closed: cannot delegate to self; both users must exist; revoke only when active. APIs are demo-open like department-head mapping (no JWT). The UI shows **Delegations** for approval-capable personas + Elena; a user creates/revokes as themselves; Elena can manage any pair.
+Fail-closed: cannot delegate to self; both users must exist; revoke only when active. Creating or revoking requires a session. A non-admin may only open or revoke a window where they are the delegator; an admin may manage any pair. `created_by` / `actor_name` are the signed-in user. The UI shows **Delegations** for approval-capable personas + Elena.
 
 Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED` on `entity_type=approval_delegation`. A decide by a delegate appends `Delegated from {name} (id=…, delegation_id=…)` to the existing `STEP_APPROVED` / `APPROVED` / `REJECTED` requisition audit row.
 
@@ -628,7 +628,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 
 ## Known demo limits (out of scope)
 
-- **Auth is per-tenant session cookies, not a full SoD rewrite.** Login, logout, `/api/auth/me`, and admin user CRUD (`req.user.role === 'admin'`) are enforced. Legacy P2P routes still accept body persona ids (`approver_id`, `requester_id`, `actor_name`, …) until a follow-up. Org Admin department-head `PUT` and catalog PATCH stay demo-open like before. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default). Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy. Do not treat remaining unauthenticated routes as an authorization boundary.
+- **Auth is a per-tenant session on the whole P2P API.** Unauthenticated calls are 401. Body persona ids cannot choose the actor. Role gates in this sprint: admin for user CRUD and department-head assignment; finance or admin for AP actions; the signed-in user for approvals and the buyer inbox. Finer separation of duties (for example procurement-only catalog edits) is not a separate matrix. SSO is Sprint 2. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default) and re-authenticates with the seed password. Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy.
 - Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.

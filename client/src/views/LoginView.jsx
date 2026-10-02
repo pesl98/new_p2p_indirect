@@ -55,7 +55,7 @@ export default function LoginView({ bootstrapNeeded, onAuthenticated, error: ext
           <p className="text-xs text-slate-500 mb-5">
             {mode === 'bootstrap'
               ? 'This tenant database has no users yet. Create an admin account. Auth is local to this customer DB — not SSO.'
-              : 'Use the email and password stored in this customer database. Session cookie is httpOnly.'}
+              : 'Use the email and password stored in this customer database. Session cookie is httpOnly. After npm run seed, every demo user signs in with ProcureFlow!demo (for example elena.rostova@company.com).'}
           </p>
 
           {error && (

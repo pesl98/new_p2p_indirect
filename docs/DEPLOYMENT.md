@@ -8,7 +8,7 @@ Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/p
 
 **Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password … --smoke` (Turso + ensure Vercel project/link + env + redeploy, wait until Production is Ready, then migrate + org skeleton + optional first admin + smoke; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` (project add + link if needed, then env, redeploy, and the same Ready wait) → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`. GitHub auto-deploy is still a dashboard connection.
 
-**Auth (this phase):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie, admin user CRUD on `req.user`. SSO / SAML / OIDC is **out of scope** (next). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**). Legacy P2P routes still accept body `requester_id` / `approver_id` — that is not a full authorization boundary.
+**Auth (Sprint 1):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie. Every business API requires that session. Body `requester_id` / `approver_id` cannot name another persona. SSO / SAML / OIDC is **out of scope** (next sprint). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**) and re-logins with the seed password.
 
 ---
 
@@ -188,7 +188,7 @@ npm run seed
 
 Seed is the existing `server/src/seed.js` path. Do **not** run `npm run seed` against a production customer unless you intend to replace their data with the fictional walkthrough (Alice/Bob/… and the README demo password `ProcureFlow!demo`).
 
-**Empty-customer UI:** the login page is the default. With 0 users it shows first-admin bootstrap, not a broken persona switcher. `GET /api/users` → `[]` is valid. Leave `DEMO_PERSONA_SWITCHER` unset on a live tenant.
+**Empty-customer UI:** the login page is the default. With 0 users it shows first-admin bootstrap, not a broken persona switcher. `GET /api/auth/config` reports `bootstrapNeeded: true`. `GET /api/users` without a session is 401. Leave `DEMO_PERSONA_SWITCHER` unset on a live tenant.
 
 ---
 
@@ -288,16 +288,16 @@ Signed-in **admin** (`req.user.role === 'admin'`):
 
 | Method | Path |
 | --- | --- |
-| `GET` | `/api/users` (optional `?status=active\|inactive\|all`) — list stays demo-open so the optional persona switcher can load people |
+| `GET` | `/api/users` (optional `?status=active\|inactive\|all`) — any signed-in user; 401 without a session |
 | `POST` | `/api/users` — create (name, unique email, role, department_id, title, approval_limit cents, optional password) |
 | `PATCH` | `/api/users/:id` — edit core fields |
 | `PATCH` | `/api/users/:id/status` — `active` / `inactive` (soft-deactivate) |
 | `POST` | `/api/users/:id/password` — set / reset password |
 | `DELETE` | `/api/users/:id` — **405** (deactivate instead) |
 
-Mutating routes require the session cookie and an admin role. The header persona switcher cannot spoof `req.user` for these paths.
+Mutating user routes require the session cookie and an admin role. The same session is required on the rest of the P2P API. A body persona id that does not match `req.user` is rejected.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the phased cut: leftover P2P routes still accept body persona ids (`approver_id`, `requester_id`, …) until a follow-up.
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [SPRINT-LOG.md](SPRINT-LOG.md). Smoke without a cookie expects 401 on `/api/users`, `/api/departments`, and `/api/catalog`. After `--email` / `--password`, those GETs run again with the session.
 
 ---
 

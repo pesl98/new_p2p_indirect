@@ -1,4 +1,5 @@
 import express from 'express';
+import { requireAdmin } from '../auth.js';
 import {
   DepartmentAdminError,
   listDepartments,
@@ -7,6 +8,7 @@ import {
   setDepartmentApprover
 } from '../departmentsService.js';
 import { MasterDataError } from '../masterData.js';
+import { withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
 
@@ -19,7 +21,8 @@ function sendError(res, error) {
   res.status(status).json({ error: error.message });
 }
 
-// Canonical department list with mapped step-1 approver (demo-open, like master-data).
+// Canonical department list with mapped step-1 approver. Reads require a session.
+// Assigning the head requires an admin session; actor_name is the signed-in admin.
 router.get('/', async (req, res) => {
   try {
     res.json(await listDepartments(req.db));
@@ -44,9 +47,10 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.put('/:id/approver', async (req, res) => {
+router.put('/:id/approver', requireAdmin, async (req, res) => {
   try {
-    const updated = await setDepartmentApprover(req.db, req.params.id, req.body || {});
+    const body = withSessionActor(req, req.body || {}, { names: ['actor_name'] });
+    const updated = await setDepartmentApprover(req.db, req.params.id, body);
     res.json(updated);
   } catch (error) {
     sendError(res, error);
@@ -54,9 +58,10 @@ router.put('/:id/approver', async (req, res) => {
 });
 
 // PATCH only maintains approver_user_id (no department name/code CRUD).
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireAdmin, async (req, res) => {
   try {
-    const updated = await setDepartmentApprover(req.db, req.params.id, req.body || {});
+    const body = withSessionActor(req, req.body || {}, { names: ['actor_name'] });
+    const updated = await setDepartmentApprover(req.db, req.params.id, body);
     res.json(updated);
   } catch (error) {
     sendError(res, error);

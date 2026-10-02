@@ -4,8 +4,10 @@ import {
   listInvoiceDuplicates,
   resolveInvoiceDuplicate
 } from '../invoiceDuplicatesService.js';
+import { AP_ROLES, requireRole, withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
+router.use(requireRole(...AP_ROLES));
 
 function httpError(res, error) {
   const status = error.statusCode || 500;
@@ -34,7 +36,8 @@ router.get('/:id', async (req, res) => {
 
 router.post('/:id/resolve', async (req, res) => {
   try {
-    const result = await resolveInvoiceDuplicate(req.db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['actor_name'] });
+    const result = await resolveInvoiceDuplicate(req.db, req.params.id, body);
     res.json(result);
   } catch (error) {
     httpError(res, error);

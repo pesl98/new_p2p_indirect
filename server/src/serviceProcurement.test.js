@@ -9,6 +9,11 @@ import { convertRequisitionToPurchaseOrders } from './purchaseOrdersService.js';
 import { createGoodsReceipt, GoodsReceiptError } from './goodsReceiptsService.js';
 import { acceptServiceEntrySheet, createServiceEntrySheet } from './serviceEntrySheetsService.js';
 import { createVendorInvoice } from './invoicesService.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -42,7 +47,7 @@ async function createTestDb() {
 }
 
 async function postRequisition(base, items, extra = {}) {
-  const response = await fetch(`${base}/api/requisitions`, {
+  const response = await authed(`${base}/api/requisitions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -120,7 +125,7 @@ describe('service procurement', () => {
 
     await withServer(app, async (base) => {
       const created = await postRequisition(base, serviceLines);
-      const detail = await fetch(`${base}/api/requisitions/${created.id}`);
+      const detail = await authed(`${base}/api/requisitions/${created.id}`);
       const pr = await detail.json();
 
       assert.equal(pr.total_amount, 530000);
@@ -143,11 +148,11 @@ describe('service procurement', () => {
         line_type: 'goods',
         service_basis: 'hours'
       }]);
-      const goodsDetail = await (await fetch(`${base}/api/requisitions/${goods.id}`)).json();
+      const goodsDetail = await (await authed(`${base}/api/requisitions/${goods.id}`)).json();
       assert.equal(goodsDetail.items[0].line_type, 'goods');
       assert.equal(goodsDetail.items[0].service_basis, null);
 
-      const bad = await fetch(`${base}/api/requisitions`, {
+      const bad = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
