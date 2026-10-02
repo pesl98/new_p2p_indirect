@@ -17,6 +17,20 @@ Each day is one sprint with a single goal and, preferably, one pull request.
 
 A sprint is not done because the code compiles. It is done when its own checklist is met and the row in this file points at the PR.
 
+## Design principles (from Storycodes)
+
+Different domain. Reuse the concepts on ProcureFlow. Do not port Storycodes or out-of-home features.
+
+Use these from here on:
+
+1. **Fail-closed controls live in the database and the server**, not only in the UI. Sprint 1 is already on this path: a hidden sidebar item is not an authorization boundary.
+2. **Append-only decision and evidence** where money or compliance matters. Prefer verification-style reports that re-derive totals from immutable records. That feeds Sprint 3 (audit / compliance reporting).
+3. **Role lenses without spoofable body ids.** The signed-in session is the actor (Sprint 1).
+4. **Later integrations use scoped API keys and rate limits** (Partner-API style), not a shared persona. That is Sprint 4, not this PR.
+5. **One database per customer** stays the isolation model. No shared-row `org_id`.
+
+**Don’t port:** Storycodes Petri-everywhere, the always-302 resolver, or scan metrics.
+
 ## Product backlog
 
 Peter’s order. Do not start a later item inside an earlier sprint’s PR.
