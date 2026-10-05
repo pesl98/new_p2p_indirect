@@ -60,7 +60,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | Sprint | Date | Goal | PR | Title | Merge SHA | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | [#46](https://github.com/pesl98/new_p2p_indirect/pull/46) | Sprint 1 — Full authorization rewrite | `e6bdf1ea7ba144c12a95da4cabeebd9430def42a` | merged |
-| 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | | Sprint 2 — SSO / SAML / OIDC | | in progress |
+| 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -112,9 +112,9 @@ That callback is Sprint 2 (below). Sprint 1’s cookie format is unchanged.
 
 **Goal:** An OIDC or SAML login callback mints the same `pf_session` cookie Sprint 1 uses. Missing or invalid SSO configuration fails closed. Local password login keeps working where it is configured.
 
-**PR:** filled when this pull request is opened. Do not merge until Architect + Peter review.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/47 (#47). Merge SHA stays blank until merge.
 
-**Status:** in progress.
+**Status:** done (awaiting Architect + Peter review; do not merge from this PR).
 
 ### Done when
 
