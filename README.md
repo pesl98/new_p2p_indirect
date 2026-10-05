@@ -9,7 +9,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 - **[System manual → `docs/SYSTEM_MANUAL.md`](docs/SYSTEM_MANUAL.md)** — every shipped capability (honest limits) and how to stand up a new customer. Hand this to an operator/owner.
 - **[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply --email … --password …`. Stepped: `npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. One database and one Vercel project per customer.
 
-Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Preferred operator entry: `npm run onboard:customer` (dry-run default; `--apply` chains Turso + Vercel env + provision). Turso DB + database token + `SESSION_SECRET` only: `npm run turso:customer` (dry-run default; `--apply` to mutate). Vercel Production+Preview env: `npm run vercel:customer` (dry-run default; `--apply` to mutate). Deprovision: `npm run offboard:customer` (dry-run default; `--apply` also needs `--confirm-slug`). Wrapper: `npm run provision:customer -- --with-org` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
+Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Preferred operator entry: `npm run onboard:customer` (dry-run default; `--apply` chains Turso + Vercel env + provision). Turso DB + database token + `SESSION_SECRET` only: `npm run turso:customer` (dry-run default; `--apply` to mutate). Vercel Production+Preview env: `npm run vercel:customer` (dry-run default; `--apply` to mutate). Deprovision: `npm run offboard:customer` (dry-run default; `--apply` also needs `--confirm-slug`). Wrapper: `npm run provision:customer -- --with-org` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session on every business API (not SSO). See [docs/SPRINT-LOG.md](docs/SPRINT-LOG.md).
 
 ---
 
@@ -27,10 +27,10 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
      - **≤ \$1,000**: Department Head (mapped user, else `role=approver` in the requisition’s department)
      - **> \$1,000 and ≤ \$10,000**: Department Head, then Strategic Sourcing (`role=procurement`)
      - **> \$10,000**: Department Head, then Procurement, then Finance Controller (`role=finance`) or CFO (`role=admin`) if no finance user exists
-   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. Department-head APIs stay demo-open like supplier/catalog master-data. Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
+   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. Department-head writes require an admin session. Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
    - **Users (Elena / session admin):** list, create, edit, and **soft-deactivate** employees (`users.status` active/inactive). Unique email, role in the existing CHECK, department, title, approval limit in integer cents, optional password (bcrypt in `user_credentials`). Mutating `/api/users` routes require a logged-in admin (`req.user`); `DELETE` is 405. Sidebar **Users** sits next to Department Approvers.
    - Steps are **sequential**, not parallel: only the current step is `pending`; later steps stay `waiting` until the previous step is approved. Waiting steps do not appear in the approver inbox. Rejecting a step skips remaining `waiting`/`pending` rows.
-   - The decide API requires `approver_id` matching the current pending step **or an active delegate** covering now for that mapped approver. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. **Login is a real httpOnly session** for admin user routes; most other P2P routes still accept body persona ids (phased cut — see ARCHITECTURE).
+   - The decide API uses the signed-in user, who must be the current pending step **or an active delegate** covering now. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. A body `approver_id` that names someone else is rejected.
    - **Approval delegation (OOO):** an approver (or Elena as org admin) assigns a temporary substitute (`approval_delegations`: window, reason, soft-revoke). The delegate sees the current pending step in their inbox (badge “Delegated from …”) and may decide it. Waiting steps stay waiting. Cannot delegate to self; expired/inactive windows are ignored. Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED`, plus delegated_from on decide.
    - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved — not when a PO is issued. Final approve **fails closed** if remaining budget (`total − committed − actual`, cents) is less than the PR total.
    - **Contract use gate:** if a contract is proposed, the current approver (Bob / Priya as delegate) must **Allow contract use** or **Refuse contract use** as part of approve. Refuse does **not** reject the PR — it continues as ad-hoc. Omitting the choice is HTTP 400 (no silent force).
@@ -146,11 +146,11 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
    - Seed: **CNT-2026-001** Figma (Marketing / CloudCore, 10 seats × $540.00 = $5,400.00 ACV) is the expiring-soon walkthrough. **PR-2026-010** is a new Figma seat already proposed against that contract so Bob/Priya can allow or refuse. **CNT-2026-002** Slack (IT, active). **CNT-2026-003** FacilityCare janitorial (Facilities, expiring soon). **CNT-2026-004** Apex retainer (Marketing, active, no auto-renew).
 
 14. **Sign-in (per customer DB) + optional demo persona switcher**
-    - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`).
+    - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`). Business APIs reject calls with no session.
     - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md).
     - **Elena** (admin) manages users under Administration → Users.
-    - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. Default customer deploy shows the login page.
-    - Local seed demo password (README only, never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
+    - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. It signs in again as the chosen seeded user. Default customer deploy shows the login page.
+    - Local seed demo password (never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
 
 ---
 
@@ -164,7 +164,7 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
 
 From the repo root (`npm install` plus `npm install --prefix server` and `npm install --prefix client` on a fresh clone):
 
-**Local demo login** (after `npm run seed`): `alice.chen@company.com` / `ProcureFlow!demo` (same password for every seeded persona). To keep the old header switcher for walkthroughs: `export DEMO_PERSONA_SWITCHER=1`.
+**Local demo login** (after `npm run seed`): `alice.chen@company.com` / `ProcureFlow!demo` (same password for every seeded persona). Optional header switcher re-logins with that password: `export DEMO_PERSONA_SWITCHER=1`.
 
 1. **Start the Production Application (Single Port)**:
    ```bash

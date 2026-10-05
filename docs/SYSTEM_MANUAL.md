@@ -96,21 +96,19 @@ These five values are the only allowed roles. Additional people are created in *
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/auth/config` | Public: `{ auth, demoPersonaSwitcher, bootstrapNeeded }` |
+| `GET /api/auth/config` | Public: `{ auth, identityProvider: "local", demoPersonaSwitcher, bootstrapNeeded }` |
 | `POST /api/auth/login` | `{ email, password }` → cookie |
 | `POST /api/auth/logout` | Clears cookie |
 | `GET /api/auth/me` | Session user or 401 |
 | `POST /api/auth/bootstrap` | First admin on an **empty** `users` table only |
 
-**Enforced on session (`req.user`):** mutating `/api/users` (create / edit / status / password) requires a logged-in `role=admin`. The header switcher cannot spoof `req.user` for those paths. `DELETE /api/users/:id` is **405**.
-
-**Phased cut — not a security boundary:** most P2P mutating routes still trust body fields (`approver_id`, `requester_id`, `received_by`, `actor_name`, …). Anyone who can reach those APIs can still send another person’s id. Department-head `PUT`, catalog/supplier PATCH, exceptions, aging, payment runs, contracts, etc. stay **demo-open** (no JWT). Sidebar hiding is **UI only**.
+**Enforced on session (`req.user`):** every `/api` route except health and `/api/auth/*` requires a signed-in user. Mutating `/api/users` and department-head assignment require `role=admin`. AP approve, mark paid, exceptions, duplicates, aging, and payment runs require `finance` or `admin`. Approvals and the buyer inbox are scoped to the signed-in user. A body persona id that names someone else is 403. `DELETE /api/users/:id` is **405**.
 
 ### Optional demo persona switcher
 
-Set `DEMO_PERSONA_SWITCHER=1` (or `true` / `yes`) to show the header dropdown that swaps `currentUser` without logging in. Default is **off**. `npm run vercel:customer` **never** sets this flag. Live customers use the login page.
+Set `DEMO_PERSONA_SWITCHER=1` (or `true` / `yes`) to show a header dropdown. Choosing a person **signs in again** with the seed password `ProcureFlow!demo`. It does not change identity without a session. Default is **off**. `npm run vercel:customer` **never** sets this flag. Live customers use the login page.
 
-`GET /api/users` stays demo-open so that optional switcher can load people.
+`GET /api/users` requires a session. The directory is what the dropdown lists after you are signed in.
 
 ### Seeded demo personas (training DB only)
 
@@ -676,7 +674,7 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 | --- | --- |
 | SSO / SAML / OIDC / SCIM | Not implemented. Email + bcrypt local to this DB. |
 | `org_id` multi-tenancy | Isolation is the **connection**, not a tenant column. |
-| Full SoD on every route | Only auth + admin user CRUD use `req.user`. Most P2P routes accept body persona ids. |
+| Finer role matrix on every screen | Session is required everywhere. Admin and AP roles are enforced. Catalog edits are not limited to procurement. |
 | Create-department / create-budget UI | Operator CLI `bootstrap-org` only. |
 | OCR / PDF / email invoice ingest | Manual invoice form. |
 | NACHA / bank file / remittance portal | Payment run stores a shared ACH **reference string** and marks paid. No file. |

@@ -7,6 +7,7 @@ import {
   ContractError
 } from '../contractsService.js';
 import { matchContractForLines } from '../contractAssignment.js';
+import { withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
 
@@ -66,7 +67,8 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const contract = await createContract(req.db, req.body || {});
+    const body = withSessionActor(req, req.body || {}, { names: ['actor_name'] });
+    const contract = await createContract(req.db, body);
     res.status(201).json(contract);
   } catch (error) {
     res.status(httpStatus(error)).json({ error: error.message });
@@ -75,13 +77,16 @@ router.post('/', async (req, res) => {
 
 router.post('/:id/renew-pr', async (req, res) => {
   try {
-    const { requester_id, needed_by_date, notes, actor_name, today } = req.body || {};
+    const body = withSessionActor(req, req.body || {}, {
+      ids: ['requester_id'],
+      names: ['actor_name']
+    });
     const result = await createRenewalRequisition(req.db, req.params.id, {
-      requester_id,
-      needed_by_date,
-      notes,
-      actor_name,
-      today
+      requester_id: body.requester_id,
+      needed_by_date: body.needed_by_date,
+      notes: body.notes,
+      actor_name: body.actor_name,
+      today: body.today
     });
     res.status(201).json(result);
   } catch (error) {

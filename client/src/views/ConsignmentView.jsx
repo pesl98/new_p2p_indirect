@@ -299,7 +299,7 @@ function ReceiveModal({ suppliers, catalog, currentUser, onClose, onSaved }) {
         unit_price: toCents(unitPrice),
         receipt_date: receiptDate,
         notes,
-        received_by: currentUser?.id || 3,
+        received_by: currentUser?.id,
         actor_name: currentUser?.name
       });
       await onSaved(result);
@@ -374,7 +374,7 @@ function IssueModal({ balance, currentUser, onClose, onSaved }) {
         quantity: Number(quantity),
         issue_date: issueDate,
         notes,
-        issued_by: currentUser?.id || 3,
+        issued_by: currentUser?.id,
         actor_name: currentUser?.name
       });
       await onSaved(result);

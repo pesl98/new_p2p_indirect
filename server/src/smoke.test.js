@@ -160,16 +160,17 @@ describe('smoke against a live Express app', () => {
       assert.deepEqual(names, [
         'GET /api/health',
         'GET /api/auth/config',
-        'GET /api/users',
+        'GET /api/users (no session)',
         'GET /api/auth/me',
-        'GET /api/departments',
-        'GET /api/catalog',
+        'GET /api/departments (no session)',
+        'GET /api/catalog (no session)',
         'POST /api/auth/login'
       ]);
       const skipped = result.checks.find((check) => check.name === 'POST /api/auth/login');
       assert.equal(skipped.skipped, true);
-      const users = result.checks.find((check) => check.name === 'GET /api/users');
-      assert.match(users.detail, /0 users/);
+      const users = result.checks.find((check) => check.name === 'GET /api/users (no session)');
+      assert.equal(users.ok, true);
+      assert.equal(users.status, 401);
     });
   });
 

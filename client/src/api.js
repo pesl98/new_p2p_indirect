@@ -2,6 +2,10 @@
 
 const API_BASE = '/api';
 
+function apiFetch(url, options = {}) {
+  return fetch(url, { credentials: 'include', ...options });
+}
+
 async function jsonOk(response, fallbackMessage) {
   let data;
   try {
@@ -19,16 +23,16 @@ async function jsonOk(response, fallbackMessage) {
 export const api = {
   // Auth (httpOnly session cookie; credentials included so the cookie is sent)
   getAuthConfig: () =>
-    fetch(`${API_BASE}/auth/config`, { credentials: 'include' }).then((r) =>
+    apiFetch(`${API_BASE}/auth/config`, { credentials: 'include' }).then((r) =>
       jsonOk(r, 'Failed to load auth config')
     ),
   getMe: async () => {
-    const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+    const r = await apiFetch(`${API_BASE}/auth/me`, { credentials: 'include' });
     if (r.status === 401) return { user: null };
     return jsonOk(r, 'Failed to load session');
   },
   login: async (email, password) => {
-    const r = await fetch(`${API_BASE}/auth/login`, {
+    const r = await apiFetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -37,14 +41,14 @@ export const api = {
     return jsonOk(r, 'Login failed');
   },
   logout: async () => {
-    const r = await fetch(`${API_BASE}/auth/logout`, {
+    const r = await apiFetch(`${API_BASE}/auth/logout`, {
       method: 'POST',
       credentials: 'include'
     });
     return jsonOk(r, 'Logout failed');
   },
   bootstrapAdmin: async (data) => {
-    const r = await fetch(`${API_BASE}/auth/bootstrap`, {
+    const r = await apiFetch(`${API_BASE}/auth/bootstrap`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -58,12 +62,12 @@ export const api = {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     const qs = params.toString();
-    return fetch(`${API_BASE}/users${qs ? `?${qs}` : ''}`, { credentials: 'include' }).then((r) =>
+    return apiFetch(`${API_BASE}/users${qs ? `?${qs}` : ''}`, { credentials: 'include' }).then((r) =>
       jsonOk(r, 'Failed to load users')
     );
   },
   createUser: async (data) => {
-    const r = await fetch(`${API_BASE}/users`, {
+    const r = await apiFetch(`${API_BASE}/users`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -72,7 +76,7 @@ export const api = {
     return jsonOk(r, 'Failed to create user');
   },
   updateUser: async (id, data) => {
-    const r = await fetch(`${API_BASE}/users/${id}`, {
+    const r = await apiFetch(`${API_BASE}/users/${id}`, {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -81,7 +85,7 @@ export const api = {
     return jsonOk(r, 'Failed to update user');
   },
   updateUserStatus: async (id, status) => {
-    const r = await fetch(`${API_BASE}/users/${id}/status`, {
+    const r = await apiFetch(`${API_BASE}/users/${id}/status`, {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -90,7 +94,7 @@ export const api = {
     return jsonOk(r, 'Failed to update user status');
   },
   setUserPassword: async (id, password) => {
-    const r = await fetch(`${API_BASE}/users/${id}/password`, {
+    const r = await apiFetch(`${API_BASE}/users/${id}/password`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -98,10 +102,10 @@ export const api = {
     });
     return jsonOk(r, 'Failed to set password');
   },
-  getDepartments: () => fetch(`${API_BASE}/departments`).then(r => r.json()),
-  getEligibleApprovers: () => fetch(`${API_BASE}/departments/eligible-approvers`).then(r => r.json()),
+  getDepartments: () => apiFetch(`${API_BASE}/departments`).then(r => r.json()),
+  getEligibleApprovers: () => apiFetch(`${API_BASE}/departments/eligible-approvers`).then(r => r.json()),
   setDepartmentApprover: async (id, data) => {
-    const r = await fetch(`${API_BASE}/departments/${id}/approver`, {
+    const r = await apiFetch(`${API_BASE}/departments/${id}/approver`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -110,8 +114,8 @@ export const api = {
   },
 
   // Dashboard & Analytics
-  getHealth: () => fetch(`${API_BASE}/health`).then(r => r.json()),
-  getAnalytics: () => fetch(`${API_BASE}/analytics`).then(r => r.json()),
+  getHealth: () => apiFetch(`${API_BASE}/health`).then(r => r.json()),
+  getAnalytics: () => apiFetch(`${API_BASE}/analytics`).then(r => r.json()),
 
   // Catalog & Suppliers
   getCatalog: (category = '', search = '', options = {}) => {
@@ -120,10 +124,10 @@ export const api = {
     if (search) params.append('search', search);
     if (options.status) params.append('status', options.status);
     if (options.include_inactive) params.append('include_inactive', '1');
-    return fetch(`${API_BASE}/catalog?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/catalog?${params.toString()}`).then(r => r.json());
   },
   createCatalogItem: async (item) => {
-    const r = await fetch(`${API_BASE}/catalog`, {
+    const r = await apiFetch(`${API_BASE}/catalog`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item)
@@ -131,7 +135,7 @@ export const api = {
     return jsonOk(r, 'Failed to create catalog item');
   },
   updateCatalogItem: async (id, item) => {
-    const r = await fetch(`${API_BASE}/catalog/${id}`, {
+    const r = await apiFetch(`${API_BASE}/catalog/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item)
@@ -139,7 +143,7 @@ export const api = {
     return jsonOk(r, 'Failed to update catalog item');
   },
   updateCatalogItemStatus: async (id, status) => {
-    const r = await fetch(`${API_BASE}/catalog/${id}/status`, {
+    const r = await apiFetch(`${API_BASE}/catalog/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
@@ -150,10 +154,10 @@ export const api = {
   getSuppliers: (status = '') => {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
-    return fetch(`${API_BASE}/suppliers?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/suppliers?${params.toString()}`).then(r => r.json());
   },
   createSupplier: async (supplier) => {
-    const r = await fetch(`${API_BASE}/suppliers`, {
+    const r = await apiFetch(`${API_BASE}/suppliers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(supplier)
@@ -161,7 +165,7 @@ export const api = {
     return jsonOk(r, 'Failed to create supplier');
   },
   updateSupplier: async (id, supplier) => {
-    const r = await fetch(`${API_BASE}/suppliers/${id}`, {
+    const r = await apiFetch(`${API_BASE}/suppliers/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(supplier)
@@ -169,7 +173,7 @@ export const api = {
     return jsonOk(r, 'Failed to update supplier');
   },
   updateSupplierStatus: async (id, status) => {
-    const r = await fetch(`${API_BASE}/suppliers/${id}/status`, {
+    const r = await apiFetch(`${API_BASE}/suppliers/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
@@ -178,7 +182,7 @@ export const api = {
   },
 
   // Budgets
-  getBudgets: () => fetch(`${API_BASE}/budgets`).then(r => r.json()),
+  getBudgets: () => apiFetch(`${API_BASE}/budgets`).then(r => r.json()),
 
   // Contracts & Renewals
   getContracts: (category = '', status = '', search = '') => {
@@ -186,11 +190,11 @@ export const api = {
     if (category) params.append('category', category);
     if (status) params.append('status', status);
     if (search) params.append('search', search);
-    return fetch(`${API_BASE}/contracts?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/contracts?${params.toString()}`).then(r => r.json());
   },
-  getContractDetail: (id) => fetch(`${API_BASE}/contracts/${id}`).then(r => r.json()),
+  getContractDetail: (id) => apiFetch(`${API_BASE}/contracts/${id}`).then(r => r.json()),
   createContract: async (contractData) => {
-    const r = await fetch(`${API_BASE}/contracts`, {
+    const r = await apiFetch(`${API_BASE}/contracts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(contractData)
@@ -198,7 +202,7 @@ export const api = {
     return jsonOk(r, 'Failed to create contract');
   },
   renewContractPr: async (contractId, data = {}) => {
-    const r = await fetch(`${API_BASE}/contracts/${contractId}/renew-pr`, {
+    const r = await apiFetch(`${API_BASE}/contracts/${contractId}/renew-pr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -210,7 +214,7 @@ export const api = {
     return this.renewContractPr(contractId, data);
   },
   previewContractMatch: async (data = {}) => {
-    const r = await fetch(`${API_BASE}/contracts/match-preview`, {
+    const r = await apiFetch(`${API_BASE}/contracts/match-preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -223,11 +227,11 @@ export const api = {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (department_id) params.append('department_id', department_id);
-    return fetch(`${API_BASE}/requisitions?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/requisitions?${params.toString()}`).then(r => r.json());
   },
-  getRequisitionDetail: (id) => fetch(`${API_BASE}/requisitions/${id}`).then(r => r.json()),
+  getRequisitionDetail: (id) => apiFetch(`${API_BASE}/requisitions/${id}`).then(r => r.json()),
   createRequisition: async (prData) => {
-    const r = await fetch(`${API_BASE}/requisitions`, {
+    const r = await apiFetch(`${API_BASE}/requisitions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(prData)
@@ -235,7 +239,7 @@ export const api = {
     return jsonOk(r, 'Failed to create requisition');
   },
   submitRequisition: async (id, data = {}) => {
-    const r = await fetch(`${API_BASE}/requisitions/${id}/submit`, {
+    const r = await apiFetch(`${API_BASE}/requisitions/${id}/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -243,7 +247,7 @@ export const api = {
     return jsonOk(r, 'Failed to submit requisition');
   },
   updateRequisitionContract: async (id, data = {}) => {
-    const r = await fetch(`${API_BASE}/requisitions/${id}/contract`, {
+    const r = await apiFetch(`${API_BASE}/requisitions/${id}/contract`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -255,10 +259,10 @@ export const api = {
   getApprovals: (approver_id = '') => {
     const params = new URLSearchParams();
     if (approver_id) params.append('approver_id', approver_id);
-    return fetch(`${API_BASE}/approvals?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/approvals?${params.toString()}`).then(r => r.json());
   },
   decideApproval: async (id, decisionData) => {
-    const r = await fetch(`${API_BASE}/approvals/${id}/decide`, {
+    const r = await apiFetch(`${API_BASE}/approvals/${id}/decide`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(decisionData)
@@ -273,12 +277,12 @@ export const api = {
     if (delegate_user_id) params.append('delegate_user_id', delegate_user_id);
     if (active !== undefined && active !== null && active !== '') params.append('active', active);
     const qs = params.toString();
-    return fetch(`${API_BASE}/approval-delegations${qs ? `?${qs}` : ''}`).then((r) =>
+    return apiFetch(`${API_BASE}/approval-delegations${qs ? `?${qs}` : ''}`).then((r) =>
       jsonOk(r, 'Failed to load delegations')
     );
   },
   createDelegation: async (data) => {
-    const r = await fetch(`${API_BASE}/approval-delegations`, {
+    const r = await apiFetch(`${API_BASE}/approval-delegations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -286,7 +290,7 @@ export const api = {
     return jsonOk(r, 'Failed to create delegation');
   },
   revokeDelegation: async (id, data = {}) => {
-    const r = await fetch(`${API_BASE}/approval-delegations/${id}/revoke`, {
+    const r = await apiFetch(`${API_BASE}/approval-delegations/${id}/revoke`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -298,11 +302,11 @@ export const api = {
   getPurchaseOrders: (status = '') => {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
-    return fetch(`${API_BASE}/purchase-orders?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/purchase-orders?${params.toString()}`).then(r => r.json());
   },
-  getPurchaseOrderDetail: (id) => fetch(`${API_BASE}/purchase-orders/${id}`).then(r => r.json()),
+  getPurchaseOrderDetail: (id) => apiFetch(`${API_BASE}/purchase-orders/${id}`).then(r => r.json()),
   createPOFromRequisition: async (poData) => {
-    const r = await fetch(`${API_BASE}/purchase-orders/from-requisition`, {
+    const r = await apiFetch(`${API_BASE}/purchase-orders/from-requisition`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(poData)
@@ -310,7 +314,7 @@ export const api = {
     return jsonOk(r, 'Failed to generate purchase order');
   },
   updatePOStatus: async (id, status, notes) => {
-    const r = await fetch(`${API_BASE}/purchase-orders/${id}/status`, {
+    const r = await apiFetch(`${API_BASE}/purchase-orders/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, notes })
@@ -318,11 +322,11 @@ export const api = {
     return jsonOk(r, 'Failed to update purchase order status');
   },
   getChangeOrders: (id) =>
-    fetch(`${API_BASE}/purchase-orders/${id}/change-orders`).then((r) =>
+    apiFetch(`${API_BASE}/purchase-orders/${id}/change-orders`).then((r) =>
       jsonOk(r, 'Failed to load change orders')
     ),
   createChangeOrder: async (id, data) => {
-    const r = await fetch(`${API_BASE}/purchase-orders/${id}/change-orders`, {
+    const r = await apiFetch(`${API_BASE}/purchase-orders/${id}/change-orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -334,11 +338,11 @@ export const api = {
   getGoodsReceipts: (po_id = '') => {
     const params = new URLSearchParams();
     if (po_id) params.append('po_id', po_id);
-    return fetch(`${API_BASE}/goods-receipts?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/goods-receipts?${params.toString()}`).then(r => r.json());
   },
-  getGoodsReceiptDetail: (id) => fetch(`${API_BASE}/goods-receipts/${id}`).then(r => r.json()),
+  getGoodsReceiptDetail: (id) => apiFetch(`${API_BASE}/goods-receipts/${id}`).then(r => r.json()),
   createGoodsReceipt: async (receiptData) => {
-    const r = await fetch(`${API_BASE}/goods-receipts`, {
+    const r = await apiFetch(`${API_BASE}/goods-receipts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(receiptData)
@@ -347,9 +351,9 @@ export const api = {
   },
 
   // Consignment stock (supplier-owned). Separate from GRN.
-  getConsignment: () => fetch(`${API_BASE}/consignment`).then((r) => jsonOk(r, 'Failed to load consignment stock')),
+  getConsignment: () => apiFetch(`${API_BASE}/consignment`).then((r) => jsonOk(r, 'Failed to load consignment stock')),
   receiveConsignment: async (data) => {
-    const r = await fetch(`${API_BASE}/consignment/receipts`, {
+    const r = await apiFetch(`${API_BASE}/consignment/receipts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -357,7 +361,7 @@ export const api = {
     return jsonOk(r, 'Failed to record consignment receipt');
   },
   issueConsignment: async (data) => {
-    const r = await fetch(`${API_BASE}/consignment/issues`, {
+    const r = await apiFetch(`${API_BASE}/consignment/issues`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -365,9 +369,9 @@ export const api = {
     return jsonOk(r, 'Failed to issue consignment stock');
   },
 
-  getUtilities: () => fetch(`${API_BASE}/utilities`).then((r) => jsonOk(r, 'Failed to load utility arrangements')),
+  getUtilities: () => apiFetch(`${API_BASE}/utilities`).then((r) => jsonOk(r, 'Failed to load utility arrangements')),
   openUtilityArrangement: async (data) => {
-    const r = await fetch(`${API_BASE}/utilities/arrangements`, {
+    const r = await apiFetch(`${API_BASE}/utilities/arrangements`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -375,7 +379,7 @@ export const api = {
     return jsonOk(r, 'Failed to open utility arrangement');
   },
   recordUtilityConsumption: async (data) => {
-    const r = await fetch(`${API_BASE}/utilities/consumptions`, {
+    const r = await apiFetch(`${API_BASE}/utilities/consumptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -383,9 +387,9 @@ export const api = {
     return jsonOk(r, 'Failed to record utility consumption');
   },
 
-  getBulkVessels: () => fetch(`${API_BASE}/bulk-vessels`).then((r) => jsonOk(r, 'Failed to load vendor-managed bulk')),
+  getBulkVessels: () => apiFetch(`${API_BASE}/bulk-vessels`).then((r) => jsonOk(r, 'Failed to load vendor-managed bulk')),
   registerBulkVessel: async (data) => {
-    const r = await fetch(`${API_BASE}/bulk-vessels/containers`, {
+    const r = await apiFetch(`${API_BASE}/bulk-vessels/containers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -393,7 +397,7 @@ export const api = {
     return jsonOk(r, 'Failed to register vessel');
   },
   fillBulkVessel: async (data) => {
-    const r = await fetch(`${API_BASE}/bulk-vessels/fills`, {
+    const r = await apiFetch(`${API_BASE}/bulk-vessels/fills`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -401,7 +405,7 @@ export const api = {
     return jsonOk(r, 'Failed to fill vessel');
   },
   drawBulkVessel: async (data) => {
-    const r = await fetch(`${API_BASE}/bulk-vessels/draws`, {
+    const r = await apiFetch(`${API_BASE}/bulk-vessels/draws`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -413,11 +417,11 @@ export const api = {
   getServiceEntrySheets: (po_id = '') => {
     const params = new URLSearchParams();
     if (po_id) params.append('po_id', po_id);
-    return fetch(`${API_BASE}/service-entry-sheets?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/service-entry-sheets?${params.toString()}`).then(r => r.json());
   },
-  getServiceEntrySheetDetail: (id) => fetch(`${API_BASE}/service-entry-sheets/${id}`).then(r => r.json()),
+  getServiceEntrySheetDetail: (id) => apiFetch(`${API_BASE}/service-entry-sheets/${id}`).then(r => r.json()),
   createServiceEntrySheet: async (sesData) => {
-    const r = await fetch(`${API_BASE}/service-entry-sheets`, {
+    const r = await apiFetch(`${API_BASE}/service-entry-sheets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sesData)
@@ -425,7 +429,7 @@ export const api = {
     return jsonOk(r, 'Failed to create service entry sheet');
   },
   submitServiceEntrySheet: async (id, data = {}) => {
-    const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/submit`, {
+    const r = await apiFetch(`${API_BASE}/service-entry-sheets/${id}/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -433,7 +437,7 @@ export const api = {
     return jsonOk(r, 'Failed to submit service entry sheet');
   },
   acceptServiceEntrySheet: async (id, data = {}) => {
-    const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/accept`, {
+    const r = await apiFetch(`${API_BASE}/service-entry-sheets/${id}/accept`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -441,7 +445,7 @@ export const api = {
     return jsonOk(r, 'Failed to accept service entry sheet');
   },
   rejectServiceEntrySheet: async (id, data = {}) => {
-    const r = await fetch(`${API_BASE}/service-entry-sheets/${id}/reject`, {
+    const r = await apiFetch(`${API_BASE}/service-entry-sheets/${id}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -453,11 +457,11 @@ export const api = {
   getInvoices: (status = '') => {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
-    return fetch(`${API_BASE}/invoices?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/invoices?${params.toString()}`).then(r => r.json());
   },
-  getInvoiceDetail: (id) => fetch(`${API_BASE}/invoices/${id}`).then(r => r.json()),
+  getInvoiceDetail: (id) => apiFetch(`${API_BASE}/invoices/${id}`).then(r => r.json()),
   createInvoice: async (invoiceData) => {
-    const r = await fetch(`${API_BASE}/invoices`, {
+    const r = await apiFetch(`${API_BASE}/invoices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(invoiceData)
@@ -465,7 +469,7 @@ export const api = {
     return jsonOk(r, 'Failed to create invoice');
   },
   approveInvoicePayment: async (id, data) => {
-    const r = await fetch(`${API_BASE}/invoices/${id}/approve-payment`, {
+    const r = await apiFetch(`${API_BASE}/invoices/${id}/approve-payment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -473,7 +477,7 @@ export const api = {
     return jsonOk(r, 'Failed to approve invoice payment');
   },
   markInvoicePaid: async (id, data) => {
-    const r = await fetch(`${API_BASE}/invoices/${id}/mark-paid`, {
+    const r = await apiFetch(`${API_BASE}/invoices/${id}/mark-paid`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -486,7 +490,7 @@ export const api = {
     if (bucket) params.append('bucket', bucket);
     if (days != null && days !== '') params.append('days', String(days));
     if (today) params.append('today', today);
-    return fetch(`${API_BASE}/ap-aging?${params.toString()}`).then((r) =>
+    return apiFetch(`${API_BASE}/ap-aging?${params.toString()}`).then((r) =>
       jsonOk(r, 'Failed to load AP aging queue')
     );
   },
@@ -495,18 +499,18 @@ export const api = {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     const qs = params.toString();
-    return fetch(`${API_BASE}/payment-runs${qs ? `?${qs}` : ''}`).then((r) =>
+    return apiFetch(`${API_BASE}/payment-runs${qs ? `?${qs}` : ''}`).then((r) =>
       jsonOk(r, 'Failed to load payment runs')
     );
   },
   getPaymentRunDetail: (id) =>
-    fetch(`${API_BASE}/payment-runs/${id}`).then((r) => jsonOk(r, 'Failed to load payment run')),
+    apiFetch(`${API_BASE}/payment-runs/${id}`).then((r) => jsonOk(r, 'Failed to load payment run')),
   getEligiblePaymentRunInvoices: () =>
-    fetch(`${API_BASE}/payment-runs/eligible-invoices`).then((r) =>
+    apiFetch(`${API_BASE}/payment-runs/eligible-invoices`).then((r) =>
       jsonOk(r, 'Failed to load eligible invoices')
     ),
   createPaymentRun: async (data) => {
-    const r = await fetch(`${API_BASE}/payment-runs`, {
+    const r = await apiFetch(`${API_BASE}/payment-runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -514,7 +518,7 @@ export const api = {
     return jsonOk(r, 'Failed to create payment run');
   },
   executePaymentRun: async (id, data) => {
-    const r = await fetch(`${API_BASE}/payment-runs/${id}/execute`, {
+    const r = await apiFetch(`${API_BASE}/payment-runs/${id}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -522,7 +526,7 @@ export const api = {
     return jsonOk(r, 'Failed to execute payment run');
   },
   cancelPaymentRun: async (id, data) => {
-    const r = await fetch(`${API_BASE}/payment-runs/${id}/cancel`, {
+    const r = await apiFetch(`${API_BASE}/payment-runs/${id}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -533,12 +537,12 @@ export const api = {
   getInvoiceExceptions: (queue = 'open') => {
     const params = new URLSearchParams();
     if (queue) params.append('queue', queue);
-    return fetch(`${API_BASE}/invoice-exceptions?${params.toString()}`).then((r) => jsonOk(r, 'Failed to load exception queue'));
+    return apiFetch(`${API_BASE}/invoice-exceptions?${params.toString()}`).then((r) => jsonOk(r, 'Failed to load exception queue'));
   },
   getInvoiceExceptionDetail: (id) =>
-    fetch(`${API_BASE}/invoice-exceptions/${id}`).then((r) => jsonOk(r, 'Failed to load exception detail')),
+    apiFetch(`${API_BASE}/invoice-exceptions/${id}`).then((r) => jsonOk(r, 'Failed to load exception detail')),
   resolveInvoiceException: async (id, data) => {
-    const r = await fetch(`${API_BASE}/invoice-exceptions/${id}/resolve`, {
+    const r = await apiFetch(`${API_BASE}/invoice-exceptions/${id}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -548,14 +552,14 @@ export const api = {
   getInvoiceDuplicates: (queue = 'open') => {
     const params = new URLSearchParams();
     if (queue) params.append('queue', queue);
-    return fetch(`${API_BASE}/invoice-duplicates?${params.toString()}`).then((r) =>
+    return apiFetch(`${API_BASE}/invoice-duplicates?${params.toString()}`).then((r) =>
       jsonOk(r, 'Failed to load duplicate-suspect queue')
     );
   },
   getInvoiceDuplicateDetail: (id) =>
-    fetch(`${API_BASE}/invoice-duplicates/${id}`).then((r) => jsonOk(r, 'Failed to load duplicate detail')),
+    apiFetch(`${API_BASE}/invoice-duplicates/${id}`).then((r) => jsonOk(r, 'Failed to load duplicate detail')),
   resolveInvoiceDuplicate: async (id, data) => {
-    const r = await fetch(`${API_BASE}/invoice-duplicates/${id}/resolve`, {
+    const r = await apiFetch(`${API_BASE}/invoice-duplicates/${id}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -567,12 +571,12 @@ export const api = {
     const params = new URLSearchParams();
     if (requester_id) params.append('requester_id', requester_id);
     if (department_id) params.append('department_id', department_id);
-    return fetch(`${API_BASE}/invoice-exceptions/buyer-inbox?${params.toString()}`).then((r) =>
+    return apiFetch(`${API_BASE}/invoice-exceptions/buyer-inbox?${params.toString()}`).then((r) =>
       jsonOk(r, 'Failed to load buyer inbox')
     );
   },
   respondBuyerInbox: async (id, data) => {
-    const r = await fetch(`${API_BASE}/invoice-exceptions/${id}/buyer-respond`, {
+    const r = await apiFetch(`${API_BASE}/invoice-exceptions/${id}/buyer-respond`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -584,7 +588,7 @@ export const api = {
   searchDocumentTrail: (q = '') => {
     const params = new URLSearchParams();
     if (q) params.append('q', q);
-    return fetch(`${API_BASE}/document-trail/search?${params.toString()}`).then(r => r.json());
+    return apiFetch(`${API_BASE}/document-trail/search?${params.toString()}`).then(r => r.json());
   },
   getDocumentTrail: async (params = {}) => {
     const search = new URLSearchParams();
@@ -593,7 +597,7 @@ export const api = {
         search.append(key, value);
       }
     });
-    const r = await fetch(`${API_BASE}/document-trail?${search.toString()}`);
+    const r = await apiFetch(`${API_BASE}/document-trail?${search.toString()}`);
     return jsonOk(r, 'Document trail not found');
   }
 };

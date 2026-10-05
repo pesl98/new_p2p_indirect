@@ -20,6 +20,11 @@ import {
   resolveInvoiceDuplicate,
   utcCalendarDaysBetween
 } from './invoiceDuplicatesService.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -526,19 +531,19 @@ describe('GET /api/invoice-duplicates', () => {
 
     const app = createApp({ db, config: loadDbConfig({}) });
     await withServer(app, async (base) => {
-      const listed = await json(await fetch(`${base}/api/invoice-duplicates`));
+      const listed = await json(await authed(`${base}/api/invoice-duplicates`));
       assert.equal(listed.status, 200);
       assert.equal(listed.body.length, 1);
       assert.equal(listed.body[0].invoice_number, 'INV-B');
       assert.equal(listed.body[0].duplicate_status, 'suspect');
       assert.equal(listed.body[0].duplicate_suspects[0].invoice_number, 'INV-A');
 
-      const detail = await json(await fetch(`${base}/api/invoice-duplicates/${suspect.invoiceId}`));
+      const detail = await json(await authed(`${base}/api/invoice-duplicates/${suspect.invoiceId}`));
       assert.equal(detail.status, 200);
       assert.equal(detail.body.candidates[0].invoice_number, 'INV-A');
       assert.equal(detail.body.billed_total_cents, 9900);
 
-      const created = await json(await fetch(`${base}/api/invoices`, {
+      const created = await json(await authed(`${base}/api/invoices`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(invoicePayload({
@@ -550,7 +555,7 @@ describe('GET /api/invoice-duplicates', () => {
       assert.equal(created.status, 201);
       assert.equal(created.body.duplicate_status, 'clear');
 
-      const resolved = await json(await fetch(`${base}/api/invoice-duplicates/${suspect.invoiceId}/resolve`, {
+      const resolved = await json(await authed(`${base}/api/invoice-duplicates/${suspect.invoiceId}/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -562,14 +567,14 @@ describe('GET /api/invoice-duplicates', () => {
       assert.equal(resolved.status, 200);
       assert.equal(resolved.body.duplicate_status, 'confirmed_unique');
 
-      const approve = await json(await fetch(`${base}/api/invoices/${suspect.invoiceId}/approve-payment`, {
+      const approve = await json(await authed(`${base}/api/invoices/${suspect.invoiceId}/approve-payment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approver_name: 'David Miller' })
       }));
       assert.equal(approve.status, 200);
 
-      const badQueue = await json(await fetch(`${base}/api/invoice-duplicates?queue=yesterday`));
+      const badQueue = await json(await authed(`${base}/api/invoice-duplicates?queue=yesterday`));
       assert.equal(badQueue.status, 400);
     });
 

@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { loadDbConfig } from './dbConfig.js';
 import { APPROVAL_TIER2_CENTS, buildApprovalSteps } from './approvalPolicy.js';
 import { ELIGIBLE_APPROVER_ROLES } from './departmentsService.js';
+import { withCookie } from './testSession.js';
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -66,7 +67,7 @@ describe('department approver admin API', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/departments`));
+      const { status, body } = await json(await fetch(`${base}/api/departments`, withCookie(5)));
       assert.equal(status, 200);
       assert.equal(body.length, 5);
       const byCode = Object.fromEntries(body.map((d) => [d.code, d]));
@@ -79,7 +80,7 @@ describe('department approver admin API', () => {
       assert.equal(byCode.ADM.approver_user_id, 5);
       assert.equal(byCode.ADM.approver_role, 'admin');
 
-      const legacy = await json(await fetch(`${base}/api/users/departments`));
+      const legacy = await json(await fetch(`${base}/api/users/departments`, withCookie(5)));
       assert.equal(legacy.status, 200);
       assert.equal(legacy.body.find((d) => d.code === 'MKT').approver_name, 'Bob Martinez');
     });
@@ -90,7 +91,7 @@ describe('department approver admin API', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/departments/eligible-approvers`));
+      const { status, body } = await json(await fetch(`${base}/api/departments/eligible-approvers`, withCookie(5)));
       assert.equal(status, 200);
       assert.equal(body.some((u) => u.role === 'requester'), false);
       assert.ok(body.every((u) => ELIGIBLE_APPROVER_ROLES.includes(u.role)));
@@ -105,11 +106,11 @@ describe('department approver admin API', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const assigned = await json(await fetch(`${base}/api/departments/2/approver`, {
+      const assigned = await json(await fetch(`${base}/api/departments/2/approver`, withCookie(5, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approver_user_id: 3, actor_name: 'Elena Rostova' })
-      }));
+      })));
       assert.equal(assigned.status, 200, assigned.body.error);
       assert.equal(assigned.body.approver_user_id, 3);
       assert.equal(assigned.body.approver_name, 'Carol Zhang');
@@ -124,11 +125,11 @@ describe('department approver admin API', () => {
       assert.match(audit.details, /Priya Nair/);
       assert.match(audit.details, /Carol Zhang/);
 
-      const cleared = await json(await fetch(`${base}/api/departments/2`, {
+      const cleared = await json(await fetch(`${base}/api/departments/2`, withCookie(5, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approver_user_id: null, actor_name: 'Elena Rostova' })
-      }));
+      })));
       assert.equal(cleared.status, 200, cleared.body.error);
       assert.equal(cleared.body.approver_user_id, null);
       assert.equal(cleared.body.approver_name, null);
@@ -140,26 +141,26 @@ describe('department approver admin API', () => {
       `).get();
       assert.equal(clearedAudit.action, 'APPROVER_CLEARED');
 
-      const missing = await json(await fetch(`${base}/api/departments/2/approver`, {
+      const missing = await json(await fetch(`${base}/api/departments/2/approver`, withCookie(5, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approver_user_id: 99 })
-      }));
+      })));
       assert.equal(missing.status, 404);
       assert.match(missing.body.error, /not found/i);
 
-      const noDept = await json(await fetch(`${base}/api/departments/99/approver`, {
+      const noDept = await json(await fetch(`${base}/api/departments/99/approver`, withCookie(5, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approver_user_id: 2 })
-      }));
+      })));
       assert.equal(noDept.status, 404);
 
-      const missingField = await json(await fetch(`${base}/api/departments/1`, {
+      const missingField = await json(await fetch(`${base}/api/departments/1`, withCookie(5, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
-      }));
+      })));
       assert.equal(missingField.status, 400);
       assert.match(missingField.body.error, /approver_user_id is required/i);
     });
@@ -179,27 +180,38 @@ describe('department approver admin API', () => {
     }
   });
 
-  test('APIs are demo-open (no actor_role gate), consistent with master-data', async () => {
+  test('department approver writes require an admin session and stamp actor_name', async () => {
     const db = await createTestDb();
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/departments/1/approver`, {
+      const anon = await json(await fetch(`${base}/api/departments/1/approver`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approver_user_id: 8 })
       }));
-      assert.equal(status, 200, body.error);
-      assert.equal(body.approver_user_id, 8);
+      assert.equal(anon.status, 401);
 
-      const requester = await json(await fetch(`${base}/api/departments/1/approver`, {
+      const requester = await json(await fetch(`${base}/api/departments/1/approver`, withCookie(1, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approver_user_id: 1 })
-      }));
-      assert.equal(requester.status, 200, requester.body.error);
-      assert.equal(requester.body.approver_user_id, 1);
-      assert.equal(requester.body.approver_name, 'Alice Chen');
+        body: JSON.stringify({ approver_user_id: 8, actor_name: 'Alice Chen' })
+      })));
+      assert.equal(requester.status, 403);
+
+      const { status, body } = await json(await fetch(`${base}/api/departments/1/approver`, withCookie(5, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approver_user_id: 8, actor_name: 'Not Elena' })
+      })));
+      assert.equal(status, 200, body.error);
+      assert.equal(body.approver_user_id, 8);
+      const audit = db.prepare(`
+        SELECT actor_name FROM audit_logs
+        WHERE entity_type = 'department' AND entity_id = 1
+        ORDER BY id DESC LIMIT 1
+      `).get();
+      assert.equal(audit.actor_name, 'Elena Rostova');
     });
   });
 });

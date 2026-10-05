@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { RefreshCw, Building2, LogOut } from 'lucide-react';
 import { formatMoney } from '../money';
 
 export default function Header({ users, currentUser, sessionUser, demoPersonaSwitcher, onSelectUser, onRefreshData, onLogout }) {
+  const [switchError, setSwitchError] = useState('');
   const getRoleBadge = (role) => {
     switch (role) {
       case 'requester':
@@ -82,12 +83,18 @@ export default function Header({ users, currentUser, sessionUser, demoPersonaSwi
                 <div className="relative">
                   <select
                     value={currentUser?.id || ''}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const selected = users.find(u => u.id === Number(e.target.value));
-                      if (selected) onSelectUser(selected);
+                      if (!selected) return;
+                      setSwitchError('');
+                      try {
+                        await onSelectUser(selected);
+                      } catch (err) {
+                        setSwitchError(err.message || 'Could not sign in as that user');
+                      }
                     }}
                     className="bg-white text-xs font-medium text-slate-800 border border-slate-300 rounded-lg py-1.5 px-2.5 pr-7 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 cursor-pointer shadow-sm"
-                    title="Demo persona switcher — not server identity"
+                    title="Signs in as this seeded user (demo password)"
                   >
                     {users.map(u => (
                       <option key={u.id} value={u.id}>
@@ -102,6 +109,12 @@ export default function Header({ users, currentUser, sessionUser, demoPersonaSwi
                 <div className="hidden sm:block">
                   {getRoleBadge(currentUser.role)}
                 </div>
+              )}
+
+              {switchError && (
+                <span className="text-[10px] text-rose-700 max-w-[10rem] truncate" title={switchError}>
+                  {switchError}
+                </span>
               )}
 
               {sessionUser && (

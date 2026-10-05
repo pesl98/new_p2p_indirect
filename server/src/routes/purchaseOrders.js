@@ -1,4 +1,5 @@
 import express from 'express';
+import { withSessionActor } from '../requestActor.js';
 import { convertRequisitionToPurchaseOrders } from '../purchaseOrdersService.js';
 import {
   applyPurchaseOrderChangeOrder,
@@ -145,7 +146,8 @@ router.get('/:id', async (req, res) => {
 router.post('/from-requisition', async (req, res) => {
   try {
     const db = req.db;
-    const purchaseOrders = await convertRequisitionToPurchaseOrders(db, req.body);
+    const body = withSessionActor(req, req.body, { ids: ['created_by'] });
+    const purchaseOrders = await convertRequisitionToPurchaseOrders(db, body);
     const split = purchaseOrders.length > 1;
     res.status(201).json({
       purchase_orders: purchaseOrders,
@@ -173,10 +175,11 @@ router.get('/:id/change-orders', async (req, res) => {
   }
 });
 
-// Create + apply a change order in one step (demo-open, like the rest of the API)
+// Create + apply a change order. actor_name is the signed-in user.
 router.post('/:id/change-orders', async (req, res) => {
   try {
-    const result = await applyPurchaseOrderChangeOrder(req.db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['actor_name'] });
+    const result = await applyPurchaseOrderChangeOrder(req.db, req.params.id, body);
     res.status(201).json({
       ...result,
       message: `Change order ${result.change_order.co_number} applied`

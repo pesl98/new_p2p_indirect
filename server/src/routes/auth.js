@@ -48,6 +48,7 @@ router.get('/config', async (req, res) => {
     const userCount = await countUsers(req.db);
     res.json({
       auth: 'session',
+      identityProvider: config.identityProvider || 'local',
       demoPersonaSwitcher: Boolean(config.demoPersonaSwitcher),
       bootstrapNeeded: userCount === 0
     });

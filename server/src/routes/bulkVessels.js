@@ -6,6 +6,7 @@ import {
   getBulkOverview,
   registerBulkContainer
 } from '../bulkVesselService.js';
+import { withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
 
@@ -25,7 +26,11 @@ router.get('/', async (req, res) => {
 
 router.post('/containers', async (req, res) => {
   try {
-    const result = await registerBulkContainer(req.db, req.body || {});
+    const body = withSessionActor(req, req.body || {}, {
+      ids: ['registered_by'],
+      names: ['actor_name']
+    });
+    const result = await registerBulkContainer(req.db, body);
     res.status(201).json(result);
   } catch (error) {
     sendError(res, error);
@@ -34,7 +39,11 @@ router.post('/containers', async (req, res) => {
 
 router.post('/fills', async (req, res) => {
   try {
-    const result = await fillBulkContainer(req.db, req.body || {});
+    const body = withSessionActor(req, req.body || {}, {
+      ids: ['filled_by'],
+      names: ['actor_name']
+    });
+    const result = await fillBulkContainer(req.db, body);
     res.status(201).json(result);
   } catch (error) {
     sendError(res, error);
@@ -43,7 +52,11 @@ router.post('/fills', async (req, res) => {
 
 router.post('/draws', async (req, res) => {
   try {
-    const result = await drawBulkContainer(req.db, req.body || {});
+    const body = withSessionActor(req, req.body || {}, {
+      ids: ['drawn_by'],
+      names: ['actor_name']
+    });
+    const result = await drawBulkContainer(req.db, body);
     res.status(201).json(result);
   } catch (error) {
     sendError(res, error);

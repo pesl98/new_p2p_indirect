@@ -168,7 +168,7 @@ export default function BulkVesselsView({ currentUser, onNavigate }) {
           actionLabel="Record fill"
           currentUser={currentUser}
           onClose={() => setFillTarget(null)}
-          onSubmit={(body) => api.fillBulkVessel({ ...body, container_id: fillTarget.id, filled_by: currentUser?.id || 3 })}
+          onSubmit={(body) => api.fillBulkVessel({ ...body, container_id: fillTarget.id, filled_by: currentUser?.id })}
           onSaved={async (result) => {
             setFillTarget(null);
             setBanner({ tone: 'ok', text: result.message });
@@ -184,7 +184,7 @@ export default function BulkVesselsView({ currentUser, onNavigate }) {
           actionLabel="Draw and create payable PO"
           currentUser={currentUser}
           onClose={() => setDrawTarget(null)}
-          onSubmit={(body) => api.drawBulkVessel({ ...body, container_id: drawTarget.id, drawn_by: currentUser?.id || 3 })}
+          onSubmit={(body) => api.drawBulkVessel({ ...body, container_id: drawTarget.id, drawn_by: currentUser?.id })}
           onSaved={async (result) => {
             setDrawTarget(null);
             setBanner({ tone: 'ok', text: result.message, poId: result.poId, poNumber: result.poNumber });
@@ -270,7 +270,7 @@ function RegisterModal({ suppliers, catalog, currentUser, onClose, onSaved }) {
         capacity,
         unit_price: toCents(unitPrice),
         notes,
-        registered_by: currentUser?.id || 3,
+        registered_by: currentUser?.id,
         actor_name: currentUser?.name
       });
       await onSaved(result);

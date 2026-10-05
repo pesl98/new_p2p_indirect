@@ -8,6 +8,11 @@ import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from './i
 import { resolveInvoiceException } from './invoiceExceptionsService.js';
 import { getDocumentTrail } from './documentTrailService.js';
 import { nextDocumentNumber } from './docNumbers.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 import {
   PAYMENT_RUN_AUDIT,
   cancelPaymentRun,
@@ -568,18 +573,18 @@ describe('GET /api/payment-runs', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const eligible = await json(await fetch(`${base}/api/payment-runs/eligible-invoices`));
+      const eligible = await json(await authed(`${base}/api/payment-runs/eligible-invoices`));
       assert.equal(eligible.status, 200);
       assert.equal(eligible.body.length, 3);
 
-      const empty = await json(await fetch(`${base}/api/payment-runs`, {
+      const empty = await json(await authed(`${base}/api/payment-runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invoice_ids: [], actor_name: 'David Miller' })
       }));
       assert.equal(empty.status, 400);
 
-      const created = await json(await fetch(`${base}/api/payment-runs`, {
+      const created = await json(await authed(`${base}/api/payment-runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -591,15 +596,15 @@ describe('GET /api/payment-runs', () => {
       assert.equal(created.body.status, 'draft');
       assert.equal(created.body.items.length, 2);
 
-      const listed = await json(await fetch(`${base}/api/payment-runs`));
+      const listed = await json(await authed(`${base}/api/payment-runs`));
       assert.equal(listed.status, 200);
       assert.equal(listed.body.length, 1);
 
-      const detail = await json(await fetch(`${base}/api/payment-runs/${created.body.id}`));
+      const detail = await json(await authed(`${base}/api/payment-runs/${created.body.id}`));
       assert.equal(detail.status, 200);
       assert.equal(detail.body.run_number, created.body.run_number);
 
-      const executed = await json(await fetch(`${base}/api/payment-runs/${created.body.id}/execute`, {
+      const executed = await json(await authed(`${base}/api/payment-runs/${created.body.id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -611,7 +616,7 @@ describe('GET /api/payment-runs', () => {
       assert.equal(executed.status, 200);
       assert.equal(executed.body.status, 'executed');
 
-      const reexec = await json(await fetch(`${base}/api/payment-runs/${created.body.id}/execute`, {
+      const reexec = await json(await authed(`${base}/api/payment-runs/${created.body.id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -622,7 +627,7 @@ describe('GET /api/payment-runs', () => {
       }));
       assert.equal(reexec.status, 400);
 
-      const cancelDraft = await json(await fetch(`${base}/api/payment-runs`, {
+      const cancelDraft = await json(await authed(`${base}/api/payment-runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -631,7 +636,7 @@ describe('GET /api/payment-runs', () => {
         })
       }));
       assert.equal(cancelDraft.status, 201);
-      const cancelled = await json(await fetch(`${base}/api/payment-runs/${cancelDraft.body.id}/cancel`, {
+      const cancelled = await json(await authed(`${base}/api/payment-runs/${cancelDraft.body.id}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor_name: 'Elena Rostova', reason: 'Hold' })
@@ -639,7 +644,7 @@ describe('GET /api/payment-runs', () => {
       assert.equal(cancelled.status, 200);
       assert.equal(cancelled.body.status, 'cancelled');
 
-      const missing = await json(await fetch(`${base}/api/payment-runs/999`));
+      const missing = await json(await authed(`${base}/api/payment-runs/999`));
       assert.equal(missing.status, 404);
     });
   });

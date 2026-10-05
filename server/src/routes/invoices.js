@@ -2,6 +2,7 @@ import express from 'express';
 import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from '../invoicesService.js';
 import { attachExceptionToInvoice } from '../invoiceExceptionsService.js';
 import { attachDuplicateToInvoice } from '../invoiceDuplicatesService.js';
+import { AP_ROLES, requireRole, withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
 
@@ -160,21 +161,23 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Approve invoice for payment (Finance / Accounts Payable)
-router.post('/:id/approve-payment', async (req, res) => {
+// Approve invoice for payment (Finance / Accounts Payable). Actor is the session user.
+router.post('/:id/approve-payment', requireRole(...AP_ROLES), async (req, res) => {
   try {
     const db = req.db;
-    const result = await approveInvoicePayment(db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['approver_name', 'actor_name'] });
+    const result = await approveInvoicePayment(db, req.params.id, body);
     res.json(result);
   } catch (error) {
     httpError(res, error);
   }
 });
 
-// Mark invoice as Paid
-router.post('/:id/mark-paid', async (req, res) => {
+// Mark invoice as Paid. Actor is the session user.
+router.post('/:id/mark-paid', requireRole(...AP_ROLES), async (req, res) => {
   try {
-    const result = await markInvoicePaid(req.db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['payer_name', 'actor_name', 'approver_name'] });
+    const result = await markInvoicePaid(req.db, req.params.id, body);
     res.json(result);
   } catch (error) {
     httpError(res, error);
