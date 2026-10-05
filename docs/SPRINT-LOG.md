@@ -144,4 +144,4 @@ OIDC: `IDENTITY_PROVIDER=oidc`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SE
 
 SAML: `IDENTITY_PROVIDER=saml`, `SAML_ENTRY_POINT`, `SAML_IDP_CERT`, `SAML_IDP_ISSUER`, `SAML_SP_ENTITY_ID`, `APP_BASE_URL`. Optional `SAML_ACS_URL` (default `{APP_BASE_URL}/api/auth/saml/acs`) and `SAML_AUDIENCE` (default entity id). Give the IdP `GET /api/auth/saml/metadata`.
 
-Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `SSO_DEFAULT_ROLE` overrides the stored role when it is a valid role.
+Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases. A bad role, a bad flag, or disagreeing aliases is rejected and does not change the row. `SSO_DEFAULT_ROLE` overrides the stored role when it is a valid role.

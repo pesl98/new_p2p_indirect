@@ -132,7 +132,7 @@ SP-initiated only. Point the IdP at `GET /api/auth/saml/metadata`. The ACS check
 
 **Who can sign in**
 
-Existing users match a stored IdP subject (`user_identities`) or a verified email. OIDC requires `email_verified`. Unknown users are rejected unless `SSO_PROVISIONING=1` or an admin calls `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. The role is never taken from the IdP. `SSO_DEFAULT_ROLE` must be `requester`, `approver`, `procurement`, `finance`, or `admin` if set. `vercel:customer` does not set these keys; add them in the Vercel project for that customer (Production and Preview) and redeploy.
+Existing users match a stored IdP subject (`user_identities`) or a verified email. OIDC requires `email_verified`. Unknown users are rejected unless `SSO_PROVISIONING=1` or an admin calls `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases for those body fields. A bad role or flag is rejected and does not change the row. The role is never taken from the IdP. `SSO_DEFAULT_ROLE` must be `requester`, `approver`, `procurement`, `finance`, or `admin` if set. `vercel:customer` does not set these keys; add them in the Vercel project for that customer (Production and Preview) and redeploy.
 
 ---
 

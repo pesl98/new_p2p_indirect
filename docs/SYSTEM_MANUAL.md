@@ -139,7 +139,7 @@ Missing or invalid IdP settings leave `ssoReady` false. `GET /api/auth/oidc/star
 
 Give the IdP `GET /api/auth/saml/metadata`. Login starts at `GET /api/auth/saml/start`. The login page shows the SSO link when `ssoReady` is true.
 
-**Provisioning (default off).** Either set `SSO_PROVISIONING=1` or, as an admin, `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `GET /api/auth/sso-settings` is admin-only (the `/api/auth/*` middleware is public; this route checks the session itself). `SSO_DEFAULT_ROLE` overrides the stored role when it is valid. A bad flag or role does not turn SSO off for people who already have accounts; creating an unknown user then fails closed.
+**Provisioning (default off).** Either set `SSO_PROVISIONING=1` or, as an admin, `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases for those two fields. `defaultRole` must be `requester`, `approver`, `procurement`, `finance`, or `admin`. A bad flag, an unknown role, or aliases that disagree is rejected (400) and the row is left unchanged. A `role` field on the body is ignored. `GET /api/auth/sso-settings` is admin-only (the `/api/auth/*` middleware is public; this route checks the session itself). `SSO_DEFAULT_ROLE` overrides the stored role when it is valid. A bad env flag or role does not turn SSO off for people who already have accounts; creating an unknown user then fails closed.
 
 **Local login.** Leave `LOCAL_LOGIN` unset (default on). Seed/demo: any seeded email and `ProcureFlow!demo`. Set `LOCAL_LOGIN=0` only when this customer should use the IdP alone.
 

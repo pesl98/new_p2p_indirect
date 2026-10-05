@@ -828,6 +828,78 @@ describe('OIDC callback', () => {
   });
 });
 
+describe('SSO settings body', () => {
+  test('accepts camelCase and snake_case, and rejects a bad role without writing', async () => {
+    const db = await createMemoryDatabase();
+    await seedUsers(db);
+    const app = appFor(db, {});
+    await withServer(app, async (base) => {
+      const elena = await readJson(await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'elena@example.com', password: DEMO_SEED_PASSWORD })
+      }));
+      assert.equal(elena.status, 200);
+
+      const camel = await readJson(await fetch(`${base}/api/auth/sso-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ provisioning: true, defaultRole: 'approver', role: 'admin' })
+      }));
+      assert.equal(camel.status, 200, camel.body.error);
+      assert.equal(camel.body.provisioning, true);
+      assert.equal(camel.body.defaultRole, 'approver');
+
+      const agreed = await readJson(await fetch(`${base}/api/auth/sso-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({
+          provisioning: true,
+          sso_provisioning: 1,
+          defaultRole: 'procurement',
+          sso_default_role: 'procurement'
+        })
+      }));
+      assert.equal(agreed.status, 200, agreed.body.error);
+      assert.equal(agreed.body.provisioning, true);
+      assert.equal(agreed.body.defaultRole, 'procurement');
+
+      const snake = await readJson(await fetch(`${base}/api/auth/sso-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ sso_provisioning: false, sso_default_role: 'finance' })
+      }));
+      assert.equal(snake.status, 200, snake.body.error);
+      assert.equal(snake.body.provisioning, false);
+      assert.equal(snake.body.defaultRole, 'finance');
+
+      const bad = await readJson(await fetch(`${base}/api/auth/sso-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ provisioning: true, defaultRole: 'superuser' })
+      }));
+      assert.equal(bad.status, 400);
+      const afterBad = await db.prepare(
+        `SELECT sso_provisioning, sso_default_role FROM tenant_settings WHERE id = 1`
+      ).get();
+      assert.equal(Number(afterBad.sso_provisioning), 0);
+      assert.equal(afterBad.sso_default_role, 'finance');
+
+      const clash = await readJson(await fetch(`${base}/api/auth/sso-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ provisioning: true, sso_provisioning: false, defaultRole: 'admin' })
+      }));
+      assert.equal(clash.status, 400);
+      const afterClash = await db.prepare(
+        `SELECT sso_provisioning, sso_default_role FROM tenant_settings WHERE id = 1`
+      ).get();
+      assert.equal(Number(afterClash.sso_provisioning), 0);
+      assert.equal(afterClash.sso_default_role, 'finance');
+    });
+  });
+});
+
 describe('SAML callback', () => {
   test('mints pf_session for a mapped user and ignores the role attribute', async () => {
     const db = await createMemoryDatabase();

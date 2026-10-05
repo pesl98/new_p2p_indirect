@@ -119,23 +119,60 @@ export async function getSsoPolicy(db, ssoConfig) {
   };
 }
 
+function hasOwn(body, key) {
+  return Object.prototype.hasOwnProperty.call(body, key);
+}
+
+function parseProvisioningFlag(value) {
+  if (value === true || value === 1 || value === '1') return true;
+  if (value === false || value === 0 || value === '0') return false;
+  return null;
+}
+
+function provisioningInputError(message) {
+  const error = new SsoError('sso_provisioning_misconfigured', 400);
+  error.message = message;
+  return error;
+}
+
+/**
+ * Admin body for PUT /api/auth/sso-settings.
+ * Documented keys are provisioning and defaultRole.
+ * sso_provisioning and sso_default_role are aliases.
+ * A `role` field is ignored. Bad or conflicting input throws before any write.
+ */
 export async function updateSsoSettings(db, body = {}) {
   const current = await ensureTenantSettings(db);
   let provisioning = Number(current.sso_provisioning) === 1;
-  if (body.sso_provisioning !== undefined) {
-    const flag = body.sso_provisioning;
-    if (flag === true || flag === 1 || flag === '1') provisioning = true;
-    else if (flag === false || flag === 0 || flag === '0') provisioning = false;
-    else {
-      const error = new SsoError('sso_provisioning_misconfigured', 400);
-      error.message = 'sso_provisioning must be true or false.';
-      throw error;
+  const hasProvisioning = hasOwn(body, 'provisioning');
+  const hasProvisioningAlias = hasOwn(body, 'sso_provisioning');
+  if (hasProvisioning || hasProvisioningAlias) {
+    const primary = hasProvisioning ? parseProvisioningFlag(body.provisioning) : null;
+    const alias = hasProvisioningAlias ? parseProvisioningFlag(body.sso_provisioning) : null;
+    if (hasProvisioning && primary === null) {
+      throw provisioningInputError('provisioning must be true or false.');
     }
+    if (hasProvisioningAlias && alias === null) {
+      throw provisioningInputError('sso_provisioning must be true or false.');
+    }
+    if (hasProvisioning && hasProvisioningAlias && primary !== alias) {
+      throw provisioningInputError('provisioning and sso_provisioning disagree.');
+    }
+    provisioning = hasProvisioning ? primary : alias;
   }
+
   let role = current.sso_default_role;
-  if (body.sso_default_role !== undefined) {
-    role = normalizeUserRole(body.sso_default_role);
+  const hasRole = hasOwn(body, 'defaultRole');
+  const hasRoleAlias = hasOwn(body, 'sso_default_role');
+  if (hasRole || hasRoleAlias) {
+    const primary = hasRole ? normalizeUserRole(body.defaultRole) : null;
+    const alias = hasRoleAlias ? normalizeUserRole(body.sso_default_role) : null;
+    if (hasRole && hasRoleAlias && primary !== alias) {
+      throw provisioningInputError('defaultRole and sso_default_role disagree.');
+    }
+    role = hasRole ? primary : alias;
   }
+
   await db.prepare(
     `UPDATE tenant_settings SET sso_provisioning = ?, sso_default_role = ? WHERE id = 1`
   ).run(provisioning ? 1 : 0, role);
