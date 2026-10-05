@@ -8,7 +8,7 @@ This document describes the control model implemented in code.
 
 **Authentication (Sprint 1):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Every `/api` route except `/api/health` and `/api/auth/*` requires that session and fails closed (401). Approvals, buyer inbox, and AP actions use `req.user`. A body or query persona id (`approver_id`, `requester_id`, `received_by`, `actor_name`, …) that names someone else is rejected (403). Admin user CRUD and department-head assignment require `req.user.role === 'admin'`. AP money movement (approve, mark paid, exception resolve, duplicate resolve, aging, payment runs) requires `finance` or `admin`. Operator runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md). Daily program: [SPRINT-LOG.md](SPRINT-LOG.md).
 
-**Identity provider:** `local` only. SSO / SAML / OIDC is Sprint 2. A later IdP callback should resolve an external subject to `users.id` and call `signSessionToken`. Do not add a second identity header. There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer.
+**Identity provider:** `local` (default), `oidc`, or `saml`. An OIDC or SAML callback resolves the IdP subject to `users.id` and calls `signSessionToken` — the same `pf_session` cookie, no second identity header. IdP endpoints and secrets are env vars on that customer’s deployment. `tenant_settings` stores only the provisioning switch (default off) and the default role (`requester`). Unknown users are rejected unless provisioning is explicitly enabled. A role is never taken from an IdP claim. There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer. Configure: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 **Demo walkthrough:** `npm run seed` (destructive) loads eight personas. Every one signs in with password `ProcureFlow!demo` (example: `elena.rostova@company.com`). `DEMO_PERSONA_SWITCHER=1` shows a header dropdown that **re-logins** with that seed password. It does not swap a client-only persona. Default customer deploy leaves the flag unset.
 
@@ -628,7 +628,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 
 ## Known demo limits (out of scope)
 
-- **Auth is a per-tenant session on the whole P2P API.** Unauthenticated calls are 401. Body persona ids cannot choose the actor. Role gates in this sprint: admin for user CRUD and department-head assignment; finance or admin for AP actions; the signed-in user for approvals and the buyer inbox. Finer separation of duties (for example procurement-only catalog edits) is not a separate matrix. SSO is Sprint 2. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default) and re-authenticates with the seed password. Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy.
+- **Auth is a per-tenant session on the whole P2P API.** Unauthenticated calls are 401. Body persona ids cannot choose the actor. Role gates: admin for user CRUD and department-head assignment; finance or admin for AP actions; the signed-in user for approvals and the buyer inbox. Finer separation of duties (for example procurement-only catalog edits) is not a separate matrix. Optional OIDC/SAML mints the same cookie; it is not a second tenancy model. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default) and re-authenticates with the seed password. Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not `org_id` row tenancy.
 - Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
@@ -639,7 +639,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Payment runs ship as a **draft proposal + one-shot execute** (`PAY-YYYY-NNN`, shared ACH reference, same mark-paid write). Still out of scope: bank NACHA/ACH file export, early-pay discount calendar, supplier remittance portal, and multi-currency.
 - Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute.
 - Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR with `source_contract_id` proposed. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT). Carrying `source_contract_id` onto the PO at convert time is out of scope.
-- **No SSO / SAML / OIDC** in this phase. Auth is email+password local to the customer DB (`SESSION_SECRET` signs the session cookie).
+- **SCIM is not implemented.** OIDC and SAML login are optional per customer and still end in email+password’s `pf_session` cookie (`SESSION_SECRET` signs it). Audit/compliance reporting is Sprint 3.
 
 ## Customer isolation = DB per tenant
 
@@ -654,7 +654,7 @@ Pointing two deployments at the same URL merges those customers. Partial Turso c
 
 `db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `bootstrap-org` then inserts the default five cost centers + FY 2026 budgets (idempotent; never wipes). `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
 
-Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (operator runbook) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md). Capabilities overview: **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
+Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET` and optional IdP settings), first-admin bootstrap, smoke, and rollback: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (operator runbook) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md). Capabilities overview: **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. Env template: [`.env.example`](../.env.example). Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
 
 ## Local vs Vercel / Turso
 

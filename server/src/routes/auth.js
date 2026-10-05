@@ -1,8 +1,8 @@
 import express from 'express';
 import {
+  attachSessionCookie,
   loadAuthConfig,
-  sessionCookieHeader,
-  signSessionToken
+  sessionCookieHeader
 } from '../auth.js';
 import {
   UsersError,
@@ -11,6 +11,7 @@ import {
   countUsers
 } from '../usersService.js';
 import { MasterDataError } from '../masterData.js';
+import ssoRouter from './sso.js';
 
 const router = express.Router();
 
@@ -26,12 +27,7 @@ function authConfig(req) {
 }
 
 function setSessionCookie(req, res, userId) {
-  const config = authConfig(req);
-  const token = signSessionToken(userId, config.sessionSecret, Date.now(), config.sessionTtlSeconds);
-  res.setHeader('Set-Cookie', sessionCookieHeader(token, {
-    ttlSeconds: config.sessionTtlSeconds,
-    secure: config.cookieSecure
-  }));
+  attachSessionCookie(res, authConfig(req), userId);
 }
 
 function clearSessionCookie(req, res) {
@@ -49,6 +45,8 @@ router.get('/config', async (req, res) => {
     res.json({
       auth: 'session',
       identityProvider: config.identityProvider || 'local',
+      ssoReady: Boolean(config.sso?.ready),
+      localLogin: config.localLogin !== false,
       demoPersonaSwitcher: Boolean(config.demoPersonaSwitcher),
       bootstrapNeeded: userCount === 0
     });
@@ -70,6 +68,12 @@ router.get('/me', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   try {
+    if (authConfig(req).localLogin === false) {
+      return res.status(403).json({
+        error: 'Password sign-in is disabled for this customer',
+        code: 'local_login_disabled'
+      });
+    }
     const { email, password } = req.body || {};
     const user = await authenticateUser(req.db, email, password);
     setSessionCookie(req, res, user.id);
@@ -100,5 +104,7 @@ router.post('/bootstrap', async (req, res) => {
     sendError(res, error);
   }
 });
+
+router.use(ssoRouter);
 
 export default router;

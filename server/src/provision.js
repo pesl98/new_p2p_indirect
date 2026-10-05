@@ -50,8 +50,13 @@ export const EXPECTED_TABLES = [
   'requisition_items',
   'service_entry_sheet_items',
   'service_entry_sheets',
+  'sso_assertion_uses',
+  'sso_login_events',
+  'sso_requests',
   'suppliers',
+  'tenant_settings',
   'user_credentials',
+  'user_identities',
   'users',
   'utility_arrangements',
   'utility_consumptions'

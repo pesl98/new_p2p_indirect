@@ -55,7 +55,7 @@ Draft PR → Submit → Sequential approvals → budget commit on final approve
 Do not promise these. They are **not** in the code:
 
 - Enterprise Coupa / SAP Ariba / Oracle Fusion replacement
-- SSO / SAML / OIDC / SCIM
+- SCIM (OIDC and SAML login are optional per customer; see [§3](#3-personas-and-authentication))
 - Shared-row multi-tenancy (`org_id` on every table)
 - OCR / PDF / email invoice capture
 - Bank NACHA / ACH file export, remittance portal, early-pay discount calendar, multi-currency
@@ -96,11 +96,54 @@ These five values are the only allowed roles. Additional people are created in *
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/auth/config` | Public: `{ auth, identityProvider: "local", demoPersonaSwitcher, bootstrapNeeded }` |
-| `POST /api/auth/login` | `{ email, password }` → cookie |
+| `GET /api/auth/config` | Public: `{ auth, identityProvider, ssoReady, localLogin, demoPersonaSwitcher, bootstrapNeeded }` |
+| `POST /api/auth/login` | `{ email, password }` → cookie. `403 local_login_disabled` when `LOCAL_LOGIN=0` |
 | `POST /api/auth/logout` | Clears cookie |
 | `GET /api/auth/me` | Session user or 401 |
 | `POST /api/auth/bootstrap` | First admin on an **empty** `users` table only |
+
+### SSO (OIDC or SAML)
+
+Optional, per customer. The callback mints the same `pf_session` cookie. It does not add another identity header. `identityProvider` is `local` (default), `oidc`, or `saml`.
+
+IdP endpoints and secrets are **environment variables on that customer’s deployment**. The database row `tenant_settings` (`id = 1`) stores only whether unknown users may be created (`sso_provisioning`, default **off**) and the role those users get (`sso_default_role`, default **`requester`**). Do not put a client secret or IdP certificate in the database.
+
+Missing or invalid IdP settings leave `ssoReady` false. `GET /api/auth/oidc/start`, the OIDC callback, and the SAML start/ACS routes then return **503** `sso_not_configured` and set **no** cookie. They do not fall back to a persona or to an unsigned login. Password login still works unless `LOCAL_LOGIN=0`.
+
+**Mapping.** `user_identities` (`provider` + `subject`) is checked first. Otherwise the verified email is matched to `users.email` (case-insensitive) and the subject is stored. OIDC requires `email_verified`. A signed SAML email counts as verified. Unknown users are **rejected** (`403 sso_user_unknown`) unless provisioning is on. The new user’s role is `SSO_DEFAULT_ROLE` when that env value is one of the five roles, otherwise the tenant row, otherwise `requester`. A role claim, query parameter, or `role` field on the settings body is ignored. Inactive users are rejected. An empty tenant still needs bootstrap for an admin: the default JIT role is `requester`.
+
+**OIDC** (`IDENTITY_PROVIDER=oidc`). Confidential authorization-code client. The server sends PKCE S256, `state`, and `nonce`, and checks the ID token signature (issuer JWKS), issuer, audience, and expiry.
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `OIDC_ISSUER` | Yes | HTTPS issuer. `http` only with `OIDC_ALLOW_INSECURE=1` (local tests). |
+| `OIDC_CLIENT_ID` | Yes | |
+| `OIDC_CLIENT_SECRET` | Yes | Confidential client. Not stored in the DB. |
+| `APP_BASE_URL` | Yes | This customer’s origin, e.g. `https://procureflow-acme.vercel.app`. Post-login redirect is this origin’s `/`. |
+| `OIDC_REDIRECT_URI` | No | Default `{APP_BASE_URL}/api/auth/oidc/callback`. Register this exact URL on the IdP. |
+| `OIDC_SCOPES` | No | Default `openid email profile`. Must include `openid`. |
+
+**SAML** (`IDENTITY_PROVIDER=saml`). SP-initiated only. Signature, audience, `Recipient` (must equal the ACS URL), `NotOnOrAfter`, and `InResponseTo` are checked. Assertion ids are single-use.
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `SAML_ENTRY_POINT` | Yes | HTTPS IdP SSO URL. `http` only with `SAML_ALLOW_INSECURE=1`. |
+| `SAML_IDP_CERT` | Yes | IdP signing certificate: PEM, `\n` escapes, or bare base64. |
+| `SAML_IDP_ISSUER` | Yes | Must match the assertion issuer. |
+| `SAML_SP_ENTITY_ID` | Yes | SP entity id. Default SAML audience. |
+| `APP_BASE_URL` | Yes | Same as OIDC. |
+| `SAML_ACS_URL` | No | Default `{APP_BASE_URL}/api/auth/saml/acs`. |
+| `SAML_AUDIENCE` | No | Defaults to `SAML_SP_ENTITY_ID`. |
+| `SAML_WANT_ASSERTIONS_SIGNED` | No | Default `true`. |
+| `SAML_WANT_RESPONSE_SIGNED` | No | Default `false`. Setting **both** false fails closed. |
+
+Give the IdP `GET /api/auth/saml/metadata`. Login starts at `GET /api/auth/saml/start`. The login page shows the SSO link when `ssoReady` is true.
+
+**Provisioning (default off).** Either set `SSO_PROVISIONING=1` or, as an admin, `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `GET /api/auth/sso-settings` is admin-only (the `/api/auth/*` middleware is public; this route checks the session itself). `SSO_DEFAULT_ROLE` overrides the stored role when it is valid. A bad flag or role does not turn SSO off for people who already have accounts; creating an unknown user then fails closed.
+
+**Local login.** Leave `LOCAL_LOGIN` unset (default on). Seed/demo: any seeded email and `ProcureFlow!demo`. Set `LOCAL_LOGIN=0` only when this customer should use the IdP alone.
+
+Successful and failed SSO attempts are inserted into `sso_login_events`. That table is append-only evidence, not the Sprint 3 audit report.
 
 **Enforced on session (`req.user`):** every `/api` route except health and `/api/auth/*` requires a signed-in user. Mutating `/api/users` and department-head assignment require `role=admin`. AP approve, mark paid, exceptions, duplicates, aging, and payment runs require `finance` or `admin`. Approvals and the buyer inbox are scoped to the signed-in user. A body persona id that names someone else is 403. `DELETE /api/users/:id` is **405**.
 
@@ -570,6 +613,8 @@ Full env table: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Keys (no values): [`.env.exa
 | --- | --- |
 | `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` | Required on Vercel (classic libSQL URL + **database** token) |
 | `SESSION_SECRET` | Required (signs `pf_session`) |
+| `IDENTITY_PROVIDER` | `local` (default), `oidc`, or `saml`. See [§3 SSO](#sso-oidc-or-saml) |
+| `APP_BASE_URL` | Required when SSO is on (this customer’s origin) |
 | `DEMO_PERSONA_SWITCHER` | Leave unset |
 | `PROCUREMENT_DB_PATH` | Local SQLite only — **do not** set on Vercel |
 | `BCRYPT_ROUNDS` | Optional (default 10) |
@@ -672,7 +717,7 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 
 | Topic | Honest status |
 | --- | --- |
-| SSO / SAML / OIDC / SCIM | Not implemented. Email + bcrypt local to this DB. |
+| SCIM | Not implemented. OIDC and SAML login are optional per customer and mint `pf_session`. Roles are not taken from the IdP. |
 | `org_id` multi-tenancy | Isolation is the **connection**, not a tenant column. |
 | Finer role matrix on every screen | Session is required everywhere. Admin and AP roles are enforced. Catalog edits are not limited to procurement. |
 | Create-department / create-budget UI | Operator CLI `bootstrap-org` only. |

@@ -635,3 +635,59 @@ CREATE TABLE IF NOT EXISTS bulk_draws (
   FOREIGN KEY (drawn_by) REFERENCES users(id)
 );
 
+-- One row per customer database. IdP secrets stay in the environment.
+-- sso_provisioning defaults off: unknown IdP users are rejected.
+-- sso_default_role is the least-privilege role used only when an admin enables provisioning.
+CREATE TABLE IF NOT EXISTS tenant_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  sso_provisioning INTEGER NOT NULL DEFAULT 0 CHECK (sso_provisioning IN (0, 1)),
+  sso_default_role TEXT NOT NULL DEFAULT 'requester'
+    CHECK (sso_default_role IN ('requester', 'approver', 'procurement', 'finance', 'admin'))
+);
+
+INSERT OR IGNORE INTO tenant_settings (id, sso_provisioning, sso_default_role)
+VALUES (1, 0, 'requester');
+
+-- IdP subject → local users.id. Role is never copied from an IdP claim.
+CREATE TABLE IF NOT EXISTS user_identities (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('oidc', 'saml')),
+  subject TEXT NOT NULL,
+  email TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(provider, subject),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Single-use OIDC state / SAML AuthnRequest id. Deleted when the attempt finishes.
+CREATE TABLE IF NOT EXISTS sso_requests (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('oidc', 'saml')),
+  payload TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Append-only replay guard. Application code only inserts.
+CREATE TABLE IF NOT EXISTS sso_assertion_uses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL CHECK (provider IN ('oidc', 'saml')),
+  assertion_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(provider, assertion_id)
+);
+
+-- Append-only SSO evidence (not the Sprint 3 audit report). Application code only inserts.
+CREATE TABLE IF NOT EXISTS sso_login_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL CHECK (provider IN ('oidc', 'saml')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failure')),
+  subject TEXT,
+  email TEXT,
+  user_id INTEGER,
+  reason TEXT,
+  assertion_id TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
