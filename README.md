@@ -6,6 +6,7 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 
 ## Start here
 
+- **[Program report → `docs/PROGRAM-REPORT.md`](docs/PROGRAM-REPORT.md)** — what has been delivered: timeline, sprint decisions, current system state, and known gaps. Facts are taken from git history and the manuals.
 - **[Deploy and operations manual → `docs/DEPLOY_MANUAL.md`](docs/DEPLOY_MANUAL.md)** — one customer, one Vercel project, one Turso database: deploy, SSO, audit, update, and offboard. Commands in that file were checked against `package.json` and the CLIs.
 - **[System manual → `docs/SYSTEM_MANUAL.md`](docs/SYSTEM_MANUAL.md)** — every shipped capability (honest limits) and how to stand up a new customer. Hand this to an operator/owner.
 - **[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply --email … --password …`. Stepped: `npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. One database and one Vercel project per customer.
