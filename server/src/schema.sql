@@ -669,7 +669,7 @@ CREATE TABLE IF NOT EXISTS sso_requests (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Append-only replay guard. Application code only inserts.
+-- Append-only replay guard. Triggers reject UPDATE and DELETE.
 CREATE TABLE IF NOT EXISTS sso_assertion_uses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   provider TEXT NOT NULL CHECK (provider IN ('oidc', 'saml')),
@@ -678,7 +678,9 @@ CREATE TABLE IF NOT EXISTS sso_assertion_uses (
   UNIQUE(provider, assertion_id)
 );
 
--- Append-only SSO evidence (not the Sprint 3 audit report). Application code only inserts.
+-- Append-only SSO evidence. Triggers reject UPDATE and DELETE.
+-- Local password login is not stored here (provider is oidc|saml only).
+-- Compliance reports read this table; they do not copy the rows.
 CREATE TABLE IF NOT EXISTS sso_login_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   provider TEXT NOT NULL CHECK (provider IN ('oidc', 'saml')),
@@ -690,4 +692,100 @@ CREATE TABLE IF NOT EXISTS sso_login_events (
   assertion_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Events that audit_logs and the SSO tables do not already store:
+-- local login/logout/failure, bootstrap, user and role changes, SSO setting
+-- changes, just-in-time user create, and compliance CSV exports.
+-- prev_hash is the literal GENESIS on the first row, otherwise the previous
+-- row_hash. row_hash is SHA-256 hex of prev_hash + canonical JSON, computed
+-- in the server (SQLite/Turso have no portable SHA-256). Triggers reject
+-- UPDATE/DELETE, a missing 64-char row_hash, and a prev_hash that does not
+-- link to the previous row. P2P decisions stay in audit_logs; SSO stays in
+-- sso_login_events and sso_assertion_uses.
+CREATE TABLE IF NOT EXISTS compliance_audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actor_user_id INTEGER,
+  actor_name TEXT NOT NULL,
+  actor_role TEXT,
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER,
+  details TEXT,
+  prev_hash TEXT NOT NULL,
+  row_hash TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS compliance_audit_events_created_at
+  ON compliance_audit_events (created_at);
+
+CREATE INDEX IF NOT EXISTS compliance_audit_events_action
+  ON compliance_audit_events (action);
+
+CREATE TRIGGER IF NOT EXISTS audit_logs_no_update
+BEFORE UPDATE ON audit_logs
+BEGIN
+  SELECT RAISE(ABORT, 'audit_logs is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_logs_no_delete
+BEFORE DELETE ON audit_logs
+BEGIN
+  SELECT RAISE(ABORT, 'audit_logs is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sso_login_events_no_update
+BEFORE UPDATE ON sso_login_events
+BEGIN
+  SELECT RAISE(ABORT, 'sso_login_events is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sso_login_events_no_delete
+BEFORE DELETE ON sso_login_events
+BEGIN
+  SELECT RAISE(ABORT, 'sso_login_events is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sso_assertion_uses_no_update
+BEFORE UPDATE ON sso_assertion_uses
+BEGIN
+  SELECT RAISE(ABORT, 'sso_assertion_uses is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sso_assertion_uses_no_delete
+BEFORE DELETE ON sso_assertion_uses
+BEGIN
+  SELECT RAISE(ABORT, 'sso_assertion_uses is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS compliance_audit_events_no_update
+BEFORE UPDATE ON compliance_audit_events
+BEGIN
+  SELECT RAISE(ABORT, 'compliance_audit_events is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS compliance_audit_events_no_delete
+BEFORE DELETE ON compliance_audit_events
+BEGIN
+  SELECT RAISE(ABORT, 'compliance_audit_events is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS compliance_audit_events_hash_required
+BEFORE INSERT ON compliance_audit_events
+WHEN NEW.row_hash IS NULL OR length(NEW.row_hash) != 64
+BEGIN
+  SELECT RAISE(ABORT, 'compliance audit row_hash is required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS compliance_audit_events_chain
+BEFORE INSERT ON compliance_audit_events
+WHEN NEW.prev_hash IS NOT (
+  SELECT CASE
+    WHEN NOT EXISTS (SELECT 1 FROM compliance_audit_events) THEN 'GENESIS'
+    ELSE (SELECT row_hash FROM compliance_audit_events ORDER BY id DESC LIMIT 1)
+  END
+)
+BEGIN
+  SELECT RAISE(ABORT, 'compliance audit chain prev_hash mismatch');
+END;
 

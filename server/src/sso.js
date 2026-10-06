@@ -7,13 +7,16 @@
  * The role always comes from tenant_settings / SSO_DEFAULT_ROLE, never
  * from a token claim or the request body.
  *
- * sso_login_events and sso_assertion_uses are append-only. This is login
- * evidence, not the Sprint 3 audit report.
+ * sso_login_events and sso_assertion_uses are append-only (database triggers
+ * reject UPDATE and DELETE). Compliance reports read those rows. They are
+ * not copied into compliance_audit_events. A just-in-time user create is
+ * recorded there because users had no audit row of their own.
  */
 
 import { loadPublicUser } from './auth.js';
 import { isUniqueConstraint } from './masterData.js';
 import { createUser, normalizeEmail, normalizeUserRole, USER_ROLES } from './usersService.js';
+import { recordSsoProvisionedUser } from './complianceAudit.js';
 
 export const SSO_REQUEST_TTL_SECONDS = 10 * 60;
 
@@ -342,6 +345,7 @@ async function resolveSsoUser(db, policy, identity) {
     status: 'active'
   });
   await linkIdentity(db, created.id, identity.provider, subject, email);
+  await recordSsoProvisionedUser(db, created, identity.provider);
   return created;
 }
 

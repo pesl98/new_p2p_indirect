@@ -120,6 +120,25 @@ CREATE TABLE IF NOT EXISTS users (
     );
   });
 
+  test('splitSqlScript keeps a trigger body intact and still splits BEGIN', () => {
+    const stmts = splitSqlScript(`
+      CREATE TABLE t (id INT);
+      CREATE TRIGGER t_no_update BEFORE UPDATE ON t
+      BEGIN
+        SELECT RAISE(ABORT, 'no');
+      END;
+      BEGIN IMMEDIATE;
+      COMMIT;
+    `);
+    assert.equal(stmts.length, 4);
+    assert.match(stmts[0], /^CREATE TABLE t/);
+    assert.match(stmts[1], /CREATE TRIGGER t_no_update/);
+    assert.match(stmts[1], /SELECT RAISE\(ABORT, 'no'\);/);
+    assert.match(stmts[1], /END$/);
+    assert.equal(stmts[2], 'BEGIN IMMEDIATE');
+    assert.equal(stmts[3], 'COMMIT');
+  });
+
   test('splitSqlScript does not split on semicolon inside string literals', () => {
     const stmts = splitSqlScript(
       `INSERT INTO t (msg) VALUES ('hello; world');\nINSERT INTO t (msg) VALUES ('ok');`

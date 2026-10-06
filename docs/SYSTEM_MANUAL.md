@@ -61,7 +61,7 @@ Do not promise these. They are **not** in the code:
 - Bank NACHA / ACH file export, remittance portal, early-pay discount calendar, multi-currency
 - CLM, e-sign, vendor portal, successor `CNT-` rows, auto-extend of `end_date`
 - Create-department or create-budget UI
-- Full segregation of duties on every API route
+- Full segregation of duties enforced on every API route (Sprint 3 reports violations; it does not block every write)
 - Cron / scheduled jobs (the app is **request-driven**)
 - Native mobile apps
 - Production MRP / warehouse WMS (bins, picks, cycle counts). Consignment on-hand is tracked; it is not a WMS.
@@ -79,8 +79,8 @@ Honest limits are listed again in [§11 Out of scope](#11-out-of-scope).
 | `requester` | Creates PRs, responds in **Buyer Inbox** | Buyer Inbox sidebar only for this role |
 | `approver` | Department head / step-1 | **Delegations** sidebar |
 | `procurement` | Strategic sourcing (Carol in the demo) | Convert PR → PO, change orders, Vendors & Catalog, contracts; **Delegations** |
-| `finance` | AP / controller (David in the demo) | **Duplicate Suspects**, **AP Aging**, **Payment Runs**; **Delegations** |
-| `admin` | Org admin / CFO (Elena in the demo) | **Administration → Users** and **Department Approvers**; same AP queues as finance |
+| `finance` | AP / controller (David in the demo) | **Duplicate Suspects**, **AP Aging**, **Payment Runs**, **Audit & Compliance**; **Delegations** |
+| `admin` | Org admin / CFO (Elena in the demo) | **Administration → Users** and **Department Approvers**; **Audit & Compliance**; same AP queues as finance |
 
 These five values are the only allowed roles. Additional people are created in **Administration → Users** (session admin), not by inventing new role strings.
 
@@ -143,7 +143,7 @@ Give the IdP `GET /api/auth/saml/metadata`. Login starts at `GET /api/auth/saml/
 
 **Local login.** Leave `LOCAL_LOGIN` unset (default on). Seed/demo: any seeded email and `ProcureFlow!demo`. Set `LOCAL_LOGIN=0` only when this customer should use the IdP alone.
 
-Successful and failed SSO attempts are inserted into `sso_login_events`. That table is append-only evidence, not the Sprint 3 audit report.
+Successful and failed SSO attempts are inserted into `sso_login_events`. Assertion ids go to `sso_assertion_uses`. Both tables reject `UPDATE` and `DELETE` (database triggers). Compliance reports read them in place. Local password login is a separate append-only ledger (`compliance_audit_events`) because this table’s provider check is only `oidc` or `saml`.
 
 **Enforced on session (`req.user`):** every `/api` route except health and `/api/auth/*` requires a signed-in user. Mutating `/api/users` and department-head assignment require `role=admin`. AP approve, mark paid, exceptions, duplicates, aging, and payment runs require `finance` or `admin`. Approvals and the buyer inbox are scoped to the signed-in user. A body persona id that names someone else is 403. `DELETE /api/users/:id` is **405**.
 
@@ -192,6 +192,7 @@ The SPA is a tab switcher (`client/src/App.jsx`). There is no React Router.
 | Buyer Inbox | `requester` only | Invoices AP parked with `return_to_buyer` |
 | AP Aging | `finance` + `admin` | Approved payables by due date |
 | Payment Runs | `finance` + `admin` | Draft `PAY-YYYY-NNN` → execute |
+| **Audit & Compliance** | `finance` + `admin` | Trail, segregation of duties, paid-without-support, verification; CSV export |
 | Document trail | Everyone | PR → PO(s) → GRN/SES → invoice chain from FKs + audit |
 | Budgets & Cost Centers | Everyone | Read-only FY 2026 allocated / committed / actual / remaining |
 | Contracts & Renewals | Everyone | Agreements + 1-click renewal PR |
@@ -552,6 +553,44 @@ Surfaces when present: PR header, sequential approval steps, linked PO branch(es
 - Idempotent insert by **code**: MKT Marketing, ITE IT, FAC Facilities, HRP HR, ADM Finance.
 - Ensures a FY **2026** budget row per department (`total_budget` default `10000000` cents). Skips existing codes; never wipes or renames. Does **not** create users, credentials, suppliers, catalog, or PRs. Refuses `--seed`.
 - `approver_user_id` stays unset — map heads in the UI after users exist.
+
+### 5.13 Audit and compliance reports
+
+**Shipped**
+
+- **Audit trail** (`GET /api/compliance/audit-trail`). One list, oldest first, from four append-only sources:
+  - `audit_logs` — requisition and PO approvals and rejections, PO issue and change orders, goods receipts, service entry, consignment, utility and bulk payables, invoice match / approve / pay, exception and duplicate dispositions, payment runs, contracts, delegations, department-head changes
+  - `sso_login_events` — SSO success and failure (not copied)
+  - `sso_assertion_uses` — assertion id consumed (not copied)
+  - `compliance_audit_events` — local login success, failure, inactive, and disabled; logout; first-admin bootstrap; user create / update / status / password; SSO settings changes; JIT user create; CSV export
+- Filters: `from` and `to` (`YYYY-MM-DD`, inclusive), `actor` (user id or name fragment), `entity_type`, `entity_id`, `action`. Default limit 500 (max 2000).
+- **Approval and segregation** (`GET /api/compliance/approval-policy`). Findings, not a new write-block:
+  - `self_approval` — a non-skipped approval step is assigned to the requester, or an `APPROVED` / `STEP_APPROVED` / `REJECTED` audit row was written in the requester’s name
+  - `wrong_approver` — the step’s `approver_id` is not who `buildApprovalSteps` would assign today for that amount and department. A delegate does not rewrite `approver_id`, so acting as a delegate is not itself a finding
+  - `sod_requester_receiver` / `sod_approver_receiver` — goods-receipt `received_by`, or the user who accepted a service entry, is the requester or an approver of that requisition
+  - `sod_ap_overlap` — the name on `APPROVED_FOR_PAYMENT`, `APPROVED_PAYMENT`, or `PAID` matches a user who is also requester, approver, or receiver. `audit_logs` stores the session name, not a user id
+- **Paid without support** (`GET /api/compliance/payment-support`), invoices with status `paid`:
+  - `invoice_paid_without_approval` — no `APPROVED_FOR_PAYMENT` or `APPROVED_PAYMENT` audit row
+  - `invoice_paid_without_receipt` — standard purchase PO missing a goods receipt on goods lines and/or an accepted service entry on service lines. Consignment, utility, and bulk payables are not GRN documents and are not flagged
+  - `po_paid_without_requisition_approval` — the PO’s requisition has no approved step. POs with no requisition are not flagged
+- **Verification** (`GET /api/compliance/verification`) re-derives totals and flags mismatches:
+  - PO header vs sum of `po_items.total_price`
+  - requisition header vs sum of `requisition_items.total_price`
+  - invoice subtotal vs sum of `invoice_items.total_price`, and total vs subtotal plus tax
+  - payment-run billed, payable, and invoice count vs `payment_run_items`
+  - `compliance_audit_events` SHA-256 chain (`prev_hash` / `row_hash`). An empty chain is valid. `audit_logs` is append-only but not hashed
+- **CSV:** `?format=csv` on any of those paths. The file is generated first; `COMPLIANCE_EXPORT` is appended after, so it shows up on the next query. Admin and finance only. Other roles 403. No cookie 401.
+- **Append-only:** triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and `compliance_audit_events` abort `UPDATE` and `DELETE`. The new ledger also aborts a broken hash link.
+- **UI:** sidebar **Audit & Compliance** for finance and admin. Filter, view, export.
+
+The training seed includes Sofia approving her own small PR (`PR-2026-009`). The segregation report is supposed to show that.
+
+**Limits**
+
+- These reports detect. They do not add segregation blocks on submit, receive, or pay.
+- `audit_logs.actor_name` is the session name stamped when the row was written. It is not a user id, so two people with the same name collapse on the AP overlap check.
+- `sso_requests` are still deleted when a login attempt finishes. They are not evidence.
+- Existing customer databases pick up the table and triggers on `npm run db:migrate` or the next process start. No hand-written SQL.
 
 ---
 

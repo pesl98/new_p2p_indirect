@@ -257,6 +257,8 @@ npm run bootstrap-org
 
 `db:status` prints mode (`turso-http`), table count, and user count. It never prints `TURSO_AUTH_TOKEN`. On a fresh customer you should see **0 users**. `bootstrap-org` does not create users.
 
+`db:migrate` also installs the audit ledger (`compliance_audit_events`) and the triggers that reject `UPDATE`/`DELETE` on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger. Re-running migrate on a database that already has them is safe (`IF NOT EXISTS`). You do not run a separate audit migration.
+
 ### First admin (pick one)
 
 **A — CLI (preferred for operators)**

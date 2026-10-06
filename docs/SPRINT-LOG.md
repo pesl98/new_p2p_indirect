@@ -60,7 +60,8 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | Sprint | Date | Goal | PR | Title | Merge SHA | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | [#46](https://github.com/pesl98/new_p2p_indirect/pull/46) | Sprint 1 — Full authorization rewrite | `e6bdf1ea7ba144c12a95da4cabeebd9430def42a` | merged |
-| 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | | done |
+| 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | `9bbd4fbf83ce5277a18435d2693d91aa58b755da` | merged |
+| 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | | Sprint 3 — Audit and compliance reporting | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -112,9 +113,11 @@ That callback is Sprint 2 (below). Sprint 1’s cookie format is unchanged.
 
 **Goal:** An OIDC or SAML login callback mints the same `pf_session` cookie Sprint 1 uses. Missing or invalid SSO configuration fails closed. Local password login keeps working where it is configured.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/47 (#47). Merge SHA stays blank until merge.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/47 (#47).
 
-**Status:** done (awaiting Architect + Peter review; do not merge from this PR).
+**Merge SHA:** `9bbd4fbf83ce5277a18435d2693d91aa58b755da` (squash-merged).
+
+**Status:** merged.
 
 ### Done when
 
@@ -145,3 +148,31 @@ OIDC: `IDENTITY_PROVIDER=oidc`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SE
 SAML: `IDENTITY_PROVIDER=saml`, `SAML_ENTRY_POINT`, `SAML_IDP_CERT`, `SAML_IDP_ISSUER`, `SAML_SP_ENTITY_ID`, `APP_BASE_URL`. Optional `SAML_ACS_URL` (default `{APP_BASE_URL}/api/auth/saml/acs`) and `SAML_AUDIENCE` (default entity id). Give the IdP `GET /api/auth/saml/metadata`.
 
 Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases. A bad role, a bad flag, or disagreeing aliases is rejected and does not change the row. `SSO_DEFAULT_ROLE` overrides the stored role when it is a valid role.
+
+## Sprint 3 — Audit and compliance reporting
+
+**Date:** 2026-10-06
+
+**Goal:** An auditable trail for auth, SSO, and the procurement decisions that move money, plus compliance reports an admin or finance user can query and export. Fail closed for everyone else.
+
+**PR:** this pull request. Number filled when the draft is open.
+
+**Status:** in progress (do not merge until Architect + Peter dual-ACK).
+
+### Done when
+
+- `audit_logs`, `sso_login_events`, and `sso_assertion_uses` reject UPDATE and DELETE in the database. Local auth, user/role changes, SSO settings, JIT user create, and CSV exports are appended to `compliance_audit_events` with a SHA-256 hash chain the database links.
+- Reports cover the audit trail (date, actor, entity, action), approval-policy / segregation of duties, paid documents missing approval or receipt, and a verification report that re-derives totals from line records.
+- Admin and finance can read and export. Requester, approver, and procurement are 403. No cookie is 401. Exports are logged. Actor fields come from the session.
+- Docs name the migration (`npm run db:migrate` / process start applies the new table and triggers). Tests cover append-only, the session actor, access, each report, and CSV.
+- Sprint 1 and Sprint 2 behavior stays: business APIs without `pf_session` are 401, and SSO evidence is read in place rather than copied.
+
+### Decisions
+
+- **Reuse the sound tables.** P2P decisions stay in `audit_logs`. SSO attempts stay in `sso_login_events`. Assertion ids stay in `sso_assertion_uses`. The audit-trail report unions them with `compliance_audit_events`. It does not duplicate SSO rows.
+- **Append-only is a trigger.** `BEFORE UPDATE` and `BEFORE DELETE` call `RAISE(ABORT, …)` on those four tables. `sso_requests` stays deletable; it is single-use login state, not evidence.
+- **Hash chain only on the new ledger.** Each `compliance_audit_events` row stores `prev_hash` (`GENESIS` on the first row, otherwise the previous `row_hash`) and a SHA-256 hex digest of that link plus a canonical JSON payload. A trigger rejects a broken link or a digest that is not 64 hex characters. The verification report recomputes the digest. `audit_logs` is not hash-chained: many call sites already insert it, historical rows have no digest, and SQLite/Turso HTTP have no shared SHA-256 function to enforce the digest inside the trigger. Tamper of those rows is still blocked by the UPDATE/DELETE triggers.
+- **Actor.** New compliance rows take `actor_user_id` and `actor_name` from `req.user` only. A failed local login has no session, so the actor name is the presented email and the user id is the matching account when one exists; a body `actor_name` is ignored. Bootstrap attributes the first admin to the user just created, because no session existed yet. JIT SSO provisioning attributes `USER_CREATED` to that new user; the login itself remains an `sso_login_events` row.
+- **Who can read.** `admin` and `finance`. Finance is the existing control lens for payables and segregation. There is no sixth `auditor` role. Procurement, approvers, and requesters fail closed. Reports are read-only; CSV export is the only write, and it appends `COMPLIANCE_EXPORT`.
+- **Reports.** See the PR body and [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md). Segregation findings are detective. They do not add a new block on every P2P route.
+- **Existing databases.** `npm run db:migrate`, or the next process start, runs `schema.sql`. `CREATE TABLE IF NOT EXISTS` and `CREATE TRIGGER IF NOT EXISTS` add the ledger and the guards. No manual SQL. Demo `npm run seed` still wipes and reloads; it inserts audit timestamps directly because `audit_logs` can no longer be updated.
