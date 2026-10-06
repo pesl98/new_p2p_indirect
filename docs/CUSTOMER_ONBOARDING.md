@@ -41,7 +41,7 @@ Beta  →  Turso DB procureflow-beta  →  Vercel project procureflow-beta  → 
 
 The application code is the same. Isolation is the **connection string**. Pasting Acme’s `TURSO_DATABASE_URL` into Beta’s Vercel project **merges** those customers. Do not do that.
 
-Auth is **email + password local to that database** (httpOnly `pf_session` cookie). There is **no SSO / SAML / OIDC** in this phase. The header persona switcher is demo-only — leave it off for a live tenant.
+Auth is **email + password local to that database** (httpOnly `pf_session` cookie), plus optional **OIDC or SAML** on the same cookie. Configure the IdP on this customer’s Vercel project only ([DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer)). Leave `IDENTITY_PROVIDER` unset to keep password login. The header persona switcher is demo-only — leave it off for a live tenant.
 
 ---
 
@@ -435,8 +435,8 @@ Copy this into the ticket and tick as you go.
 
 Hand this to the customer with the URL so nobody assumes Coupa-parity.
 
-- **No SSO / SAML / OIDC.** Login is email + bcrypt password in this customer’s database. `SESSION_SECRET` only signs the cookie; it is not an IdP client secret.
-- **Session required on the P2P API.** Admin user CRUD and department-head assignment use `req.user`. Other routes do too: a body persona id cannot act as someone else. AP actions require finance or admin. SSO is still the next sprint, not this one.
+- **SSO is optional and per customer.** Password login stays the default. OIDC or SAML, when configured on this deployment, mints the same `pf_session` cookie. Unknown IdP users are rejected unless an admin turns provisioning on. The IdP does not choose the role. `SESSION_SECRET` signs the cookie; `OIDC_CLIENT_SECRET` / `SAML_IDP_CERT` are separate and stay in that project’s env. SCIM is not implemented.
+- **Session required on the P2P API.** Admin user CRUD and department-head assignment use `req.user`. Other routes do too: a body persona id cannot act as someone else. AP actions require finance or admin.
 - **No `org_id` multi-tenancy.** Two customers on one Turso URL is one pile of data.
 - **Persona switcher is demo-only** (`DEMO_PERSONA_SWITCHER=1`). It re-logins with the seed password. Default customer UI is login.
 - **Empty tenant is empty.** No catalog, suppliers, departments, budgets, or sample PRs until you add them. Three tiers: `db:migrate` (schema only) → `bootstrap-org` (five cost centers + FY budgets; non-destructive) → `npm run seed` (**wipe**, not an overlay).

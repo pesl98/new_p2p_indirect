@@ -113,7 +113,14 @@ describe('smoke response evaluators', () => {
   test('auth/config and users stay consistent for empty vs bootstrapped', () => {
     const emptyCfg = checkAuthConfigResponse({
       status: 200,
-      json: { auth: 'session', bootstrapNeeded: true, demoPersonaSwitcher: false }
+      json: {
+        auth: 'session',
+        identityProvider: 'local',
+        ssoReady: false,
+        localLogin: true,
+        bootstrapNeeded: true,
+        demoPersonaSwitcher: false
+      }
     });
     assert.equal(emptyCfg.ok, true);
     assert.match(emptyCfg.detail, /empty tenant/);

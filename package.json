@@ -27,9 +27,12 @@
     "build": "npm --prefix client install && npm --prefix client run build && rm -rf public && mkdir -p public && cp -r client/dist/. public/"
   },
   "dependencies": {
+    "@node-saml/node-saml": "^5.1.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "jose": "^6.2.12",
+    "openid-client": "^6.8.8"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.8.1"

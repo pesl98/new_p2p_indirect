@@ -232,6 +232,12 @@ export function checkAuthConfigResponse({ status, json, text } = {}) {
   if (typeof json.demoPersonaSwitcher !== 'boolean') {
     return fail('GET /api/auth/config', 'expected demoPersonaSwitcher boolean', { status, json });
   }
+  if (!['local', 'oidc', 'saml'].includes(json.identityProvider)) {
+    return fail('GET /api/auth/config', 'expected identityProvider local, oidc, or saml', { status, json });
+  }
+  if (typeof json.ssoReady !== 'boolean' || typeof json.localLogin !== 'boolean') {
+    return fail('GET /api/auth/config', 'expected ssoReady and localLogin booleans', { status, json });
+  }
   const tenant = json.bootstrapNeeded ? 'empty tenant (bootstrapNeeded)' : 'users present';
   const switcher = json.demoPersonaSwitcher ? 'demoPersonaSwitcher=on' : 'demoPersonaSwitcher=off';
   return pass('GET /api/auth/config', `${tenant}, ${switcher}`, { status, json });

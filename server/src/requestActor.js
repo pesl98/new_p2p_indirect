@@ -3,7 +3,7 @@
  *
  * Mutating and sensitive reads call `withSessionActor` so body fields such as
  * `approver_id`, `requester_id`, and `actor_name` cannot name someone else.
- * A future OIDC/SAML login must mint the same `pf_session` cookie (see auth.js)
+ * OIDC and SAML callbacks mint the same `pf_session` cookie (see auth.js / routes/sso.js)
  * and then go through this helper — not a parallel identity header.
  */
 

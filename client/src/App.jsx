@@ -211,6 +211,10 @@ export default function App() {
     return (
       <LoginView
         bootstrapNeeded={bootstrapNeeded}
+        identityProvider={authConfig.identityProvider || 'local'}
+        ssoReady={Boolean(authConfig.ssoReady)}
+        localLogin={authConfig.localLogin !== false}
+        ssoError={new URLSearchParams(window.location.search).get('sso_error') || ''}
         onAuthenticated={handleAuthenticated}
       />
     );

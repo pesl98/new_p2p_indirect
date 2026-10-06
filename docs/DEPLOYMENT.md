@@ -8,7 +8,7 @@ Operator copy-paste also lives in [`scripts/provision-customer.md`](../scripts/p
 
 **Real customer sequence:** prefer `npm run onboard:customer -- --slug <customer> --apply --email … --password … --smoke` (Turso + ensure Vercel project/link + env + redeploy, wait until Production is Ready, then migrate + org skeleton + optional first admin + smoke; **never seeds**). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` (project add + link if needed, then env, redeploy, and the same Ready wait) → `npm run provision:customer -- --with-org` (or `db:migrate` → `bootstrap-org` → `bootstrap-admin`) → `npm run smoke`. Demo wipe stays opt-in: `npm run seed`. GitHub auto-deploy is still a dashboard connection.
 
-**Auth (Sprint 1):** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie. Every business API requires that session. Body `requester_id` / `approver_id` cannot name another persona. SSO / SAML / OIDC is **out of scope** (next sprint). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**) and re-logins with the seed password.
+**Auth:** email + bcrypt password in `user_credentials`, httpOnly `pf_session` cookie. Every business API requires that session. Body `requester_id` / `approver_id` cannot name another persona. Optional **OIDC or SAML** on that same cookie is configured per customer (below). The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`; default **off**) and re-logins with the seed password.
 
 ---
 
@@ -93,6 +93,46 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `BCRYPT_ROUNDS` | No | bcrypt cost (default 10). |
 | `BASE_URL` | Smoke only | Origin for `npm run smoke` (`http://127.0.0.1:5000` or the customer Vercel URL). |
 | `SMOKE_EMAIL` / `SMOKE_PASSWORD` | Smoke only | Optional login check after bootstrap. |
+| `IDENTITY_PROVIDER` | No | `local` (default), `oidc`, or `saml`. See [§2.1](#21-sso-oidc-or-saml-per-customer). |
+| `APP_BASE_URL` | When SSO is on | This customer’s public origin. Post-login redirect is `{origin}/`. |
+| `LOCAL_LOGIN` | No | Default on. `0` disables password login for this deployment. |
+
+### 2.1 SSO (OIDC or SAML) per customer
+
+Set these only on the deployment that serves that customer. A second customer gets a second project and a second set of values. IdP endpoints and secrets stay in the environment. `tenant_settings` in that customer’s database stores only the provisioning switch and default role (default **off** / **`requester`**).
+
+If `IDENTITY_PROVIDER` is `oidc` or `saml` and a required value is missing or invalid, SSO routes return **503** `sso_not_configured` and do not set `pf_session`. Password login continues unless `LOCAL_LOGIN=0`.
+
+**OIDC**
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `OIDC_ISSUER` | Yes | HTTPS. `OIDC_ALLOW_INSECURE=1` allows `http` for a local mock IdP only. |
+| `OIDC_CLIENT_ID` | Yes | |
+| `OIDC_CLIENT_SECRET` | Yes | Confidential client. |
+| `OIDC_REDIRECT_URI` | No | Default `{APP_BASE_URL}/api/auth/oidc/callback`. Register it on the IdP. |
+| `OIDC_SCOPES` | No | Default `openid email profile`. Must include `openid`. |
+
+The server uses authorization code + PKCE S256 + `state` + `nonce`, and verifies the ID token signature, issuer, audience, and expiry.
+
+**SAML**
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `SAML_ENTRY_POINT` | Yes | HTTPS IdP SSO URL. `SAML_ALLOW_INSECURE=1` allows `http` for tests. |
+| `SAML_IDP_CERT` | Yes | PEM, escaped newlines, or bare base64. |
+| `SAML_IDP_ISSUER` | Yes | Assertion issuer must match. |
+| `SAML_SP_ENTITY_ID` | Yes | Also the default audience. |
+| `SAML_ACS_URL` | No | Default `{APP_BASE_URL}/api/auth/saml/acs`. |
+| `SAML_AUDIENCE` | No | Defaults to the SP entity id. |
+| `SAML_WANT_ASSERTIONS_SIGNED` | No | Default `true`. |
+| `SAML_WANT_RESPONSE_SIGNED` | No | Default `false`. Both `false` is rejected. |
+
+SP-initiated only. Point the IdP at `GET /api/auth/saml/metadata`. The ACS checks signature, audience, recipient, `NotOnOrAfter`, and replay.
+
+**Who can sign in**
+
+Existing users match a stored IdP subject (`user_identities`) or a verified email. OIDC requires `email_verified`. Unknown users are rejected unless `SSO_PROVISIONING=1` or an admin calls `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases for those body fields. A bad role or flag is rejected and does not change the row. The role is never taken from the IdP. `SSO_DEFAULT_ROLE` must be `requester`, `approver`, `procurement`, `finance`, or `admin` if set. `vercel:customer` does not set these keys; add them in the Vercel project for that customer (Production and Preview) and redeploy.
 
 ---
 
@@ -311,7 +351,8 @@ Store these in Vercel env / a password manager. **Never commit** `.env`, tokens,
 | `TURSO_DATABASE_URL` | Turso / Vercel | Identifies the customer DB. Not a password, still treat as sensitive. |
 | `SESSION_SECRET` | Customer / Vercel | Signs the httpOnly session cookie. Generate a long random string. Rotate by changing the env and Redeploy (existing sessions invalidate). |
 | `PROCUREMENT_DB_PATH` | SQLite only | Filesystem path; protect the file (contains all P2P data). |
-| SSO / SAML / OIDC | **Not used** | Email+password local to this DB. No IdP client secret to set. |
+| `OIDC_CLIENT_SECRET` | When `IDENTITY_PROVIDER=oidc` | IdP client secret for this customer only. Not stored in the database. |
+| `SAML_IDP_CERT` | When `IDENTITY_PROVIDER=saml` | IdP signing certificate. Not a private key. |
 
 Also confirm:
 
