@@ -5,6 +5,8 @@
  * `approver_id`, `requester_id`, and `actor_name` cannot name someone else.
  * OIDC and SAML callbacks mint the same `pf_session` cookie (see auth.js / routes/sso.js)
  * and then go through this helper — not a parallel identity header.
+ * Integration machine routes (/api/integrations/vendors, /catalog, /exports)
+ * are the exception: they require a scoped API key and ignore pf_session.
  */
 
 import { IDENTITY_PROVIDER } from './auth.js';
@@ -19,16 +21,33 @@ export class ActorBindingError extends Error {
   }
 }
 
+export function requestPath(req) {
+  return `${req.baseUrl || ''}${req.path || ''}`;
+}
+
+/**
+ * Machine routes authenticate with a scoped API key, not pf_session.
+ * A cookie on these paths is ignored. Every other /api route still
+ * requires the session. API keys do not satisfy that check.
+ */
+export function isIntegrationMachineRoute(req) {
+  const path = requestPath(req);
+  if (path === '/api/integrations/vendors' || path === '/api/integrations/catalog') return true;
+  if (path.startsWith('/api/integrations/exports/')) return true;
+  return false;
+}
+
 export function isPublicApiRequest(req) {
   if (req.method === 'GET' && req.path === '/api/health') return true;
   if (req.path === '/api/auth' || req.path.startsWith('/api/auth/')) return true;
   return false;
 }
 
-/** Fail closed: every /api route except health and /api/auth/* needs a session. */
+/** Fail closed: every /api route except health, /api/auth/*, and integration machine routes needs a session. */
 export function requireApiSession(req, res, next) {
   if (!req.path.startsWith('/api')) return next();
   if (isPublicApiRequest(req)) return next();
+  if (isIntegrationMachineRoute(req)) return next();
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }

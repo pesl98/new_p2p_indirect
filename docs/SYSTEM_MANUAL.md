@@ -62,7 +62,7 @@ Do not promise these. They are **not** in the code:
 - CLM, e-sign, vendor portal, successor `CNT-` rows, auto-extend of `end_date`
 - Create-department or create-budget UI
 - Full segregation of duties enforced on every API route (Sprint 3 reports violations; it does not block every write)
-- Cron / scheduled jobs (the app is **request-driven**)
+- Platform cron. A long-running `npm start` retries the webhook outbox every 30 seconds. Vercel does not. See [§5.14](#514-integrations).
 - Native mobile apps
 - Production MRP / warehouse WMS (bins, picks, cycle counts). Consignment on-hand is tracked; it is not a WMS.
 
@@ -80,7 +80,7 @@ Honest limits are listed again in [§11 Out of scope](#11-out-of-scope).
 | `approver` | Department head / step-1 | **Delegations** sidebar |
 | `procurement` | Strategic sourcing (Carol in the demo) | Convert PR → PO, change orders, Vendors & Catalog, contracts; **Delegations** |
 | `finance` | AP / controller (David in the demo) | **Duplicate Suspects**, **AP Aging**, **Payment Runs**, **Audit & Compliance**; **Delegations** |
-| `admin` | Org admin / CFO (Elena in the demo) | **Administration → Users** and **Department Approvers**; **Audit & Compliance**; same AP queues as finance |
+| `admin` | Org admin / CFO (Elena in the demo) | **Administration → Users**, **Department Approvers**, and **Integrations**; **Audit & Compliance**; same AP queues as finance |
 
 These five values are the only allowed roles. Additional people are created in **Administration → Users** (session admin), not by inventing new role strings.
 
@@ -199,6 +199,7 @@ The SPA is a tab switcher (`client/src/App.jsx`). There is no React Router.
 | Suppliers & Catalog | Everyone | Create / edit / soft-deactivate |
 | **Administration → Department Approvers** | `admin` only | Map step-1 head; does **not** create departments |
 | **Administration → Users** | `admin` only | Create / edit / password / soft-deactivate |
+| **Administration → Integrations** | `admin` only | API keys (shown once) and the webhook outbox |
 
 ---
 
@@ -562,7 +563,7 @@ Surfaces when present: PR header, sequential approval steps, linked PO branch(es
   - `audit_logs` — requisition and PO approvals and rejections, PO issue and change orders, goods receipts, service entry, consignment, utility and bulk payables, invoice match / approve / pay, exception and duplicate dispositions, payment runs, contracts, delegations, department-head changes
   - `sso_login_events` — SSO success and failure (not copied)
   - `sso_assertion_uses` — assertion id consumed (not copied)
-  - `compliance_audit_events` — local login success, failure, inactive, and disabled; logout; first-admin bootstrap; user create / update / status / password; SSO settings changes; JIT user create; CSV export
+  - `compliance_audit_events` — local login success, failure, inactive, and disabled; logout; first-admin bootstrap; user create / update / status / password; SSO settings changes; JIT user create; CSV export; API key create and revoke; integration upserts and exports; webhook replay
 - Filters: `from` and `to` (`YYYY-MM-DD`, inclusive), `actor` (user id or name fragment), `entity_type`, `entity_id`, `action`. Default limit 500 (max 2000).
 - **Approval and segregation** (`GET /api/compliance/approval-policy`). Findings, not a new write-block:
   - `self_approval` — a non-skipped approval step is assigned to the requester, or an `APPROVED` / `STEP_APPROVED` / `REJECTED` audit row was written in the requester’s name
@@ -591,6 +592,49 @@ The training seed includes Sofia approving her own small PR (`PR-2026-009`). The
 - `audit_logs.actor_name` is the session name stamped when the row was written. It is not a user id, so two people with the same name collapse on the AP overlap check.
 - `sso_requests` are still deleted when a login attempt finishes. They are not evidence.
 - Existing customer databases pick up the table and triggers on `npm run db:migrate` or the next process start. No hand-written SQL.
+
+### 5.14 Integrations
+
+Machine clients are not users. An admin session (`pf_session`, role `admin`) creates keys. The ERP calls a separate set of routes with `Authorization: Bearer pfk_…`. Those routes ignore the cookie. A key does not open the rest of `/api`.
+
+**API keys**
+
+- `POST /api/integrations/keys` returns `key` once. `api_keys.key_hash` is SHA-256 hex. The list shows `key_prefix` (first 12 characters), scopes, `expires_at`, `last_used_at`, `rate_limit_per_minute`.
+- Scopes: `vendors:write`, `catalog:write`, `export:read`.
+- Missing, malformed, unknown, revoked, or expired key: **401**. Wrong scope: **403**. Over the per-key minute window: **429** (default 60, set per key, 1–6000).
+- Non-admin: **403**. No cookie on the admin routes: **401**.
+- Create and revoke append `API_KEY_CREATED` / `API_KEY_REVOKED` with the admin as actor. The plaintext is not in the details.
+
+**Inbound**
+
+- `POST /api/integrations/vendors` and `POST /api/integrations/catalog`, keyed by `external_id` in `integration_entity_links`.
+- Repeat calls update the same supplier or catalog row. `Idempotency-Key` replays the first 2xx body; a different body with the same key is **409**.
+- Catalog `unit_price` is integer cents. `preferred_supplier_external_id` must already be linked. Supplier `code` does not change after create. Omitted optional fields are stored as their defaults, so send the full record each time.
+- A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400**. The key name is `actor_name`, `actor_role` is `integration`, `actor_user_id` is null. The write goes to `audit_logs` and `compliance_audit_events`.
+
+**Outbound**
+
+- Events, in the same transaction as the business write: `po.issued`, `receipt.posted` (goods receipt only), `invoice.approved`, `payment_run.created`, `payment_run.paid`.
+- `X-ProcureFlow-Signature: t=<unix seconds>,v1=<64 hex>`. `v1` is HMAC-SHA256 of the string `${t}.${rawBody}` with `WEBHOOK_SIGNING_SECRET`. Reject timestamps more than 300 seconds off. Dedupe on `id` (`evt_<outbox id>`). Retries get a new timestamp and the same id.
+- `webhook_outbox` status is `pending`, `delivered`, or `dead`. Five attempts. Backoff after failure: 30s, 120s, 600s, 3600s. Unset URL or secret does not increment attempts.
+- Admin list: `GET /api/integrations/outbox`. Replay: `POST /api/integrations/outbox/:id/replay` (resets attempts, audits `WEBHOOK_REPLAYED`). Deliver now: `POST /api/integrations/outbox/dispatch`.
+- `npm start` (not Vercel) sweeps every 30 seconds. On Vercel the write tries once; the admin screen and the next business event sweep what is still pending.
+
+**Pull export** (`export:read`)
+
+- `GET /api/integrations/exports/invoices` — default status `approved_for_payment` (`paid` allowed). JSON or `?format=csv`.
+- `GET /api/integrations/exports/payment-runs` — default status `executed` (`draft` or `all`). Nested invoices in JSON; one CSV row per invoice.
+- Amounts are cents. `currency` is `USD` until Sprint 5. Each response appends `INTEGRATION_EXPORT`.
+
+**Config**
+
+`WEBHOOK_TARGET_URL` and `WEBHOOK_SIGNING_SECRET` are environment variables for this deployment only. They are not in `tenant_settings` or any other table. `GET /api/integrations/config` returns two booleans and `webhook_target_host`. `vercel:customer` does not set them. Set both on Production and Preview, then redeploy.
+
+`npm run db:migrate` or the next process start creates the tables. No separate migration file.
+
+**Not in this sprint**
+
+Inbound supplier invoices (they would have to run through match and exceptions). ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. EUR. Dutch UI.
 
 ---
 
@@ -658,8 +702,10 @@ Full env table: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Keys (no values): [`.env.exa
 | `PROCUREMENT_DB_PATH` | Local SQLite only — **do not** set on Vercel |
 | `BCRYPT_ROUNDS` | Optional (default 10) |
 | `BASE_URL` | Smoke only |
+| `WEBHOOK_TARGET_URL` | Optional. HTTPS receiver for this customer. Not stored in the database. |
+| `WEBHOOK_SIGNING_SECRET` | Optional. HMAC key. Never returned. Not written by `vercel:customer`. |
 
-There is **no cron**.
+There is **no platform cron**. `npm start` retries pending webhooks every 30 seconds. Vercel relies on the attempt at write time plus **Deliver pending** / replay. See [§5.14](#514-integrations).
 
 ---
 
@@ -745,7 +791,7 @@ Until you do these, the product looks “empty” because it **is** empty:
 
 1. Create people in **Users** (unique email, role, department, password).
 2. Map a step-1 head per cost center in **Department Approvers**. Unmapped depts with no `role=approver` fallback cannot accept PR submit.
-3. Create suppliers and catalog items (and optionally contracts). There is no master-data import.
+3. Create suppliers and catalog items in the UI, or issue an API key under **Administration → Integrations** and let the ERP upsert them (`external_id`). There is no file import and no inbound invoice feed.
 4. Hand each person their **own** password. Do not share the seed demo password on a live tenant.
 
 Skip org mapping only if you are proving login + admin CRUD and do not need PR submit yet.
@@ -771,7 +817,8 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 | Line-level short-pay / debit memo / supplier portal | Header `payable_total_cents` only. |
 | Fuzzy duplicate / OCR typos | Exact billed cents + ±7 UTC days or same PO + amount. |
 | Contract CLM / e-sign / auto-extend / PO `source_contract_id` | Renewal creates a standard PR; convert does not copy the FK. |
-| Cron / scheduled renewals / aging jobs | Request-driven only. |
+| Cron / scheduled renewals / aging jobs | No platform cron. Webhook retry is the 30-second loop on `npm start`, plus admin Deliver pending. Renewals and aging stay request-driven. |
+| Inbound supplier invoices / ERP adapters | Not built. Sprint 4 upserts vendors and catalog items and exports approved invoices and payment runs. |
 | Fiscal years other than 2026 | Hardcoded in budget queries. |
 | `approval_limit` as a routing gate | Stored and displayed; policy uses PR total + roles. |
 | Header persona switcher on customers | Off unless `DEMO_PERSONA_SWITCHER=1`. |

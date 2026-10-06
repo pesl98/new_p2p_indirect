@@ -1,6 +1,12 @@
 import { nextDocumentNumber } from './docNumbers.js';
 import { formatCents, asCents } from './money.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
+import {
+  WEBHOOK_EVENTS,
+  enqueueWebhook,
+  externalIdFor,
+  kickWebhookDispatch
+} from './webhookOutbox.js';
 
 export class PurchaseOrderError extends Error {
   constructor(message, statusCode = 400) {
@@ -216,7 +222,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
     );
   }
 
-  return db.transaction(async () => {
+  const issued = await db.transaction(async () => {
     const currentYear = new Date().getFullYear();
     const created = [];
 
@@ -287,6 +293,24 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
         `PO ${poNumber} issued from PR ${pr.pr_number} to ${supplier.name}`
       );
 
+      await enqueueWebhook(db, {
+        eventType: WEBHOOK_EVENTS.PO_ISSUED,
+        entityType: 'purchase_order',
+        entityId: poId,
+        data: {
+          po_id: poId,
+          po_number: poNumber,
+          supplier_id: supplierId,
+          supplier_code: supplier.code,
+          supplier_name: supplier.name,
+          supplier_external_id: await externalIdFor(db, 'supplier', supplierId),
+          total_amount_cents: poTotal,
+          issue_date: issueDate,
+          status: 'issued',
+          requisition_id: Number(requisition_id)
+        }
+      });
+
       created.push({
         poId,
         poNumber,
@@ -326,4 +350,6 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
 
     return created;
   });
+  kickWebhookDispatch(db);
+  return issued;
 }

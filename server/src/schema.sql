@@ -789,3 +789,75 @@ BEGIN
   SELECT RAISE(ABORT, 'compliance audit chain prev_hash mismatch');
 END;
 
+-- Sprint 4 integrations. One database per customer, so these rows are that
+-- customer's keys and outbox — there is no org_id. The plaintext API key is
+-- never stored; key_hash is SHA-256 hex. Webhook signing secrets stay in the
+-- environment (WEBHOOK_SIGNING_SECRET), not in a table.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  key_prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL,
+  expires_at TEXT,
+  revoked_at TEXT,
+  last_used_at TEXT,
+  rate_limit_per_minute INTEGER NOT NULL DEFAULT 60 CHECK (rate_limit_per_minute >= 1),
+  created_by_user_id INTEGER NOT NULL,
+  created_by_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (created_by_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS api_key_rate_windows (
+  api_key_id INTEGER NOT NULL,
+  window_start INTEGER NOT NULL,
+  request_count INTEGER NOT NULL,
+  PRIMARY KEY (api_key_id, window_start),
+  FOREIGN KEY (api_key_id) REFERENCES api_keys(id)
+);
+
+-- External ERP id → local supplier or catalog row. Upserts are keyed here.
+CREATE TABLE IF NOT EXISTS integration_entity_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
+  external_id TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(entity_type, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS integration_idempotency (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  api_key_id INTEGER NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  response_status INTEGER NOT NULL,
+  response_body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(api_key_id, idempotency_key),
+  FOREIGN KEY (api_key_id) REFERENCES api_keys(id)
+);
+
+-- Durable outbound webhooks. status pending retries until delivered or dead.
+-- Signing happens at send time so a retry gets a fresh timestamp.
+CREATE TABLE IF NOT EXISTS webhook_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivered', 'dead')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  last_error TEXT,
+  last_attempt_at TEXT,
+  delivered_at TEXT,
+  dead_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS webhook_outbox_pending
+  ON webhook_outbox (status, next_attempt_at);
+

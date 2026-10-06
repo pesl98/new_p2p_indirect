@@ -2,6 +2,12 @@ import { toQty } from './money.js';
 import { nextDocumentNumber } from './docNumbers.js';
 import { isConsignmentLine, isMeasuredSettlement, isServiceLine } from './lineType.js';
 import { refreshPoFulfillmentStatus } from './poFulfillment.js';
+import {
+  WEBHOOK_EVENTS,
+  enqueueWebhook,
+  externalIdFor,
+  kickWebhookDispatch
+} from './webhookOutbox.js';
 
 export class GoodsReceiptError extends Error {
   constructor(message, statusCode = 400) {
@@ -44,7 +50,7 @@ export async function createGoodsReceipt(db, payload) {
 
   const allowOver = isExplicitTrue(allow_over_receipt);
 
-  return db.transaction(async () => {
+  const receipt = await db.transaction(async () => {
     const overages = [];
 
     for (const item of items) {
@@ -168,6 +174,25 @@ export async function createGoodsReceipt(db, payload) {
       );
     }
 
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.RECEIPT_POSTED,
+      entityType: 'goods_receipt',
+      entityId: grId,
+      data: {
+        goods_receipt_id: Number(grId),
+        grn_number: grnNumber,
+        po_id: Number(po_id),
+        po_number: po.po_number,
+        supplier_id: Number(po.supplier_id),
+        supplier_external_id: await externalIdFor(db, 'supplier', po.supplier_id),
+        receipt_date: receipt_date || new Date().toISOString().split('T')[0],
+        units_received: totalReceivedInThisGRN,
+        po_status: newPOStatus
+      }
+    });
+
     return { grId, grnNumber, newPOStatus, overReceipt: overages.length > 0 };
   });
+  kickWebhookDispatch(db);
+  return receipt;
 }

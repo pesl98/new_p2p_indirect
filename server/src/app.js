@@ -27,6 +27,8 @@ import delegationsRouter from './routes/delegations.js';
 import contractsRouter from './routes/contracts.js';
 import authRouter from './routes/auth.js';
 import complianceRouter from './routes/compliance.js';
+import integrationsRouter from './routes/integrations.js';
+import { loadIntegrationConfig } from './integrationConfig.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
@@ -61,6 +63,7 @@ export function createApp(options = {}) {
   }
 
   const authConfig = options.authConfig || loadAuthConfig();
+  const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   warnIfInsecureSessionSecret(authConfig);
 
   const app = express();
@@ -72,6 +75,7 @@ export function createApp(options = {}) {
     try {
       req.db = options.db || await getDb();
       req.authConfig = authConfig;
+      req.integrationConfig = integrationConfig;
       next();
     } catch (error) {
       if (config.onVercel || error instanceof TursoConfigError) {
@@ -109,6 +113,7 @@ export function createApp(options = {}) {
   app.use('/api/document-trail', documentTrailRouter);
   app.use('/api/contracts', contractsRouter);
   app.use('/api/compliance', complianceRouter);
+  app.use('/api/integrations', integrationsRouter);
 
   app.get('/api/health', (req, res) => {
     const db = req.db || peekCachedDb();

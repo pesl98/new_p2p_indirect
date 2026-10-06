@@ -636,5 +636,34 @@ export const api = {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  },
+
+  getIntegrationConfig: () =>
+    apiFetch(`${API_BASE}/integrations/config`).then((r) => jsonOk(r, 'Failed to load integration config')),
+  getApiKeys: () =>
+    apiFetch(`${API_BASE}/integrations/keys`).then((r) => jsonOk(r, 'Failed to load API keys')),
+  createApiKey: async (data) => {
+    const r = await apiFetch(`${API_BASE}/integrations/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return jsonOk(r, 'Failed to create API key');
+  },
+  revokeApiKey: async (id) => {
+    const r = await apiFetch(`${API_BASE}/integrations/keys/${id}/revoke`, { method: 'POST' });
+    return jsonOk(r, 'Failed to revoke API key');
+  },
+  getWebhookOutbox: (status = 'all') =>
+    apiFetch(`${API_BASE}/integrations/outbox?status=${encodeURIComponent(status)}`).then((r) =>
+      jsonOk(r, 'Failed to load webhook outbox')
+    ),
+  replayWebhook: async (id) => {
+    const r = await apiFetch(`${API_BASE}/integrations/outbox/${id}/replay`, { method: 'POST' });
+    return jsonOk(r, 'Failed to replay webhook');
+  },
+  dispatchWebhooks: async () => {
+    const r = await apiFetch(`${API_BASE}/integrations/outbox/dispatch`, { method: 'POST' });
+    return jsonOk(r, 'Failed to deliver webhooks');
   }
 };

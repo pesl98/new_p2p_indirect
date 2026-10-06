@@ -7,6 +7,12 @@ import {
   assertDuplicateAllowsMarkPaid,
   flagDuplicateSuspectsOnCreate
 } from './invoiceDuplicatesService.js';
+import {
+  WEBHOOK_EVENTS,
+  enqueueWebhook,
+  externalIdFor,
+  kickWebhookDispatch
+} from './webhookOutbox.js';
 
 /**
  * Persist a vendor invoice, run 3-way match against prior cumulative invoiced
@@ -217,9 +223,26 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
       approver_name || 'Finance Specialist',
       `Approved invoice ${invoice.invoice_number} for ${amountNote} payment`
     );
+
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.INVOICE_APPROVED,
+      entityType: 'invoice',
+      entityId: id,
+      data: {
+        invoice_id: Number(id),
+        invoice_number: invoice.invoice_number,
+        supplier_id: Number(invoice.supplier_id),
+        supplier_external_id: await externalIdFor(db, 'supplier', invoice.supplier_id),
+        po_id: Number(invoice.po_id),
+        status: 'approved_for_payment',
+        billed_total_cents: billedCents,
+        payable_total_cents: payableCents
+      }
+    });
   });
 
   await approveTransaction();
+  kickWebhookDispatch(db);
   return {
     message: isShortPay
       ? `Invoice approved for payment successfully. Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}.`

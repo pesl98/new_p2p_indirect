@@ -25,6 +25,7 @@ import AdminUsersView from './views/AdminUsersView';
 import LoginView from './views/LoginView';
 import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
 import ComplianceView from './views/ComplianceView';
+import IntegrationsView from './views/IntegrationsView';
 import { api } from './api';
 import { DEMO_SEED_PASSWORD } from './demoAuth';
 
@@ -154,7 +155,7 @@ export default function App() {
     setSessionUser(signedIn);
     setCurrentUser(signedIn);
     setAuthConfig((prev) => prev ? { ...prev, bootstrapNeeded: false } : prev);
-    if (signedIn?.role !== 'admin' && (activeTab === 'org_admin' || activeTab === 'user_admin')) {
+    if (signedIn?.role !== 'admin' && (activeTab === 'org_admin' || activeTab === 'user_admin' || activeTab === 'integrations')) {
       setActiveTab('dashboard');
     }
     if (signedIn?.role !== 'requester' && activeTab === 'buyer_inbox') {
@@ -412,6 +413,10 @@ export default function App() {
 
           {activeTab === 'user_admin' && (
             <AdminUsersView currentUser={currentUser} sessionUser={sessionUser} />
+          )}
+
+          {activeTab === 'integrations' && (
+            <IntegrationsView currentUser={currentUser} sessionUser={sessionUser} />
           )}
 
           {activeTab === 'compliance' && (
