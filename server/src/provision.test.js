@@ -371,7 +371,7 @@ describe('schema and docs stay aligned with provision', () => {
     assert.deepEqual(created, [...EXPECTED_TABLES].sort());
   });
 
-  test('README points operators at CUSTOMER_ONBOARDING.md first; ARCHITECTURE keeps DEPLOYMENT.md', () => {
+  test('operator docs link DEPLOY_MANUAL; README lists onboarding before DEPLOYMENT', () => {
     const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
     const architecture = fs.readFileSync(path.join(repoRoot, 'docs/ARCHITECTURE.md'), 'utf8');
     const deployment = fs.readFileSync(path.join(repoRoot, 'docs/DEPLOYMENT.md'), 'utf8');

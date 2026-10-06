@@ -151,7 +151,7 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | Decision | What to set |
 | --- | --- |
 | Live customer, password login only | Leave `IDENTITY_PROVIDER` unset or set `local`. Leave `DEMO_PERSONA_SWITCHER`, `OIDC_ALLOW_INSECURE`, and `SAML_ALLOW_INSECURE` unset. |
-| Password form | `LOCAL_LOGIN` unset or `1` (default **on**). `0`, `false`, or `no` disables `POST /api/auth/login` with **403** `local_login_disabled`. It does not open an unsigned path. |
+| Password form | `LOCAL_LOGIN` unset, `1`, `true`, or `yes` (default **on**). `0`, `false`, or `no` disables `POST /api/auth/login` with **403** `local_login_disabled`. It does not open an unsigned path. Any other value is unrecognized and also disables password login. |
 | Turn SSO on | `IDENTITY_PROVIDER=oidc` or `saml`, plus `APP_BASE_URL` (this customer’s origin, no path, for example `https://procureflow-acme.vercel.app`). Any other provider value fails closed. |
 | OIDC required | `OIDC_ISSUER` (HTTPS), `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`. |
 | OIDC optional | `OIDC_REDIRECT_URI` (default `{APP_BASE_URL}/api/auth/oidc/callback`). `OIDC_SCOPES` (default `openid email profile`; must include `openid`). Register the redirect URL on the IdP. |
@@ -940,7 +940,7 @@ What to do: compare the project env with section 3.1. `APP_BASE_URL` must be the
 
 ## 12. Command index
 
-All of these are dry-run unless noted. `--help` prints the flags.
+Dry-run is the default only for the customer CLIs `onboard:customer`, `turso:customer`, `vercel:customer`, and `offboard:customer`. Those four print a plan and do not call Turso, Vercel, or the database until `--apply`. `offboard:customer --apply` also requires `--confirm-slug`. `provision:customer`, `db:migrate`, `db:status`, `bootstrap-org`, `bootstrap-admin`, `smoke`, and `seed` run immediately and have no `--dry-run` flag. `--help` prints the flags.
 
 | Command | What it does |
 | --- | --- |
