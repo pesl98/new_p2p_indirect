@@ -383,6 +383,13 @@ describe('compliance API access and CSV', () => {
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
       VALUES ('invoice', 3, 'PAID', 'David Miller', 'said "hello", world', '2026-09-03 10:00:00')
     `).run();
+    await db.exec(`
+      INSERT INTO purchase_orders (
+        id, po_number, supplier_id, created_by, status, total_amount, issue_date
+      ) VALUES (1, 'PO-BAD', 1, 3, 'issued', 9999, '2026-09-01');
+      INSERT INTO po_items (po_id, item_description, quantity, unit_price, total_price)
+        VALUES (1, 'Bad', 1, 1000, 1000);
+    `);
     const app = appFor(db);
     const reports = ['audit-trail', 'approval-policy', 'payment-support', 'verification'];
 

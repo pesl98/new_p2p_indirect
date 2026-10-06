@@ -64,7 +64,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | `9bbd4fbf83ce5277a18435d2693d91aa58b755da` | merged |
 | 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | `4472b2725a70f7743a978ecfb5cdd02488aca72e` | merged |
 | 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
-| 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | | Sprint 5 — EUR currency | | in progress |
+| 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -225,7 +225,7 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 
 **Goal:** Make EUR the deployment currency so a Netherlands customer is not shown hardcoded USD or `$`. One shared formatter. One `CURRENCY` setting. No Dutch UI translation (Sprint 6) and no foreign exchange.
 
-**PR:** (this pull request; number filled when the draft is opened). Draft. Do not merge until the Architect dual-ACKs and Peter merges.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/50 (#50). Draft. Do not merge until the Architect dual-ACKs and Peter merges.
 
 **Merge SHA:** (blank until merge).
 
