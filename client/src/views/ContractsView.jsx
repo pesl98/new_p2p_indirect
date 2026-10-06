@@ -85,7 +85,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       return;
     }
     if (annualValue === '' || Number.isNaN(Number(annualValue))) {
-      alert('Please provide an annual value in dollars.');
+      alert('Please provide an annual value.');
       return;
     }
 
@@ -232,7 +232,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
             <div className="text-xs">
               <strong className="text-emerald-900 font-bold block">{renewSuccess.message}</strong>
               <span className="text-emerald-800">
-                Requisition <strong>{renewSuccess.pr_number}</strong> created with sequential approval routing for ${formatMoney(renewSuccess.total_amount_cents)}.
+                Requisition <strong>{renewSuccess.pr_number}</strong> created with sequential approval routing for {formatMoney(renewSuccess.total_amount_cents)}.
               </span>
             </div>
           </div>
@@ -334,7 +334,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                       {c.department_code}
                     </td>
                     <td className="py-3 px-4 font-extrabold text-slate-900 text-sm">
-                      ${formatMoney(c.annual_value_cents)}
+                      {formatMoney(c.annual_value_cents)}
                       <span className="text-[10px] text-slate-400 font-normal"> / yr</span>
                     </td>
                     <td className="py-3 px-4">
@@ -414,7 +414,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     <tr>
                       <th className="py-2 px-3">Line</th>
                       <th className="py-2 px-3">Qty</th>
-                      <th className="py-2 px-3">Unit (cents → $)</th>
+                      <th className="py-2 px-3">Unit price</th>
                       <th className="py-2 px-3 text-right">Total</th>
                     </tr>
                   </thead>
@@ -423,8 +423,8 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                       <tr key={item.id} className="border-t border-slate-100">
                         <td className="py-2 px-3">{item.description}</td>
                         <td className="py-2 px-3">{item.quantity}</td>
-                        <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>
-                        <td className="py-2 px-3 text-right font-semibold">${formatMoney(item.total_price)}</td>
+                        <td className="py-2 px-3">{formatMoney(item.unit_price)}</td>
+                        <td className="py-2 px-3 text-right font-semibold">{formatMoney(item.total_price)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -434,7 +434,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
             <div className="flex justify-between items-center pt-3 border-t border-slate-200">
               <div className="text-emerald-700 font-extrabold text-sm">
-                Annual ACV: ${formatMoney(selectedContract.annual_value_cents)}
+                Annual ACV: {formatMoney(selectedContract.annual_value_cents)}
               </div>
               <div className="flex space-x-2">
                 <button onClick={() => setSelectedContract(null)} className="px-4 py-2 border border-slate-300 rounded-lg font-semibold">
@@ -528,7 +528,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Annual Value (USD)</label>
+                  <label className="block text-slate-600 mb-1">Annual value</label>
                   <input
                     type="number"
                     min="0"

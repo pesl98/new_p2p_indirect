@@ -119,7 +119,8 @@ describe('smoke response evaluators', () => {
         ssoReady: false,
         localLogin: true,
         bootstrapNeeded: true,
-        demoPersonaSwitcher: false
+        demoPersonaSwitcher: false,
+        currency: 'EUR'
       }
     });
     assert.equal(emptyCfg.ok, true);

@@ -11,7 +11,7 @@
  */
 
 import { computeContractStatus } from './contractsService.js';
-import { formatCents } from './money.js';
+import { formatMoney } from './money.js';
 
 export class ContractAssignmentError extends Error {
   constructor(message, statusCode = 400) {
@@ -314,7 +314,7 @@ function proposedAuditDetails(contract, extra = '') {
   const acv = Number(contract.annual_value_cents) || 0;
   const base = `Proposed ${contract.contract_number} (${contract.title || 'contract'}) ` +
     `supplier=${contract.supplier_name || contract.supplier_id} ` +
-    `ACV ${acv} cents ($${formatCents(acv)}) ` +
+    `ACV ${acv} cents (${formatMoney(acv)}) ` +
     `${contract.start_date || '?'} → ${contract.end_date || '?'}`;
   return extra ? `${base}. ${extra}` : base;
 }

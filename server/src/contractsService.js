@@ -1,5 +1,5 @@
 import { nextDocumentNumber } from './docNumbers.js';
-import { formatCents, lineTotalCents, requireIntegerCents, toQty } from './money.js';
+import { formatMoney, lineTotalCents, requireIntegerCents, toQty } from './money.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { insertApprovalChain } from './approvalPolicy.js';
 
@@ -327,7 +327,7 @@ export async function createContract(db, payload = {}) {
     `).run(
       contractId,
       actorName,
-      `Contract ${contractNumber} (${title}) created with ACV ${calculatedAnnualValue} cents ($${formatCents(calculatedAnnualValue)})`
+      `Contract ${contractNumber} (${title}) created with ACV ${calculatedAnnualValue} cents (${formatMoney(calculatedAnnualValue)})`
     );
 
     return await getContractDetail(db, contractId);
@@ -472,7 +472,7 @@ export async function createRenewalRequisition(db, contractId, {
       prId,
       actorName,
       `Proposed ${contract.contract_number} (${contract.title}) from 1-click renewal. ` +
-      `ACV ${acv} cents ($${formatCents(acv)}). Approver must allow or refuse contract use.`
+      `ACV ${acv} cents (${formatMoney(acv)}). Approver must allow or refuse contract use.`
     );
 
     await db.prepare(`
@@ -481,7 +481,7 @@ export async function createRenewalRequisition(db, contractId, {
     `).run(
       prId,
       actorName,
-      `Renewal requisition ${prNumber} submitted from contract ${contract.contract_number} for ${acv} cents ($${formatCents(acv)})`
+      `Renewal requisition ${prNumber} submitted from contract ${contract.contract_number} for ${acv} cents (${formatMoney(acv)})`
     );
 
     await db.prepare(`

@@ -36,8 +36,11 @@ const REPORTS = {
   },
   verification: {
     load: (db) => queryVerification(db),
-    columns: VERIFICATION_COLUMNS,
-    rows: (report) => report.findings
+    columns: [...VERIFICATION_COLUMNS, 'currency'],
+    rows: (report) => report.findings.map((row) => ({
+      ...row,
+      currency: report.currency
+    }))
   }
 };
 

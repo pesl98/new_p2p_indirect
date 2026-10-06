@@ -15,6 +15,7 @@ import {
   listPurchaseOrderChangeOrders
 } from './changeOrdersService.js';
 import { withCookie } from './testSession.js';
+import { formatMoney } from './money.js';
 
 function authed(url, options) {
   return fetch(url, withCookie(3, options));
@@ -169,7 +170,9 @@ describe('applyPurchaseOrderChangeOrder', () => {
     assert.ok(audit);
     assert.equal(audit.actor_name, 'Carol Zhang');
     assert.match(audit.details, /CO-2026-001/);
-    assert.match(audit.details, /\$1080\.00 → \$1500\.00/);
+    assert.ok(audit.details.includes(formatMoney(108000)));
+    assert.ok(audit.details.includes(formatMoney(150000)));
+    assert.match(audit.details, /→/);
   });
 
   test('rejects reduce below received, accepted, or invoiced qty', async () => {

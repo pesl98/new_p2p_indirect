@@ -229,7 +229,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
                         <span className="block font-mono text-[10px] text-slate-400">{user.department_code}</span>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3.5">${formatMoney(user.approval_limit || 0)}</td>
+                    <td className="px-4 py-3.5">{formatMoney(user.approval_limit || 0)}</td>
                     <td className="px-4 py-3.5">
                       <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${
                         user.status === 'inactive' ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-800'
@@ -320,7 +320,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
             </label>
             <label className="block text-xs">
-              <span className="font-semibold text-slate-600">Approval limit (USD)</span>
+              <span className="font-semibold text-slate-600">Approval limit</span>
               <input type="number" min="0" step="0.01" value={form.approval_limit_dollars}
                 onChange={(e) => setForm({ ...form, approval_limit_dollars: e.target.value })}
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />

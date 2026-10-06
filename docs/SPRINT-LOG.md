@@ -39,10 +39,10 @@ Peter’s order. Do not start a later item inside an earlier sprint’s PR.
 2. **SSO / SAML / OIDC** — Sprint 2. An OIDC or SAML callback mints the same `pf_session` cookie. `identityProvider` is `local`, `oidc`, or `saml`.
 3. **Audit / compliance reporting**
 4. **Integrations**
-5. **Currency selection** — product usable in euros (display, format, and a tenant default of EUR; a picker only if multi-currency comes later). Today the docs and UI often show `$`. EUR should be first-class for Netherlands customers.
-6. **Translation / i18n** — Dutch (Netherlands) UI so the product is useful for NL users.
+5. **Currency selection** — Sprint 5. One deployment currency, default EUR, shared formatter, locale `nl-NL`. No in-app picker and no foreign exchange.
+6. **Translation / i18n** — Dutch (Netherlands) UI so the product is useful for NL users. Sprint 6. Not part of Sprint 5.
 
-Items 5 and 6 are backlog only. They are not part of Sprint 1.
+Item 6 is backlog only. It is not part of Sprint 5.
 
 ## Recent history on `main` (before this program)
 
@@ -63,7 +63,8 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | [#46](https://github.com/pesl98/new_p2p_indirect/pull/46) | Sprint 1 — Full authorization rewrite | `e6bdf1ea7ba144c12a95da4cabeebd9430def42a` | merged |
 | 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | `9bbd4fbf83ce5277a18435d2693d91aa58b755da` | merged |
 | 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | `4472b2725a70f7743a978ecfb5cdd02488aca72e` | merged |
-| 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | | in progress |
+| 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
+| 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | | Sprint 5 — EUR currency | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -187,11 +188,11 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 
 **Goal:** Customer-facing integrations that plug one ProcureFlow deployment into an external ERP/AP and catalog system: scoped API keys, idempotent vendor and catalog upserts, signed webhooks with a durable outbox, and a pull export. No SSO changes. No EUR (Sprint 5) and no Dutch i18n (Sprint 6).
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/49 (#49). Draft. Do not merge until the Architect dual-ACKs and Peter merges.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/49 (#49).
 
-**Merge SHA:** (blank until merge).
+**Merge SHA:** `d050d330ef7c8c58080d2f102053a6838a69e7ab` (squash-merged).
 
-**Status:** in progress.
+**Status:** merged.
 
 ### Done when
 
@@ -215,5 +216,35 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 - **Webhooks.** Events: `po.issued`, `receipt.posted` (goods receipt, not a service entry), `invoice.approved`, `payment_run.created`, `payment_run.paid`. Header `X-ProcureFlow-Signature: t=<unix>,v1=<hex>` is HMAC-SHA256 of `${t}.${rawBody}` using `WEBHOOK_SIGNING_SECRET`. Receivers should reject a timestamp more than 5 minutes off and dedupe on `evt_<outbox id>`. The timestamp is the send time, so a retry is a new signature for the same event id.
 - **Outbox.** Inserted in the same transaction as the business write. Status `pending`, then `delivered` or `dead`. Five attempts. Backoff after a failure is 30s, 2m, 10m, 1h. A missing URL or secret does not burn attempts. Replay (admin) resets the attempt count and tries again. `npm start` retries every 30 seconds. On Vercel the write attempts once, and later retries run from **Deliver pending**, replay, or the next business event’s sweep. There is no platform cron.
 - **Config.** `WEBHOOK_TARGET_URL` and `WEBHOOK_SIGNING_SECRET` are environment variables on that one deployment (Production and Preview). `vercel:customer` does not set them. They are not in the database. `GET /api/integrations/config` returns booleans and the target host only.
-- **Export.** `GET /api/integrations/exports/invoices` defaults to `approved_for_payment` (`paid` optional). `GET /api/integrations/exports/payment-runs` defaults to `executed` (`draft` or `all`). `?format=csv` or `Accept: text/csv`. Amounts are cents. `currency` is `USD` until Sprint 5. Each pull appends `INTEGRATION_EXPORT` on the compliance ledger.
+- **Export.** `GET /api/integrations/exports/invoices` defaults to `approved_for_payment` (`paid` optional). `GET /api/integrations/exports/payment-runs` defaults to `executed` (`draft` or `all`). `?format=csv` or `Accept: text/csv`. Amounts are cents. At Sprint 4, JSON `currency` was hardcoded `USD`. Sprint 5 replaces that value with the deployment currency (default `EUR`) and adds `currency` on money-bearing webhook payloads. Each pull appends `INTEGRATION_EXPORT` on the compliance ledger.
 - **Existing databases.** `npm run db:migrate`, or the next process start, creates the five new tables (`CREATE TABLE IF NOT EXISTS`). No hand-written SQL. SSO is unchanged.
+
+## Sprint 5 — EUR currency
+
+**Date:** 2026-10-06
+
+**Goal:** Make EUR the deployment currency so a Netherlands customer is not shown hardcoded USD or `$`. One shared formatter. One `CURRENCY` setting. No Dutch UI translation (Sprint 6) and no foreign exchange.
+
+**PR:** (this pull request; number filled when the draft is opened). Draft. Do not merge until the Architect dual-ACKs and Peter merges.
+
+**Merge SHA:** (blank until merge).
+
+**Status:** in progress.
+
+### Done when
+
+- Money on screen, in server-generated text, in seed copy, and in the manuals formats through one shared formatter. The default currency is EUR. Locale is `nl-NL`.
+- `CURRENCY` is optional, allowlisted (`EUR`, `USD`), and refuses to boot on any other value. Unset means EUR.
+- Stored amounts stay integer cents. No migration and no rescale. EUR and USD both use two decimal places.
+- Integration export JSON, payment-run CSV, money-bearing webhook payloads, and the compliance verification report carry an explicit `currency` code. Existing cent fields stay. `receipt.posted` is unchanged (no amount).
+- SSO, `pf_session` fail-closed auth, the append-only compliance ledger, and the webhook dispatcher/drain are unchanged.
+- Tests cover the formatter, a client `$` guard, export and webhook currency, and config validation. `npm test` is green.
+- This row points at the PR.
+
+### Decisions
+
+- **Storage.** Columns are already integer cents (`unit_price`, `total_amount`, budgets, invoice totals, `price_variance`, `approval_limit`, `annual_value_cents`, payment-run snapshots). The API still returns cents. Because EUR and USD both have two decimal minor units, switching `CURRENCY` does not convert or rescale stored values. No migration.
+- **Formatter.** `shared/currency.js` is the only display path (`formatMoney` on the client and the server). Locale is `nl-NL` for every allowlisted currency, so a Netherlands customer sees `€ 1.295,00` (the space after the symbol is U+00A0). USD in that locale is `US$ 1.295,00`. Rounding is half away from zero, then the grouped major and two-digit minor are written from integers so large amounts do not depend on binary floats. Null and non-finite amounts format as zero. `formatCents` stays a symbol-free dot-decimal (`749.00`) for non-display use.
+- **Config.** `CURRENCY` unset or blank is EUR. `eur` / `usd` are accepted and uppercased. Anything else throws `CurrencyConfigError` (`currency_misconfigured`, HTTP 503) at boot and does not silently fall back. The client reads `currency` from `GET /api/auth/config` and fails closed to EUR if that value is missing or not on the allowlist. `GET /api/health` also returns `currency`. There is no picker and no FX. Numeric inputs stay dot-decimal major units; Dutch comma entry is Sprint 6.
+- **Outbound data.** Invoice and payment-run export JSON `currency` is the deployment code (it was hardcoded `USD`). The invoice CSV already had a `currency` column; the value follows `CURRENCY` and the column position is unchanged. The payment-run CSV gains `currency` as the last column. Webhook payloads that already include cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) gain `currency`. `receipt.posted` has no money fields and no `currency` field. The compliance verification JSON gains top-level `currency`; its CSV gains a trailing `currency` column. The audit-trail CSV header is unchanged. Cent field names and values are unchanged.
+- **Left alone.** SSO, session auth, append-only ledger triggers, integration route behavior, and the webhook outbox dispatcher/drain. No email sender exists to update.

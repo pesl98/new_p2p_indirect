@@ -8,7 +8,8 @@
  * already moved at Approve for Payment — this engine must not post them again.
  */
 
-import { asCents, formatCents } from './money.js';
+import { asCents, formatMoney } from './money.js';
+import { withDeploymentCurrency } from './currencyConfig.js';
 import { nextDocumentNumber } from './docNumbers.js';
 import { applyInvoicePaid } from './invoicesService.js';
 import { assertCanMarkPaid, invoicePayableCents } from './invoiceExceptionsService.js';
@@ -395,14 +396,14 @@ export async function createPaymentRun(db, { invoice_ids, actor_name, reason } =
       runId,
       PAYMENT_RUN_AUDIT.CREATED,
       actor,
-      `Created payment run ${runNumber} with ${invoices.length} invoice(s) totaling payable $${formatCents(payableTotal)} (billed $${formatCents(billedTotal)}): ${numbers}`
+      `Created payment run ${runNumber} with ${invoices.length} invoice(s) totaling payable ${formatMoney(payableTotal)} (billed ${formatMoney(billedTotal)}): ${numbers}`
     );
 
     await enqueueWebhook(db, {
       eventType: WEBHOOK_EVENTS.PAYMENT_RUN_CREATED,
       entityType: 'payment_run',
       entityId: runId,
-      data: {
+      data: withDeploymentCurrency({
         payment_run_id: Number(runId),
         run_number: runNumber,
         status: 'draft',
@@ -410,7 +411,7 @@ export async function createPaymentRun(db, { invoice_ids, actor_name, reason } =
         payable_total_cents: payableTotal,
         invoice_count: invoices.length,
         invoice_ids: invoices.map((line) => Number(line.invoice.id))
-      }
+      })
     });
 
     return runId;
@@ -529,14 +530,14 @@ export async function executePaymentRun(db, id, {
       runId,
       PAYMENT_RUN_AUDIT.EXECUTED,
       actor,
-      `Executed payment run ${run.run_number} on ${paymentDate} with ACH ${paymentRef}. ${paidLines.length} invoice(s) marked paid (payable $${formatCents(run.payable_total_cents)}): ${numbers}`
+      `Executed payment run ${run.run_number} on ${paymentDate} with ACH ${paymentRef}. ${paidLines.length} invoice(s) marked paid (payable ${formatMoney(run.payable_total_cents)}): ${numbers}`
     );
 
     await enqueueWebhook(db, {
       eventType: WEBHOOK_EVENTS.PAYMENT_RUN_PAID,
       entityType: 'payment_run',
       entityId: runId,
-      data: {
+      data: withDeploymentCurrency({
         payment_run_id: Number(runId),
         run_number: run.run_number,
         status: 'executed',
@@ -546,7 +547,7 @@ export async function executePaymentRun(db, id, {
         payable_total_cents: Number(run.payable_total_cents),
         invoice_count: paidLines.length,
         invoice_ids: paidLines.map((line) => Number(line.invoice_id))
-      }
+      })
     });
 
     return paidLines;

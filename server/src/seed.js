@@ -1,6 +1,7 @@
 import { applySchema, getDb } from './db.js';
 import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
 import { measuredAmountCents } from './measuredQty.js';
+import { formatMoney } from './money.js';
 
 const ELECTRICITY_MILLI = 842500;
 const ELECTRICITY_PRICE = 18;
@@ -125,10 +126,10 @@ await db.transaction(async () => {
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
     VALUES (?, ?, ?, ?, ?)
   `);
-  await insertBudget.run(1, 2026, 15000000, 1782100, 2435000); // MKT $150,000 / $17,821 committed (PR-2026-006 + buyer-inbox PR-2026-007) / $24,350
-  await insertBudget.run(2, 2026, 32000000, 6070000, 8910000); // ITE + $12,500 committed for SOC 2 SES PO
-  await insertBudget.run(3, 2026, 9500000, 1485000, 1845000);  // FAC + $2,670 PR-2026-008 minus $120 CO-2026-001 volume discount
-  await insertBudget.run(4, 2026, 6000000, 450000, 1131600);   // HRP + $116 AP-aging INV-WED-3308 (approved; committed already released)
+  await insertBudget.run(1, 2026, 15000000, 1782100, 2435000); // MKT € 150.000,00 / € 17.821,00 committed (PR-2026-006 + buyer-inbox PR-2026-007) / € 24.350,00
+  await insertBudget.run(2, 2026, 32000000, 6070000, 8910000); // ITE + € 12.500,00 committed for SOC 2 SES PO
+  await insertBudget.run(3, 2026, 9500000, 1485000, 1845000);  // FAC + € 2.670,00 PR-2026-008 minus € 120,00 CO-2026-001 volume discount
+  await insertBudget.run(4, 2026, 6000000, 450000, 1131600);   // HRP + € 116,00 AP-aging INV-WED-3308 (approved; committed already released)
   await insertBudget.run(5, 2026, 5000000, 320000, 890000);    // ADM
 
   // 4. Suppliers
@@ -201,13 +202,13 @@ await db.transaction(async () => {
   //   PR-2026-011 — draft time-based service (16 hours + 2 days). Accept on SES, not a GRN.
   //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
   // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay).
-  // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × $749.00 = $1,498.00.
+  // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × € 749,00 = € 1.498,00.
   // Buyer inbox: INV-TSG-22041 is parked return_to_buyer on Alice's PR-2026-007.
   // Change orders: PR-2026-008 / PO-2026-007 has applied CO-2026-001 (volume discount).
   // Live walkthrough: amend issued PO-2026-004 (Figma seats, no SES yet).
   // AP Aging payables: INV-FCJ-8810 overdue (short-pay then approved), INV-WED-3308 due soon
   // (PR-2026-009 / Sofia), INV-TSG-5508 later. Do not approve/pay INV-TSG-11029 or INV-TSG-22041.
-  // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
+  // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same € 99,00 / near date).
   // Payment run: INV-WED-4419 + INV-FCJ-9920 are approved and on draft PAY-2026-001.
   // Leave INV-FCJ-8810 as the AP Aging single mark-paid practice invoice.
   // Consignment: CSN-2026-001 received 12 sanitizer stands (supplier-owned, no GRN).
@@ -291,23 +292,23 @@ await db.transaction(async () => {
   await insertApproval.run(1, 3, 2, 'approved', 'Sourcing confirmed Aeron chairs on standard contract.', '2026-08-28 16:05:00');
   await insertApproval.run(2, 2, 1, 'approved', 'Approved hardware upgrade for brand lead.', '2026-09-01 10:15:00');
   await insertApproval.run(2, 3, 2, 'approved', 'Procurement verified against vendor standard contract discount.', '2026-09-01 16:40:00');
-  // PR-2026-003 is $8,500 — dept head + procurement; sequential: Bob pending, Carol waiting.
+  // PR-2026-003 is € 8.500,00 — dept head + procurement; sequential: Bob pending, Carol waiting.
   // Seeded Bob → Priya delegation covers this pending step (OOO walkthrough).
   await insertApproval.run(3, 2, 1, 'pending', null, null);
   await insertApproval.run(3, 3, 2, 'waiting', null, null);
-  // PR-2026-005 is $12,500 — ITE dept head + procurement + finance; all approved.
+  // PR-2026-005 is € 12.500,00 — ITE dept head + procurement + finance; all approved.
   await insertApproval.run(5, 6, 1, 'approved', 'Required for enterprise security posture.', '2026-08-25 09:10:00');
   await insertApproval.run(5, 3, 2, 'approved', 'Apex Advisory is the contracted security partner.', '2026-08-25 11:40:00');
   await insertApproval.run(5, 4, 3, 'approved', 'Budget committed against ITE FY26 security program.', '2026-08-25 15:05:00');
-  // PR-2026-006 is $2,044 — dept head + procurement; both approved so Carol can convert the split.
+  // PR-2026-006 is € 2.044,00 — dept head + procurement; both approved so Carol can convert the split.
   await insertApproval.run(6, 2, 1, 'approved', 'Approved studio refresh. Split sourcing is expected.', '2026-09-03 09:40:00');
   await insertApproval.run(6, 3, 2, 'approved', 'TechSupply for the monitor; WorkSpace for the Aeron — convert will issue two POs.', '2026-09-03 11:15:00');
-  // PR-2026-007 is $297 — department head only.
+  // PR-2026-007 is € 297,00 — department head only.
   await insertApproval.run(7, 2, 1, 'approved', 'Approved replacement mice against marketing studio kit budget.', '2026-09-04 10:05:00');
-  // PR-2026-008 is $2,670 — Facilities head + procurement.
+  // PR-2026-008 is € 2.670,00 — Facilities head + procurement.
   await insertApproval.run(8, 7, 1, 'approved', 'Approved filtration refresh against FAC FY26 MRO.', '2026-09-02 09:20:00');
   await insertApproval.run(8, 3, 2, 'approved', 'FacilityCare contract pricing; issue PO-2026-007.', '2026-09-02 11:05:00');
-  // PR-2026-009 is $116 — department head only (Sofia).
+  // PR-2026-009 is € 116,00 — department head only (Sofia).
   await insertApproval.run(9, 8, 1, 'approved', 'Approved HR paper restock against HRP office supply budget.', '2026-09-03 09:40:00');
 
   // 7b. Approval delegation (OOO): Bob → Priya, covering now. Stored
@@ -476,7 +477,7 @@ await db.transaction(async () => {
     7,
     'CO-2026-001',
     1,
-    'Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged.',
+    `Vendor confirmed volume discount after issue — unit price ${formatMoney(89000)} → ${formatMoney(85000)}; quantity unchanged.`,
     'Carol Zhang',
     'Delivery window unchanged. Update the printed PO before the supplier ship date.',
     267000,
@@ -606,7 +607,7 @@ await db.transaction(async () => {
   await insertPOItem.run(14, 14, null, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO', 1, 14500, 14500, 1, 1);
 
   // Consignment draw-down. quantity_received stays 0 — this is not a GRN.
-  // 4 stands × $145.00 = $580.00. On-hand after the issue is 8 (receipt of 12).
+  // 4 stands × € 145,00 = € 580,00. On-hand after the issue is 8 (receipt of 12).
   await db.prepare(`
     INSERT INTO purchase_orders (
       id, po_number, requisition_id, supplier_id, created_by, status, total_amount,
@@ -629,7 +630,7 @@ await db.transaction(async () => {
   `).run();
 
   // Metered utility payables. quantity_* is milli-units (scale 1000). No GRN.
-  // Electricity 842.500 kWh × $0.18 = $151.65. Gas 310.250 therm × $0.95 is not invoiced yet.
+  // Electricity 842.500 kWh × € 0,18 = € 151,65. Gas 310.250 therm × € 0,95 is not invoiced yet.
   await db.prepare(`
     INSERT INTO purchase_orders (
       id, po_number, requisition_id, supplier_id, created_by, status, total_amount,
@@ -776,9 +777,9 @@ await db.transaction(async () => {
     'Perfect match against GRN-2026-001 and PO-2026-001. AP approved and paid.'
   );
   await insertInvoiceItem.run(1, 1, 'Herman Miller Aeron Ergonomic Chair (Size B)', 2, 129500, 259000);
-  await insertMatch.run(1, 1, 1, 2, 2, 2, 129500, 129500, 0, 0, 'pass', 'Exact match on quantity (2) and price ($1,295.00).');
+  await insertMatch.run(1, 1, 1, 2, 2, 2, 129500, 129500, 0, 0, 'pass', `Exact match on quantity (2) and price (${formatMoney(129500)}).`);
 
-  // Supplier billed 4 monitors at $799 (79900¢) vs PO $749 (74900¢); only 2 received → total_variance
+  // Supplier billed 4 monitors at € 799,00 (79900¢) vs PO € 749,00 (74900¢); only 2 received → total_variance
   await insertInvoice.run(
     2,
     'INV-TSG-11029',
@@ -792,10 +793,10 @@ await db.transaction(async () => {
     'variance_flagged',
     'total_variance',
     null,
-    'Discrepancy detected: Invoiced unit price $799.00 exceeds PO price $749.00 by $50.00/unit. Also only 2 of 4 units have been received. Open for Exception Workbench — Short pay e.g. $1,498.00 (2 received × $749.00 PO price).'
+    `Discrepancy detected: Invoiced unit price ${formatMoney(79900)} exceeds PO price ${formatMoney(74900)} by ${formatMoney(5000)}/unit. Also only 2 of 4 units have been received. Open for Exception Workbench — Short pay e.g. ${formatMoney(149800)} (2 received × ${formatMoney(74900)} PO price).`
   );
   await insertInvoiceItem.run(2, 2, 'Dell UltraSharp 32" 4K USB-C Hub Monitor (U3223QE)', 4, 79900, 319600);
-  await insertMatch.run(2, 2, 2, 4, 2, 4, 74900, 79900, 2, 5000, 'fail', 'Quantity variance: Cumulative invoiced 4 (prior 0 + this claim 4) exceeds 2 physically received on GRN. Price discrepancy: Billed at $799.00 vs authorized PO price $749.00 (+6.68%).');
+  await insertMatch.run(2, 2, 2, 4, 2, 4, 74900, 79900, 2, 5000, 'fail', `Quantity variance: Cumulative invoiced 4 (prior 0 + this claim 4) exceeds 2 physically received on GRN. Price discrepancy: Billed at ${formatMoney(79900)} vs authorized PO price ${formatMoney(74900)} (+6.68%).`);
 
   // Service invoice: SES-backed match, no GRN on this PO
   await insertInvoice.run(
@@ -814,9 +815,9 @@ await db.transaction(async () => {
     'SES-backed match against SES-2026-001 and PO-2026-003. No physical GRN.'
   );
   await insertInvoiceItem.run(3, 3, 'SOC 2 Type II Annual Security Penetration Test', 1, 1250000, 1250000);
-  await insertMatch.run(3, 3, 3, 1, 1, 1, 1250000, 1250000, 0, 0, 'pass', 'Exact SES-backed match: 1 units at $12500.00 matches PO & accepted service entry sheet.');
+  await insertMatch.run(3, 3, 3, 1, 1, 1, 1250000, 1250000, 0, 0, 'pass', `Exact SES-backed match: 1 units at ${formatMoney(1250000)} matches PO & accepted service entry sheet.`);
 
-  // Resolved exception example: billed $149.00 vs PO $145.00 (400¢ > 145¢ 1% band).
+  // Resolved exception example: billed € 149,00 vs PO € 145,00 (400¢ > 145¢ 1% band).
   // Status is matched after accept_variance; match_status stays price_variance.
   await insertInvoice.run(
     4,
@@ -831,10 +832,10 @@ await db.transaction(async () => {
     'matched',
     'price_variance',
     null,
-    'Price variance accepted in Exception Workbench. Billed $149.00 vs PO $145.00 (400¢).'
+    `Price variance accepted in Exception Workbench. Billed ${formatMoney(14900)} vs PO ${formatMoney(14500)} (400¢).`
   );
   await insertInvoiceItem.run(4, 5, 'Commercial Touchless Sanitizer & Dispenser Stand', 2, 14900, 29800);
-  await insertMatch.run(4, 5, 5, 2, 2, 2, 14500, 14900, 0, 400, 'fail', 'Price discrepancy: Billed at $149.00 vs authorized PO price $145.00 (+2.76%).');
+  await insertMatch.run(4, 5, 5, 2, 2, 2, 14500, 14900, 0, 400, 'fail', `Price discrepancy: Billed at ${formatMoney(14900)} vs authorized PO price ${formatMoney(14500)} (+2.76%).`);
 
   // Buyer inbox demo: billed 3 mice at PO price; only 2 received → quantity_variance, parked return_to_buyer.
   await insertInvoice.run(
@@ -880,10 +881,10 @@ await db.transaction(async () => {
     'approved_for_payment',
     'price_variance',
     null,
-    'Price variance short-paid then approved. Billed $220.00 vs PO $210.00; payable $210.00. AP Aging overdue demo — do not confuse with INV-WED-9042 (paid happy path).'
+    `Price variance short-paid then approved. Billed ${formatMoney(22000)} vs PO ${formatMoney(21000)}; payable ${formatMoney(21000)}. AP Aging overdue demo — do not confuse with INV-WED-9042 (paid happy path).`
   );
   await insertInvoiceItem.run(6, 8, 'OSHA 4-Shelf Industrial First Aid Station', 1, 22000, 22000);
-  await insertMatch.run(6, 8, 8, 1, 1, 1, 21000, 22000, 0, 1000, 'fail', 'Price discrepancy: Billed at $220.00 vs authorized PO price $210.00 (+4.76%).');
+  await insertMatch.run(6, 8, 8, 1, 1, 1, 21000, 22000, 0, 1000, 'fail', `Price discrepancy: Billed at ${formatMoney(22000)} vs authorized PO price ${formatMoney(21000)} (+4.76%).`);
   await db.exec(`UPDATE invoices SET payable_total_cents = 21000 WHERE id = 6`);
 
   // Due soon approved payable (perfect match). Linked to Sofia / PR-2026-009.
@@ -903,7 +904,7 @@ await db.transaction(async () => {
     'Perfect match against GRN-2026-006 and PO-2026-009. Approved for payment; due within the AP Aging 7-day window.'
   );
   await insertInvoiceItem.run(7, 9, 'Hammermill 100% Recycled Copy Paper (Case of 10 Reams)', 2, 5800, 11600);
-  await insertMatch.run(7, 9, 9, 2, 2, 2, 5800, 5800, 0, 0, 'pass', 'Exact match on quantity (2) and price ($58.00).');
+  await insertMatch.run(7, 9, 9, 2, 2, 2, 5800, 5800, 0, 0, 'pass', `Exact match on quantity (2) and price (${formatMoney(5800)}).`);
 
   // Later approved payable (perfect match).
   await insertInvoice.run(
@@ -922,14 +923,14 @@ await db.transaction(async () => {
     'Perfect match against GRN-2026-007 and PO-2026-010. Approved for payment; due after the AP Aging 7-day window.'
   );
   await insertInvoiceItem.run(8, 10, 'CalDigit TS4 Thunderbolt 4 Docking Station', 1, 39900, 39900);
-  await insertMatch.run(8, 10, 10, 1, 1, 1, 39900, 39900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($399.00).');
+  await insertMatch.run(8, 10, 10, 1, 1, 1, 39900, 39900, 0, 0, 'pass', `Exact match on quantity (1) and price (${formatMoney(39900)}).`);
 
   const dupOriginalDate = utcYmdOffset(-4);
   const dupSuspectDate = utcYmdOffset(-1);
   const dupOriginalDue = utcYmdOffset(26);
   const dupSuspectDue = utcYmdOffset(29);
 
-  // Paid original: same TechSupply billed $99.00. Candidate for the open suspect.
+  // Paid original: same TechSupply billed € 99,00. Candidate for the open suspect.
   await insertInvoice.run(
     9,
     'INV-TSG-6610',
@@ -946,7 +947,7 @@ await db.transaction(async () => {
     'Perfect match against GRN-2026-008 and PO-2026-011. Paid original for the Duplicate Suspects walkthrough (INV-TSG-6611).'
   );
   await insertInvoiceItem.run(9, 11, 'Logitech MX Master 3S Wireless Mouse', 1, 9900, 9900);
-  await insertMatch.run(9, 11, 11, 1, 1, 1, 9900, 9900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($99.00).');
+  await insertMatch.run(9, 11, 11, 1, 1, 1, 9900, 9900, 0, 0, 'pass', `Exact match on quantity (1) and price (${formatMoney(9900)}).`);
 
   // Open suspect: different invoice number, same supplier + billed cents, invoice date +3 UTC days.
   await insertInvoice.run(
@@ -962,10 +963,10 @@ await db.transaction(async () => {
     'matched',
     'perfect_match',
     null,
-    'Perfect match against GRN-2026-009 and PO-2026-012. Soft-held as a likely duplicate of INV-TSG-6610 (same $99.00, invoice dates within ±7 UTC days).'
+    `Perfect match against GRN-2026-009 and PO-2026-012. Soft-held as a likely duplicate of INV-TSG-6610 (same ${formatMoney(9900)}, invoice dates within ±7 UTC days).`
   );
   await insertInvoiceItem.run(10, 12, 'Logitech MX Master 3S Wireless Mouse', 1, 9900, 9900);
-  await insertMatch.run(10, 12, 12, 1, 1, 1, 9900, 9900, 0, 0, 'pass', 'Exact match on quantity (1) and price ($99.00).');
+  await insertMatch.run(10, 12, 12, 1, 1, 1, 9900, 9900, 0, 0, 'pass', `Exact match on quantity (1) and price (${formatMoney(9900)}).`);
   await db.exec(`UPDATE invoices SET duplicate_status = 'suspect' WHERE id = 10`);
 
   const payRunLaterDueA = utcYmdOffset(14);
@@ -988,7 +989,7 @@ await db.transaction(async () => {
     'Perfect match against GRN-2026-010 and PO-2026-013. On draft payment run PAY-2026-001 with INV-FCJ-9920.'
   );
   await insertInvoiceItem.run(11, 13, 'Artisan Single-Origin Espresso Beans (5 lb Bag)', 1, 7200, 7200);
-  await insertMatch.run(11, 13, 13, 1, 1, 1, 7200, 7200, 0, 0, 'pass', 'Exact match on quantity (1) and price ($72.00).');
+  await insertMatch.run(11, 13, 13, 1, 1, 1, 7200, 7200, 0, 0, 'pass', `Exact match on quantity (1) and price (${formatMoney(7200)}).`);
 
   await insertInvoice.run(
     12,
@@ -1006,7 +1007,7 @@ await db.transaction(async () => {
     'Perfect match against GRN-2026-011 and PO-2026-014. On draft payment run PAY-2026-001 with INV-WED-4419.'
   );
   await insertInvoiceItem.run(12, 14, 'Commercial Touchless Sanitizer & Dispenser Stand', 1, 14500, 14500);
-  await insertMatch.run(12, 14, 14, 1, 1, 1, 14500, 14500, 0, 0, 'pass', 'Exact match on quantity (1) and price ($145.00).');
+  await insertMatch.run(12, 14, 14, 1, 1, 1, 14500, 14500, 0, 0, 'pass', `Exact match on quantity (1) and price (${formatMoney(14500)}).`);
 
   // Consignment draw-down invoice. Receipt basis is quantity_consumed (4), not a GRN.
   await insertInvoice.run(
@@ -1027,7 +1028,7 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(13, 15, 'Commercial Touchless Sanitizer & Dispenser Stand', 4, 14500, 58000);
   await insertMatch.run(
     13, 15, 15, 4, 4, 4, 14500, 14500, 0, 0, 'pass',
-    'Exact consignment match: 4 units at $145.00 matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.'
+    `Exact consignment match: 4 units at ${formatMoney(14500)} matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.`
   );
 
   await insertInvoice.run(
@@ -1048,7 +1049,7 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(14, 16, 'HQ campus electricity (E-104) 2026-09-01 to 2026-09-30', ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT);
   await insertMatch.run(
     14, 16, 16, ELECTRICITY_MILLI, ELECTRICITY_MILLI, ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_PRICE, 0, 0, 'pass',
-    'Exact measured match: 842.500 kWh at $0.18 matches the utility consumption. No GRN was posted.'
+    `Exact measured match: 842.500 kWh at ${formatMoney(18)} matches the utility consumption. No GRN was posted.`
   );
 
   await insertInvoice.run(
@@ -1069,7 +1070,7 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(15, 18, 'Industrial liquid nitrogen drawn from LN2 silo S-1', NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_AMOUNT);
   await insertMatch.run(
     15, 18, 18, NITROGEN_MILLI, NITROGEN_MILLI, NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_PRICE, 0, 0, 'pass',
-    'Exact measured match: 450.250 kg at $1.25 matches the bulk draw-down. No GRN was posted.'
+    `Exact measured match: 450.250 kg at ${formatMoney(125)} matches the bulk draw-down. No GRN was posted.`
   );
 
   const sanitizerItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-FAC-003'`).get();
@@ -1177,7 +1178,7 @@ await db.transaction(async () => {
   await insertDisposition.run(
     4,
     'accept_variance',
-    'Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.',
+    `Facilities restock surcharge approved against FY26 MRO contract. Pay billed ${formatMoney(29800)}.`,
     'David Miller',
     29800,
     'price_variance',
@@ -1197,7 +1198,7 @@ await db.transaction(async () => {
   await insertDisposition.run(
     6,
     'short_pay',
-    'Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.',
+    `Pay PO price ${formatMoney(21000)}. Freight surcharge on INV-FCJ-8810 is not on the contract.`,
     'David Miller',
     21000,
     'price_variance',
@@ -1261,7 +1262,7 @@ await db.transaction(async () => {
   // Live auto-assign walkthrough: Alice's extra Figma seat is already proposed against
   // CNT-2026-001 so Bob (or Priya via the seeded OOO delegation) can allow/refuse.
   // This is NOT a renewal PR (justification has no "Renewal") — 1-click renew on
-  // CNT-2026-001 still works. $540 ≤ $1,000 so only the department head steps.
+  // CNT-2026-001 still works. € 540,00 ≤ € 1.000,00 so only the department head steps.
   await db.prepare(`
     INSERT INTO purchase_requisitions (
       id, pr_number, requester_id, department_id, status, total_amount, justification,
@@ -1323,13 +1324,13 @@ await db.transaction(async () => {
   };
   await insertAudit.run('requisition', 1, 'CREATED', 'Alice Chen', 'Requisition created for 2 Herman Miller Chairs', '-7 days');
   await insertAudit.run('requisition', 1, 'SUBMITTED', 'Alice Chen', 'Submitted for manager approval', '-7 days');
-  await insertAudit.run('requisition', 1, 'APPROVED', 'Bob Martinez', 'Approved PR-2026-001 for $2,590.00', '-6 days');
+  await insertAudit.run('requisition', 1, 'APPROVED', 'Bob Martinez', `Approved PR-2026-001 for ${formatMoney(259000)}`, '-6 days');
   await insertAudit.run('purchase_order', 1, 'ISSUED', 'Carol Zhang', 'PO-2026-001 issued to WorkSpace Ergonomics Depot', '-5 days');
   await insertAudit.run('goods_receipt', 1, 'RECEIVED', 'Carol Zhang', 'GRN-2026-001 confirmed 2 chairs received in good condition', '-2 days');
   await insertAudit.run('invoice', 1, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-2 days');
   await insertAudit.run('invoice', 1, 'APPROVED_PAYMENT', 'David Miller', 'Approved invoice INV-WED-9042 for payment', '2026-09-03 10:00:00');
   await insertAudit.run('invoice', 1, 'PAID', 'David Miller', 'Marked as paid with reference ACH-1017-WED9042', '2026-09-04 08:00:00');
-  await insertAudit.run('invoice', 2, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged price variance (+ $50/unit) and quantity discrepancy', '0 days');
+  await insertAudit.run('invoice', 2, 'VARIANCE_DETECTED', 'System Engine', `3-Way Match flagged price variance (+ ${formatMoney(5000)}/unit) and quantity discrepancy`, '0 days');
   await insertAudit.run('requisition', 5, 'CREATED', 'Alice Chen', 'Requisition created for SOC 2 Type II penetration test', '-10 days');
   await insertAudit.run('requisition', 5, 'APPROVED', 'David Miller', 'Final approval and ITE budget commit for PR-2026-005', '-9 days');
   await insertAudit.run('purchase_order', 3, 'ISSUED', 'Carol Zhang', 'PO-2026-003 issued to Apex Advisory & Digital', '-9 days');
@@ -1337,16 +1338,16 @@ await db.transaction(async () => {
   await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003: service delivered (1 lump sum).', '-2 days');
   await insertAudit.run('invoice', 3, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-AAD-5501 SES-backed match passed (PO+SES+invoice)', '-1 days');
   await insertAudit.run('invoice', 4, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-7701 flagged price_variance (400¢ over PO)', '-1 days');
-  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '2026-09-06 09:30:00');
+  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', `Accepted price_variance on billed total ${formatMoney(29800)}. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed ${formatMoney(29800)}.`, '2026-09-06 09:30:00');
   await insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
   await insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
   await insertAudit.run('requisition', 7, 'CREATED', 'Alice Chen', 'Requisition created for 3 Logitech MX Master 3S mice', '-4 days');
   await insertAudit.run('requisition', 7, 'SUBMITTED', 'Alice Chen', 'Submitted PR-2026-007 for department-head approval', '-4 days');
-  await insertAudit.run('requisition', 7, 'APPROVED', 'Bob Martinez', 'Approved PR-2026-007 for $297.00', '-4 days');
+  await insertAudit.run('requisition', 7, 'APPROVED', 'Bob Martinez', `Approved PR-2026-007 for ${formatMoney(29700)}`, '-4 days');
   await insertAudit.run('purchase_order', 6, 'ISSUED', 'Carol Zhang', 'PO-2026-006 issued to TechSupply Global', '-3 days');
   await insertAudit.run('goods_receipt', 4, 'RECEIVED', 'Carol Zhang', 'GRN-2026-004 confirmed 2 of 3 mice received; one on backorder', '-1 days');
   await insertAudit.run('invoice', 5, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged quantity variance (3 billed vs 2 received)', '-1 days');
-  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '2026-09-08 09:15:00');
+  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', `Disposition return_to_buyer for INV-TSG-22041 (billed ${formatMoney(29700)}, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.`, '2026-09-08 09:15:00');
   await insertAudit.run(
     'approval_delegation',
     1,
@@ -1356,18 +1357,18 @@ await db.transaction(async () => {
     '0 days'
   );
   await insertAudit.run('requisition', 8, 'CREATED', 'James Okonkwo', 'Requisition created for 3 Blueair Pro XL HEPA purifiers', '-6 days');
-  await insertAudit.run('requisition', 8, 'APPROVED', 'Carol Zhang', 'Final approval and FAC budget commit for PR-2026-008 ($2,670.00)', '-6 days');
+  await insertAudit.run('requisition', 8, 'APPROVED', 'Carol Zhang', `Final approval and FAC budget commit for PR-2026-008 (${formatMoney(267000)})`, '-6 days');
   await insertAudit.run('purchase_order', 7, 'ISSUED', 'Carol Zhang', 'PO-2026-007 issued to FacilityCare & Janitorial Pro', '-5 days');
   await insertAudit.run(
     'purchase_order',
     7,
     'CHANGE_ORDER_APPLIED',
     'Carol Zhang',
-    'CO-2026-001 (rev 1) applied to PO-2026-007: $2,670.00 → $2,550.00 (delta -$120.00). Reason: Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged. Lines: Blueair Pro XL Commercial HEPA Air Purifier (unit $890.00→$850.00). Budget committed released by $120.00.',
+    `CO-2026-001 (rev 1) applied to PO-2026-007: ${formatMoney(267000)} → ${formatMoney(255000)} (delta ${formatMoney(-12000)}). Reason: Vendor confirmed volume discount after issue — unit price ${formatMoney(89000)} → ${formatMoney(85000)}; quantity unchanged. Lines: Blueair Pro XL Commercial HEPA Air Purifier (unit ${formatMoney(89000)}→${formatMoney(85000)}). Budget committed released by ${formatMoney(12000)}.`,
     '2026-09-04 10:15:00'
   );
   await insertAudit.run('requisition', 9, 'CREATED', 'Sofia Berg', 'Requisition created for 2 cases of recycled copy paper', '-8 days');
-  await insertAudit.run('requisition', 9, 'APPROVED', 'Sofia Berg', 'Approved PR-2026-009 for $116.00', '-8 days');
+  await insertAudit.run('requisition', 9, 'APPROVED', 'Sofia Berg', `Approved PR-2026-009 for ${formatMoney(11600)}`, '-8 days');
   await insertAudit.run('purchase_order', 8, 'ISSUED', 'Carol Zhang', 'PO-2026-008 issued to FacilityCare & Janitorial Pro', '-20 days');
   await insertAudit.run('purchase_order', 9, 'ISSUED', 'Carol Zhang', 'PO-2026-009 issued to WorkSpace Ergonomics Depot', '-8 days');
   await insertAudit.run('consignment_receipt', 1, 'RECEIVED', 'Carol Zhang', 'Recorded CSN-2026-001: 12 SKU-FAC-003 from FacilityCare at HQ facilities cage. Supplier-owned; no GRN.', '-20 days');
@@ -1379,26 +1380,26 @@ await db.transaction(async () => {
   await insertAudit.run('goods_receipt', 6, 'RECEIVED', 'Carol Zhang', 'GRN-2026-006 confirmed 2 cases of copy paper received', '-4 days');
   await insertAudit.run('goods_receipt', 7, 'RECEIVED', 'Carol Zhang', 'GRN-2026-007 confirmed CalDigit dock received', '-10 days');
   await insertAudit.run('invoice', 6, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-8810 flagged price_variance (1000¢ over PO)', '-17 days');
-  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', 'Short-pay INV-FCJ-8810: billed $220.00 → payable $210.00 (delta $10.00). Reason: Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.', '2026-08-28 10:00:00');
-  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-8810 for Billed $220.00 → Pay $210.00 payment', '2026-08-29 09:00:00');
+  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', `Short-pay INV-FCJ-8810: billed ${formatMoney(22000)} → payable ${formatMoney(21000)} (delta ${formatMoney(1000)}). Reason: Pay PO price ${formatMoney(21000)}. Freight surcharge on INV-FCJ-8810 is not on the contract.`, '2026-08-28 10:00:00');
+  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', `Approved invoice INV-FCJ-8810 for Billed ${formatMoney(22000)} → Pay ${formatMoney(21000)} payment`, '2026-08-29 09:00:00');
   await insertAudit.run('invoice', 7, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-6 days');
-  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '2026-09-09 09:00:00');
+  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', `Approved invoice INV-WED-3308 for ${formatMoney(11600)} payment`, '2026-09-09 09:00:00');
   await insertAudit.run('invoice', 8, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-10 days');
-  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '2026-09-03 09:30:00');
+  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', `Approved invoice INV-TSG-5508 for ${formatMoney(39900)} payment`, '2026-09-03 09:30:00');
   await insertAudit.run('purchase_order', 11, 'ISSUED', 'Carol Zhang', 'PO-2026-011 issued to TechSupply Global', '-6 days');
   await insertAudit.run('purchase_order', 12, 'ISSUED', 'Carol Zhang', 'PO-2026-012 issued to TechSupply Global', '-3 days');
   await insertAudit.run('goods_receipt', 8, 'RECEIVED', 'Carol Zhang', 'GRN-2026-008 confirmed spare MX Master received', '-5 days');
   await insertAudit.run('goods_receipt', 9, 'RECEIVED', 'Carol Zhang', 'GRN-2026-009 confirmed second spare MX Master received', '-2 days');
   await insertAudit.run('invoice', 9, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-4 days');
-  await insertAudit.run('invoice', 9, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-6610 for $99.00 payment', '-4 days');
-  await insertAudit.run('invoice', 9, 'PAID', 'David Miller', 'Marked as paid with reference ACH-DUP-6610 ($99.00)', '-3 days');
+  await insertAudit.run('invoice', 9, 'APPROVED_FOR_PAYMENT', 'David Miller', `Approved invoice INV-TSG-6610 for ${formatMoney(9900)} payment`, '-4 days');
+  await insertAudit.run('invoice', 9, 'PAID', 'David Miller', `Marked as paid with reference ACH-DUP-6610 (${formatMoney(9900)})`, '-3 days');
   await insertAudit.run('invoice', 10, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-1 days');
   await insertAudit.run(
     'invoice',
     10,
     'DUPLICATE_SUSPECTED',
     'System Duplicate Detector',
-    `Likely duplicate INV-TSG-6611: billed 9900¢ ($99.00) on ${dupSuspectDate}. Candidates: INV-TSG-6610 (paid, 9900¢, ${dupOriginalDate}, same billed amount + invoice date within ±7 UTC days)`,
+    `Likely duplicate INV-TSG-6611: billed 9900¢ (${formatMoney(9900)}) on ${dupSuspectDate}. Candidates: INV-TSG-6610 (paid, 9900¢, ${dupOriginalDate}, same billed amount + invoice date within ±7 UTC days)`,
     '-1 days'
   );
   await insertAudit.run('purchase_order', 13, 'ISSUED', 'Carol Zhang', 'PO-2026-013 issued to WorkSpace Ergonomics Depot', '-10 days');
@@ -1406,23 +1407,23 @@ await db.transaction(async () => {
   await insertAudit.run('goods_receipt', 10, 'RECEIVED', 'Carol Zhang', 'GRN-2026-010 confirmed espresso bag received', '-8 days');
   await insertAudit.run('goods_receipt', 11, 'RECEIVED', 'Carol Zhang', 'GRN-2026-011 confirmed sanitizer stand received', '-7 days');
   await insertAudit.run('invoice', 11, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-8 days');
-  await insertAudit.run('invoice', 11, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-4419 for $72.00 payment', '-6 days');
+  await insertAudit.run('invoice', 11, 'APPROVED_FOR_PAYMENT', 'David Miller', `Approved invoice INV-WED-4419 for ${formatMoney(7200)} payment`, '-6 days');
   await insertAudit.run('invoice', 12, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-7 days');
-  await insertAudit.run('invoice', 12, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-9920 for $145.00 payment', '-5 days');
+  await insertAudit.run('invoice', 12, 'APPROVED_FOR_PAYMENT', 'David Miller', `Approved invoice INV-FCJ-9920 for ${formatMoney(14500)} payment`, '-5 days');
   await insertAudit.run(
     'payment_run',
     1,
     'PAYMENT_RUN_CREATED',
     'David Miller',
-    'Created payment run PAY-2026-001 with 2 invoice(s) totaling payable $217.00 (billed $217.00): INV-WED-4419, INV-FCJ-9920',
+    `Created payment run PAY-2026-001 with 2 invoice(s) totaling payable ${formatMoney(21700)} (billed ${formatMoney(21700)}): INV-WED-4419, INV-FCJ-9920`,
     '-2 hours'
   );
-  await insertAudit.run('contract', 1, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-001 (Figma Enterprise Organization Subscription) created with ACV 540000 cents ($5400.00)', '-30 days');
-  await insertAudit.run('contract', 2, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-002 (Slack Enterprise Grid Annual Agreement) created with ACV 900000 cents ($9000.00)', '-20 days');
-  await insertAudit.run('contract', 3, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-003 (CleanPro Commercial Facilities & Janitorial Master Agreement) created with ACV 1200000 cents ($12000.00)', '-25 days');
-  await insertAudit.run('contract', 4, 'CREATED', 'Carol Zhang', 'Contract CNT-2026-004 (Apex Strategic Design & UX On-Demand Retainer) created with ACV 1700000 cents ($17000.00)', '-15 days');
-  await insertAudit.run('requisition', 10, 'CREATED', 'Alice Chen', 'Requisition PR-2026-010 created with 1 item(s) for $540.00', '-1 hours');
-  await insertAudit.run('requisition', 10, 'CONTRACT_PROPOSED', 'System', 'Proposed CNT-2026-001 (Figma Enterprise Organization Subscription) supplier=CloudCore Software LLC ACV 540000 cents ($5400.00). reason=auto-match', '-1 hours');
+  await insertAudit.run('contract', 1, 'CREATED', 'Carol Zhang', `Contract CNT-2026-001 (Figma Enterprise Organization Subscription) created with ACV 540000 cents (${formatMoney(540000)})`, '-30 days');
+  await insertAudit.run('contract', 2, 'CREATED', 'Carol Zhang', `Contract CNT-2026-002 (Slack Enterprise Grid Annual Agreement) created with ACV 900000 cents (${formatMoney(900000)})`, '-20 days');
+  await insertAudit.run('contract', 3, 'CREATED', 'Carol Zhang', `Contract CNT-2026-003 (CleanPro Commercial Facilities & Janitorial Master Agreement) created with ACV 1200000 cents (${formatMoney(1200000)})`, '-25 days');
+  await insertAudit.run('contract', 4, 'CREATED', 'Carol Zhang', `Contract CNT-2026-004 (Apex Strategic Design & UX On-Demand Retainer) created with ACV 1700000 cents (${formatMoney(1700000)})`, '-15 days');
+  await insertAudit.run('requisition', 10, 'CREATED', 'Alice Chen', `Requisition PR-2026-010 created with 1 item(s) for ${formatMoney(54000)}`, '-1 hours');
+  await insertAudit.run('requisition', 10, 'CONTRACT_PROPOSED', 'System', `Proposed CNT-2026-001 (Figma Enterprise Organization Subscription) supplier=CloudCore Software LLC ACV 540000 cents (${formatMoney(540000)}). reason=auto-match`, '-1 hours');
   await insertAudit.run('requisition', 10, 'SUBMITTED', 'Alice Chen', 'Submitted PR-2026-010 for department-head approval', '-1 hours');
 
   // Absolute timestamps so Document Trail chronology is honest (seed datetime('now') would

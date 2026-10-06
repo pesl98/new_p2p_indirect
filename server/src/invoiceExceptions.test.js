@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase } from './db.js';
 import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from './invoicesService.js';
 import { priceToleranceCents } from './match.js';
+import { formatMoney } from './money.js';
 import {
   listInvoiceExceptions,
   listBuyerInbox,
@@ -258,7 +259,7 @@ describe('invoice exception dispositions', () => {
     `).get(created.invoiceId);
     assert.ok(audit);
     assert.equal(audit.actor_name, 'David Miller');
-    assert.ok(audit.details.includes('$3196.00'));
+    assert.ok(audit.details.includes(formatMoney(319600)));
 
     const approve = await approveInvoicePayment(db, created.invoiceId, {
       approver_name: 'David Miller'
@@ -578,7 +579,9 @@ describe('invoice exception short_pay', () => {
     const approve = await approveInvoicePayment(db, created.invoiceId, {
       approver_name: 'David Miller'
     });
-    assert.match(approve.message, /Billed \$3196\.00 → Pay \$1498\.00/);
+    assert.ok(approve.message.includes(formatMoney(319600)));
+    assert.ok(approve.message.includes(formatMoney(149800)));
+    assert.match(approve.message, /Billed .+ → Pay /);
     const after = await db.prepare(`SELECT status FROM invoices WHERE id = ?`).get(created.invoiceId);
     assert.equal(after.status, 'approved_for_payment');
   });

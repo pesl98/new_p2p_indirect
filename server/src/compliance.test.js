@@ -298,6 +298,7 @@ describe('compliance report logic', () => {
     `).run('0'.repeat(64));
 
     const report = await queryVerification(db);
+    assert.equal(report.currency, 'EUR');
     const codes = new Set(report.findings.map((row) => row.code));
     assert.ok(codes.has('po_total_mismatch'));
     assert.ok(codes.has('requisition_total_mismatch'));
@@ -406,6 +407,9 @@ describe('compliance API access and CSV', () => {
           withCookie(4)
         ));
         assert.equal(allowed.status, 200, report);
+        if (report === 'verification') {
+          assert.equal(allowed.body.currency, 'EUR');
+        }
         const admin = await json(await fetch(
           `${base}/api/compliance/${report}`,
           withCookie(5)
@@ -429,13 +433,23 @@ describe('compliance API access and CSV', () => {
       assert.match(first, /"said ""hello"", world"/);
       assert.equal(csv.endsWith('\n'), true);
       assert.equal(csv.includes('COMPLIANCE_EXPORT'), false);
+
+      const verificationCsv = await fetch(
+        `${base}/api/compliance/verification?format=csv`,
+        withCookie(4)
+      );
+      const verificationText = await verificationCsv.text();
+      assert.equal(verificationCsv.status, 200);
+      assert.match(verificationText.split('\n')[0], /,currency$/);
+      assert.match(verificationText, /EUR/);
     });
 
-    const exportEvent = await db.prepare(`
+    const exportEvents = await db.prepare(`
       SELECT action, actor_user_id, actor_name, entity_type, details
       FROM compliance_audit_events
       WHERE action = 'COMPLIANCE_EXPORT'
-    `).get();
+    `).all();
+    const exportEvent = exportEvents.find((row) => String(row.details).includes('audit-trail'));
     assert.equal(Number(exportEvent.actor_user_id), 4);
     assert.equal(exportEvent.actor_name, 'David Miller');
     assert.equal(exportEvent.entity_type, 'compliance_report');

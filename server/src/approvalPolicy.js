@@ -78,7 +78,7 @@ async function resolveExecutive(db) {
 
 /**
  * Build ordered approval steps from amount (integer cents) and department.
- * Thresholds: > $1,000 (100000¢) adds procurement; > $10,000 (1000000¢) adds finance/admin.
+ * Thresholds: above 100000 cents (1,000) adds procurement; above 1000000 cents (10,000) adds finance/admin.
  */
 export async function buildApprovalSteps({ totalAmount, departmentId, db }) {
   const amount = Number(totalAmount) || 0;

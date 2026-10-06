@@ -55,7 +55,8 @@ router.get('/config', async (req, res) => {
       ssoReady: Boolean(config.sso?.ready),
       localLogin: config.localLogin !== false,
       demoPersonaSwitcher: Boolean(config.demoPersonaSwitcher),
-      bootstrapNeeded: userCount === 0
+      bootstrapNeeded: userCount === 0,
+      currency: req.currency
     });
   } catch (error) {
     sendError(res, error);

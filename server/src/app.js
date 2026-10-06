@@ -32,6 +32,7 @@ import { loadIntegrationConfig } from './integrationConfig.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
+import { loadCurrencyConfig } from './currencyConfig.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
 import { requireApiSession } from './requestActor.js';
 
@@ -52,11 +53,22 @@ export function startupErrorApp(error) {
   const app = express();
   const message = error?.message || TURSO_REQUIRED_MSG;
   const status = error?.statusCode || 503;
-  mountConfigErrorApp(app, message, status);
+  mountConfigErrorApp(app, message, status, {
+    name: error?.name || 'TursoConfigError',
+    code: error?.code
+  });
   return app;
 }
 
 export function createApp(options = {}) {
+  let currencyConfig;
+  try {
+    currencyConfig = options.currencyConfig || loadCurrencyConfig(options.env || process.env);
+  } catch (error) {
+    console.error(error.message);
+    return startupErrorApp(error);
+  }
+
   const config = options.config || loadDbConfig();
   if (config.onVercel && !config.useTurso) {
     return startupErrorApp(new TursoConfigError(TURSO_REQUIRED_MSG));
@@ -76,6 +88,7 @@ export function createApp(options = {}) {
       req.db = options.db || await getDb();
       req.authConfig = authConfig;
       req.integrationConfig = integrationConfig;
+      req.currency = currencyConfig.currency;
       next();
     } catch (error) {
       if (config.onVercel || error instanceof TursoConfigError) {
@@ -122,6 +135,7 @@ export function createApp(options = {}) {
       system: 'ProcureFlow Non-Production Procurement Engine',
       version: '1.0.0',
       db: db?.useTurso ? 'turso-http' : 'sqlite',
+      currency: req.currency,
       timestamp: new Date().toISOString()
     });
   });

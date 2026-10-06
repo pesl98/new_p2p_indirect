@@ -145,10 +145,11 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `PROCUREFLOW_LIBSQL_HTTP` | Read into an internal `preferHttp` flag. The database open path still uses HTTP whenever Turso is selected. It does not load a native addon. | Leave unset. | Do not set it on Vercel. | No. | |
 | `WEBHOOK_TARGET_URL` | HTTPS URL that receives signed webhooks for this customer. | Optional. Required only when you want delivery. `http` is allowed for localhost only. | Production and Preview. Not written by the CLIs. | Treat as sensitive if the URL contains a token. | You set it. The API returns the host only, never the URL. |
 | `WEBHOOK_SIGNING_SECRET` | HMAC-SHA256 key for `X-ProcureFlow-Signature`. | Optional. Required together with the URL. | Production and Preview. One value per customer. Not written by the CLIs. | Yes. Never stored in the database and never returned by the API. | 32-byte hex, same generator as `SESSION_SECRET`. |
+| `CURRENCY` | Deployment currency for display, audit text, exports, and money-bearing webhooks. Allowlist: `EUR` (default) or `USD`. | Optional. Leave unset for EUR. Any other value refuses to boot (503). It does not convert stored cents. | Production and Preview. Not written by the CLIs. | No. | `EUR` or `USD`. |
 
 ### 3.1 SSO and login flags the CLIs do not write
 
-`onboard:customer` and `vercel:customer` write only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER`, any `IDENTITY_PROVIDER` / `OIDC_*` / `SAML_*` / `SSO_*` / `APP_BASE_URL` / `LOCAL_LOGIN` key, or `WEBHOOK_TARGET_URL` / `WEBHOOK_SIGNING_SECRET`. Set those yourself on **that** customer’s project (Production and Preview), then redeploy. Column-by-column notes are already in [DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer) and [SYSTEM_MANUAL.md §3](SYSTEM_MANUAL.md#sso-oidc-or-saml). Webhooks are [§8.8](#88-integrations). This checklist is the operator decision, not a second copy of those tables.
+`onboard:customer` and `vercel:customer` write only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER`, any `IDENTITY_PROVIDER` / `OIDC_*` / `SAML_*` / `SSO_*` / `APP_BASE_URL` / `LOCAL_LOGIN` key, or `WEBHOOK_TARGET_URL` / `WEBHOOK_SIGNING_SECRET`, or `CURRENCY` (unset means EUR). Set those yourself on **that** customer’s project (Production and Preview), then redeploy. Column-by-column notes are already in [DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer) and [SYSTEM_MANUAL.md §3](SYSTEM_MANUAL.md#sso-oidc-or-saml). Webhooks are [§8.8](#88-integrations). This checklist is the operator decision, not a second copy of those tables.
 
 | Decision | What to set |
 | --- | --- |
@@ -509,7 +510,7 @@ Org skeleton (safe to re-run):
 
 | Code | Name | FY 2026 `total_budget` |
 | --- | --- | --- |
-| MKT | Marketing | `10000000` cents ($100,000.00) |
+| MKT | Marketing | `10000000` cents (€ 100.000,00) |
 | ITE | IT | same |
 | FAC | Facilities | same |
 | HRP | HR | same |
@@ -772,7 +773,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Put the hex in `WEBHOOK_SIGNING_SECRET`. Put the receiver’s `https` URL in `WEBHOOK_TARGET_URL`. Redeploy. Do not commit either value. `GET /api/integrations/config` with the admin cookie returns `webhook_target_configured`, `webhook_signing_secret_configured`, and `webhook_target_host`. It does not return the secret or the URL.
 
-Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `payment_run.created`, `payment_run.paid`. The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id.
+Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
+
+The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id. The dispatcher, retry schedule, and drain are unchanged.
 
 Five attempts, then status `dead`. Backoff is 30 seconds, 2 minutes, 10 minutes, then 1 hour. If the URL or secret is unset, rows stay `pending` and attempts are not burned. A long-running `npm start` sweeps every 30 seconds. On Vercel, delivery is attempted when the event is written; further tries are **Deliver pending**, **Replay**, or the next business event. Replay is `POST /api/integrations/outbox/:id/replay` (admin cookie). It resets the attempt count.
 

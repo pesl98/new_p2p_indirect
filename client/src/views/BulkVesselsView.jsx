@@ -112,7 +112,7 @@ export default function BulkVesselsView({ currentUser, onNavigate }) {
                   <td className="py-3 px-4 text-slate-700">{row.supplier_name}</td>
                   <td className="py-3 px-4 text-right font-bold">{formatMeasured(row.level_milli, row.unit_of_measure)}</td>
                   <td className="py-3 px-4 text-right text-slate-600">{formatMeasured(row.capacity_milli, row.unit_of_measure)}</td>
-                  <td className="py-3 px-4 text-right">${formatMoney(row.unit_price)}</td>
+                  <td className="py-3 px-4 text-right">{formatMoney(row.unit_price)}</td>
                   <td className="py-3 px-4 text-right space-x-1 whitespace-nowrap">
                     <button type="button" onClick={() => { setBanner(null); setFillTarget(row); }} className="px-2 py-1 border border-slate-300 rounded font-semibold text-[11px]">Fill</button>
                     <button
@@ -179,7 +179,7 @@ export default function BulkVesselsView({ currentUser, onNavigate }) {
       {drawTarget && (
         <QuantityModal
           title={`Draw from ${drawTarget.name}`}
-          subtitle={`On hand ${formatMeasured(drawTarget.level_milli, drawTarget.unit_of_measure)} at $${formatMoney(drawTarget.unit_price)} per ${drawTarget.unit_of_measure}. Opens a payable. No goods receipt.`}
+          subtitle={`On hand ${formatMeasured(drawTarget.level_milli, drawTarget.unit_of_measure)} at ${formatMoney(drawTarget.unit_price)} per ${drawTarget.unit_of_measure}. Opens a payable. No goods receipt.`}
           unit={drawTarget.unit_of_measure}
           actionLabel="Draw and create payable PO"
           currentUser={currentUser}
@@ -312,7 +312,7 @@ function RegisterModal({ suppliers, catalog, currentUser, onClose, onSaved }) {
         <Field label="Capacity">
           <input type="number" min="0" step="0.001" value={capacity} onChange={(e) => setCapacity(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Draw price per unit ($)">
+        <Field label="Draw price per unit">
           <input type="number" min="0" step="0.01" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
         <Field label="Notes">

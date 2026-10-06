@@ -71,7 +71,7 @@ export default function Header({ users, currentUser, sessionUser, demoPersonaSwi
                     <>
                       <span className="text-slate-300">•</span>
                       <span className="text-emerald-700 font-medium">
-                        Limit: ${formatMoney(currentUser.approval_limit)}
+                        Limit: {formatMoney(currentUser.approval_limit)}
                       </span>
                     </>
                   )}

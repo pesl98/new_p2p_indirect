@@ -3,7 +3,7 @@
  * Does not invent events. Money fields stay integer cents. Timestamps are ISO-8601.
  */
 
-import { formatCents } from './money.js';
+import { formatMoney } from './money.js';
 import { formatMeasured } from './measuredQty.js';
 
 const AP_AUDIT_ACTIONS = new Set(['APPROVED_FOR_PAYMENT', 'APPROVED_PAYMENT', 'PAID']);
@@ -926,7 +926,7 @@ function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents 
         status: invoice.status,
         at: invoice.created_at || toIsoTimestamp(invoice.invoice_date),
         details: invoice.payable_total_cents != null
-          ? [invoice.notes, `Billed $${formatCents(invoice.total_amount)} → Pay $${formatCents(invoice.payable_total_cents)}`].filter(Boolean).join(' ')
+          ? [invoice.notes, `Billed ${formatMoney(invoice.total_amount)} → Pay ${formatMoney(invoice.payable_total_cents)}`].filter(Boolean).join(' ')
           : invoice.notes,
         amount_cents: invoice.total_amount,
         payable_total_cents: invoice.payable_total_cents ?? null,

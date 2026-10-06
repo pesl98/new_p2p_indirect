@@ -2,11 +2,16 @@
  * Integer-cent money helpers.
  *
  * Convention: SQLite, API request/response bodies, and all server arithmetic
- * store money as integer cents (USD minor units). Convert at display/input
- * edges only — never mix float dollars with cents in the same field.
+ * store money as integer cents (minor units of the deployment currency,
+ * default EUR). The scale does not change between EUR and USD. Convert at
+ * display/input edges only — never mix a major-unit float with cents in the
+ * same field. Display goes through formatMoney (shared/currency.js).
  */
 
-/** Convert a dollar amount (number or numeric string) to integer cents at an I/O edge. */
+import { formatMoneyAmount, roundCents } from '../../shared/currency.js';
+import { deploymentCurrency, loadCurrencyConfig } from './currencyConfig.js';
+
+/** Convert a major-unit amount (number or numeric string) to integer cents at an I/O edge. */
 export function toCents(dollars) {
   if (dollars == null || dollars === '') return 0;
   const num = typeof dollars === 'number' ? dollars : Number(String(dollars).trim());
@@ -14,16 +19,35 @@ export function toCents(dollars) {
   return Math.round(num * 100);
 }
 
-/** Convert integer cents to a dollar number for display only. */
+/** Convert integer cents to a major-unit number for input edges only. */
 export function fromCents(cents) {
   const n = Number(cents);
   if (!Number.isFinite(n)) return 0;
   return n / 100;
 }
 
-/** Format cents as a fixed 2-decimal dollar string (no currency symbol). */
+/**
+ * Format cents in the deployment currency (default EUR, locale nl-NL).
+ * Pass `currency` only in tests. Application code uses the env setting.
+ */
+export function formatMoney(cents, currency = deploymentCurrency()) {
+  return formatMoneyAmount(cents, {
+    currency,
+    locale: loadCurrencyConfig().locale
+  });
+}
+
+/**
+ * Invariant 2-decimal major-unit string (dot decimal, no symbol).
+ * Not a currency format. Display and audit text use formatMoney.
+ */
 export function formatCents(cents) {
-  return fromCents(cents).toFixed(2);
+  const rounded = roundCents(cents);
+  const sign = rounded < 0 ? '-' : '';
+  const abs = Math.abs(rounded);
+  const major = Math.trunc(abs / 100);
+  const minor = String(abs % 100).padStart(2, '0');
+  return `${sign}${major}.${minor}`;
 }
 
 /** Integer line total: quantity × unit price in cents. */
@@ -74,7 +98,7 @@ export function requireIntegerCents(value, field = 'amount') {
   return Number(text);
 }
 
-/** Existing approval routing thresholds, expressed in cents ($1,000 / $10,000). */
+/** Existing approval routing thresholds, expressed in cents (1,000 / 10,000 major units). */
 export const APPROVAL_TIER2_CENTS = 100_000;
 export const APPROVAL_TIER3_CENTS = 1_000_000;
 

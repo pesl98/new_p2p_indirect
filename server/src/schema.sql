@@ -1,5 +1,6 @@
 -- Schema for Non-Production Procurement Application
--- Money columns are INTEGER cents (USD minor units).
+-- Money columns are INTEGER cents (minor units of the deployment currency, default EUR).
+-- EUR and USD both use 2 decimal places, so the integer scale does not change.
 -- Discrete quantities (goods, services, consignment) are INTEGER whole units.
 -- Metered utilities and vendor-managed bulk store measured qty as milli-units
 -- (quantity_scale = 1000). Line amount is round(milli × unit_price / 1000).

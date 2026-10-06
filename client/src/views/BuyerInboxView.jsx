@@ -155,7 +155,7 @@ export default function BuyerInboxView({ currentUser, onDataChanged, onNavigate,
                         <div className="font-mono text-[10px] text-slate-500 mt-0.5">{inv.pr_number}</div>
                       )}
                     </td>
-                    <td className="py-3 px-4 font-bold text-slate-900">${formatMoney(inv.total_amount)}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900">{formatMoney(inv.total_amount)}</td>
                     <td className="py-3 px-4">{matchBadge(inv.match_status)}</td>
                     <td className="py-3 px-4 text-slate-600 max-w-xs">
                       <div className="line-clamp-2">{inv.exception?.reason || '—'}</div>
@@ -215,7 +215,7 @@ export default function BuyerInboxView({ currentUser, onDataChanged, onNavigate,
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                 <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">Amounts (integer cents)</div>
                 <div className="text-[11px] text-slate-600">
-                  PO ${formatMoney(selected.po_total_amount)} · Billed ${formatMoney(selected.total_amount)}
+                  PO {formatMoney(selected.po_total_amount)} · Billed {formatMoney(selected.total_amount)}
                   {' · '}Match {String(selected.match_status || '').replace(/_/g, ' ')}
                 </div>
               </div>

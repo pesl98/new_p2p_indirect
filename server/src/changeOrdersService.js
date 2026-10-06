@@ -22,7 +22,7 @@ import { nextDocumentNumber } from './docNumbers.js';
 import {
   asCents,
   CHANGE_ORDER_INCREASE_CONFIRM_CENTS,
-  formatCents,
+  formatMoney,
   lineTotalCents,
   requireIntegerCents,
   toQty
@@ -313,8 +313,8 @@ export async function applyPurchaseOrderChangeOrder(db, poId, payload = {}) {
 
   if (deltaCents > CHANGE_ORDER_INCREASE_CONFIRM_CENTS && !isExplicitTrue(payload.confirm_increase)) {
     throw new ChangeOrderError(
-      `Net PO increase of $${formatCents(deltaCents)} exceeds the ` +
-      `$${formatCents(CHANGE_ORDER_INCREASE_CONFIRM_CENTS)} confirm threshold ` +
+      `Net PO increase of ${formatMoney(deltaCents)} exceeds the ` +
+      `${formatMoney(CHANGE_ORDER_INCREASE_CONFIRM_CENTS)} confirm threshold ` +
       `(CHANGE_ORDER_INCREASE_CONFIRM_CENTS / APPROVAL_TIER2_CENTS). ` +
       `Resubmit with confirm_increase: true.`
     );
@@ -426,19 +426,19 @@ export async function applyPurchaseOrderChangeOrder(db, poId, payload = {}) {
           bits.push(`qty ${delta.old_quantity}→${delta.new_quantity}`);
         }
         if (delta.old_unit_price !== delta.new_unit_price) {
-          bits.push(`unit $${formatCents(delta.old_unit_price)}→$${formatCents(delta.new_unit_price)}`);
+          bits.push(`unit ${formatMoney(delta.old_unit_price)}→${formatMoney(delta.new_unit_price)}`);
         }
         return `${delta.item_description} (${bits.join(', ')})`;
       })
       .join('; ');
     const deliveryNote = deliveryChanged ? ' Delivery notes updated.' : '';
     const budgetNote = po.department_id && deltaCents !== 0
-      ? ` Budget committed ${deltaCents > 0 ? 'increased' : 'released'} by $${formatCents(Math.abs(deltaCents))}.`
+      ? ` Budget committed ${deltaCents > 0 ? 'increased' : 'released'} by ${formatMoney(Math.abs(deltaCents))}.`
       : '';
     const details = [
       `${coNumber} (rev ${revision}) applied to ${po.po_number}:`,
-      `$${formatCents(beforeTotal)} → $${formatCents(afterTotal)}`,
-      `(delta ${deltaCents >= 0 ? '+' : ''}$${formatCents(deltaCents)}).`,
+      `${formatMoney(beforeTotal)} → ${formatMoney(afterTotal)}`,
+      `(delta ${deltaCents >= 0 ? '+' : ''}${formatMoney(deltaCents)}).`,
       `Reason: ${reason}.`,
       lineSummary ? `Lines: ${lineSummary}.` : '',
       deliveryNote,

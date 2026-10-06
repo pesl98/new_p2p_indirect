@@ -99,6 +99,7 @@ describe('auth HTTP', () => {
       assert.equal(body.localLogin, true);
       assert.equal(body.bootstrapNeeded, true);
       assert.equal(body.demoPersonaSwitcher, false);
+      assert.equal(body.currency, 'EUR');
     });
   });
 

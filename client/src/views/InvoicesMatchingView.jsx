@@ -102,7 +102,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
         quantity_invoiced: Number(item.quantity_scale) === 1000
           ? (Number(item.quantity) / 1000).toFixed(3)
           : item.quantity,
-        unit_price: fromCents(item.unit_price) // billed price input is dollars
+        unit_price: fromCents(item.unit_price) // billed price input is major units (dot decimal)
       }));
       setInvoiceLines(lines);
     } catch (err) {
@@ -322,10 +322,10 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       {inv.po_number}
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                      <div>${formatMoney(inv.total_amount)}</div>
+                      <div>{formatMoney(inv.total_amount)}</div>
                       {inv.payable_total_cents != null && (
                         <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
-                          Pay ${formatMoney(inv.payable_total_cents)}
+                          Pay {formatMoney(inv.payable_total_cents)}
                         </div>
                       )}
                     </td>
@@ -380,7 +380,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   <option value="">-- Choose Purchase Order --</option>
                   {activePOs.map(po => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} (${formatMoney(po.total_amount)}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{po.status}]
                     </option>
                   ))}
                 </select>
@@ -425,7 +425,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                         Invoice Line Items (Billed Values)
                       </span>
                       <span className="text-emerald-700 font-bold">
-                        Calculated Subtotal: ${formatMoney(calculateSubtotalCents())}
+                        Calculated Subtotal: {formatMoney(calculateSubtotalCents())}
                       </span>
                     </div>
 
@@ -451,7 +451,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                                   {lineTypeLabel(line)}
                                 </span>
                               </td>
-                              <td className="py-2.5 px-3 text-center text-slate-500">${formatMoney(line.po_unit_price)}</td>
+                              <td className="py-2.5 px-3 text-center text-slate-500">{formatMoney(line.po_unit_price)}</td>
                               <td className="py-2.5 px-3 text-center font-semibold text-slate-800">
                                 {isServiceLine(line)
                                   ? `${line.po_quantity_accepted} SES`
@@ -481,7 +481,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                                 />
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                                ${formatMoney(linePreviewCents(line))}
+                                {formatMoney(linePreviewCents(line))}
                               </td>
                             </tr>
                           ))}
@@ -528,7 +528,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   {getStatusBadge(selectedInvoice.status)}
                   {selectedInvoice.payable_total_cents != null && (
                     <span className="bg-amber-100 text-amber-900 text-[11px] font-semibold px-2 py-0.5 rounded-full">
-                      Billed ${formatMoney(selectedInvoice.total_amount)} → Pay ${formatMoney(selectedInvoice.payable_total_cents)}
+                      Billed {formatMoney(selectedInvoice.total_amount)} → Pay {formatMoney(selectedInvoice.payable_total_cents)}
                     </span>
                   )}
                 </div>
@@ -578,12 +578,12 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                               </span>
                             </td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 font-semibold">{formatStoredQuantity(res.ordered_qty, res)}</td>
-                            <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">${formatMoney(res.po_unit_price)}</td>
+                            <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">{formatMoney(res.po_unit_price)}</td>
                             <td className="py-2.5 px-3 text-center bg-amber-50/30 font-bold text-amber-900">
                               {formatStoredQuantity(res.received_qty, res)} {receiptBasisLabel(res)}
                             </td>
                             <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">{formatStoredQuantity(res.invoiced_qty, res)}</td>
-                            <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">${formatMoney(res.invoice_unit_price)}</td>
+                            <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">{formatMoney(res.invoice_unit_price)}</td>
                             <td className="py-2.5 px-3 text-center">
                               {isFail ? (
                                 <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center">
@@ -637,17 +637,17 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 <div>
                   <span className="text-slate-500 text-[11px]">Authorized PO Value:</span>
                   <div className="font-bold text-slate-900 text-sm">
-                    ${formatMoney(selectedInvoice.po_total_amount)}
+                    {formatMoney(selectedInvoice.po_total_amount)}
                   </div>
                 </div>
                 <div>
                   <span className="text-slate-500 text-[11px]">Billed Total (With Tax):</span>
                   <div className="font-bold text-slate-900 text-sm">
-                    ${formatMoney(selectedInvoice.total_amount)}
+                    {formatMoney(selectedInvoice.total_amount)}
                   </div>
                   {selectedInvoice.payable_total_cents != null && (
                     <div className="text-[11px] font-semibold text-amber-800 mt-1">
-                      Pay ${formatMoney(selectedInvoice.payable_total_cents)} (short pay)
+                      Pay {formatMoney(selectedInvoice.payable_total_cents)} (short pay)
                     </div>
                   )}
                 </div>
@@ -670,8 +670,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   {selectedInvoice.exception.accepted_total_cents != null && (
                     <div className="text-[11px]">
                       {selectedInvoice.exception.disposition === 'short_pay'
-                        ? `Billed $${formatMoney(selectedInvoice.exception.billed_total_cents ?? selectedInvoice.total_amount)} → Pay $${formatMoney(selectedInvoice.exception.accepted_total_cents)}`
-                        : `Recorded billed total $${formatMoney(selectedInvoice.exception.accepted_total_cents)}`}
+                        ? `Billed ${formatMoney(selectedInvoice.exception.billed_total_cents ?? selectedInvoice.total_amount)} → Pay ${formatMoney(selectedInvoice.exception.accepted_total_cents)}`
+                        : `Recorded billed total ${formatMoney(selectedInvoice.exception.accepted_total_cents)}`}
                       {selectedInvoice.exception.accepted_match_status
                         ? ` · ${selectedInvoice.exception.accepted_match_status.replace(/_/g, ' ')}`
                         : ''}
@@ -699,7 +699,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     <ul className="list-disc list-inside text-[11px] space-y-0.5">
                       {selectedInvoice.duplicate_suspects.map((row) => (
                         <li key={row.flag_id || row.id}>
-                          {row.invoice_number} · ${formatMoney(row.billed_total_cents ?? row.total_amount)} · {row.invoice_date}
+                          {row.invoice_number} · {formatMoney(row.billed_total_cents ?? row.total_amount)} · {row.invoice_date}
                         </li>
                       ))}
                     </ul>
@@ -768,7 +768,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     <CheckCircle2 className="w-4 h-4" />
                     <span>
                       {selectedInvoice.payable_total_cents != null
-                        ? `Approve $${formatMoney(selectedInvoice.payable_total_cents)} (short pay)`
+                        ? `Approve ${formatMoney(selectedInvoice.payable_total_cents)} (short pay)`
                         : 'Approve for Payment'}
                     </span>
                   </button>

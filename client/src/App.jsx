@@ -28,6 +28,7 @@ import ComplianceView from './views/ComplianceView';
 import IntegrationsView from './views/IntegrationsView';
 import { api } from './api';
 import { DEMO_SEED_PASSWORD } from './demoAuth';
+import { setDisplayCurrency } from './money';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -78,6 +79,7 @@ export default function App() {
           api.getMe()
         ]);
         if (cancelled) return;
+        setDisplayCurrency(cfg?.currency);
         setAuthConfig(cfg);
         if (me?.user) {
           setSessionUser(me.user);
@@ -85,7 +87,10 @@ export default function App() {
         }
       } catch (err) {
         console.error('Failed to load auth config:', err);
-        if (!cancelled) setAuthConfig({ demoPersonaSwitcher: false, bootstrapNeeded: false });
+        if (!cancelled) {
+          setDisplayCurrency(null);
+          setAuthConfig({ demoPersonaSwitcher: false, bootstrapNeeded: false });
+        }
       }
     })();
     return () => { cancelled = true; };

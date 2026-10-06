@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Gauge, Plus, X } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, fromCents, toCents } from '../money';
+import { formatMoney, toCents } from '../money';
 import { UTILITY_UNITS, formatMeasured } from '../measuredQty';
 
 const EMPTY = { arrangements: [], consumptions: [] };
@@ -101,7 +101,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
                   </td>
                   <td className="py-3 px-4 text-slate-700">{row.supplier_name}</td>
                   <td className="py-3 px-4 text-slate-600">{row.meter_label}</td>
-                  <td className="py-3 px-4 text-right font-semibold">${formatMoney(row.unit_price)} / {row.unit_of_measure}</td>
+                  <td className="py-3 px-4 text-right font-semibold">{formatMoney(row.unit_price)} / {row.unit_of_measure}</td>
                   <td className="py-3 px-4 text-right">
                     <button
                       type="button"
@@ -145,7 +145,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
                   <td className="py-3 px-4">{row.arrangement_name}</td>
                   <td className="py-3 px-4 text-slate-600">{row.period_start} → {row.period_end}</td>
                   <td className="py-3 px-4 text-right font-semibold">{formatMeasured(row.quantity_milli, row.unit_of_measure)}</td>
-                  <td className="py-3 px-4 text-right">${formatMoney(row.amount_cents)}</td>
+                  <td className="py-3 px-4 text-right">{formatMoney(row.amount_cents)}</td>
                   <td className="py-3 px-4">
                     <button type="button" onClick={() => onNavigate?.('purchase_orders', { focusId: row.po_id })} className="font-mono font-semibold text-sky-800 hover:text-sky-950">
                       {row.po_number}
@@ -255,7 +255,7 @@ function OpenModal({ suppliers, currentUser, onClose, onSaved }) {
             ))}
           </select>
         </Field>
-        <Field label="Price per unit ($)">
+        <Field label="Price per unit">
           <input type="number" min="0" step="0.01" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
         <Field label="Notes">
@@ -316,7 +316,7 @@ function RecordModal({ arrangement, currentUser, onClose, onSaved }) {
   return (
     <Modal
       title={`Record ${UTILITY_LABEL[arrangement.utility_type] || 'utility'} usage`}
-      subtitle={`${arrangement.name} · ${arrangement.meter_label} · $${formatMoney(arrangement.unit_price)} / ${arrangement.unit_of_measure}. Opens a payable. No goods receipt.`}
+      subtitle={`${arrangement.name} · ${arrangement.meter_label} · ${formatMoney(arrangement.unit_price)} / ${arrangement.unit_of_measure}. Opens a payable. No goods receipt.`}
       onClose={onClose}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -352,7 +352,7 @@ function RecordModal({ arrangement, currentUser, onClose, onSaved }) {
       </div>
       <p className="text-xs text-slate-600 mt-3">
         Usage {Number.isFinite(usage) ? usage.toFixed(3) : '—'} {arrangement.unit_of_measure}
-        {amount > 0 ? ` · payable about $${formatMoney(amount)}` : ''}. Price shown is ${fromCents(arrangement.unit_price).toFixed(2)} per {arrangement.unit_of_measure}.
+        {amount > 0 ? ` · payable about ${formatMoney(amount)}` : ''}. Price shown is {formatMoney(arrangement.unit_price)} per {arrangement.unit_of_measure}.
       </p>
       {error && <p className="text-xs text-rose-700 mt-3">{error}</p>}
       <ModalActions saving={saving} label="Record usage and open payable" onClose={onClose} onSubmit={submit} />

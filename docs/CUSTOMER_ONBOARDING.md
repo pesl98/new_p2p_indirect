@@ -310,7 +310,7 @@ Three tiers — pick one; do not confuse the org skeleton with seed:
 3. You should land in the app, not the demo persona switcher.
 4. **Administration → Users** (admin role only):
    - Create requesters, approvers, procurement, finance, and extra admins.
-   - Unique email, role, optional department, title, approval limit (dollars in the form; stored as integer cents).
+   - Unique email, role, optional department, title, approval limit (major units in the form, dot decimal; stored as integer cents of the deployment currency, default EUR).
    - Set a password on create, or **Set password** later.
    - Soft-deactivate instead of delete (`DELETE` is 405).
 
@@ -349,7 +349,7 @@ Default skeleton (idempotent; skip codes that already exist; never wipe or renam
 
 | Code | Name | FY 2026 `total_budget` |
 | --- | --- | --- |
-| MKT | Marketing | `10000000` cents ($100,000.00) |
+| MKT | Marketing | `10000000` cents (€ 100.000,00) |
 | ITE | IT | same |
 | FAC | Facilities | same |
 | HRP | HR | same |

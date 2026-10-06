@@ -289,10 +289,10 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                       <div className="font-semibold text-slate-700">Due {inv.due_date}</div>
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900">
-                      <div>${formatMoney(inv.total_amount)}</div>
+                      <div>{formatMoney(inv.total_amount)}</div>
                       {inv.payable_total_cents != null && (
                         <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
-                          Pay ${formatMoney(inv.payable_total_cents)}
+                          Pay {formatMoney(inv.payable_total_cents)}
                         </div>
                       )}
                     </td>
@@ -363,10 +363,10 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
               </p>
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                 <div className="text-slate-500">Billed</div>
-                <div className="font-bold text-slate-900 text-sm">${formatMoney(paying.total_amount)}</div>
+                <div className="font-bold text-slate-900 text-sm">{formatMoney(paying.total_amount)}</div>
                 {paying.payable_total_cents != null && (
                   <div className="text-amber-800 font-semibold mt-1">
-                    Pay ${formatMoney(paying.payable_total_cents)} (short pay)
+                    Pay {formatMoney(paying.payable_total_cents)} (short pay)
                   </div>
                 )}
               </div>
