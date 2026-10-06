@@ -13,6 +13,11 @@ import {
   majoritySupplierId,
   parseAllowContractUse
 } from './contractAssignment.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -224,7 +229,7 @@ describe('PR → contract auto-assignment', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/requisitions`, {
+      const response = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -250,7 +255,7 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(body.contract_use_status, 'proposed');
       assert.ok(Number.isInteger(body.source_contract_id));
 
-      const detail = await fetch(`${base}/api/requisitions/${body.id}`);
+      const detail = await authed(`${base}/api/requisitions/${body.id}`);
       const pr = await detail.json();
       assert.equal(pr.source_contract_id, figma.id);
       assert.equal(pr.contract_use_status, 'proposed');
@@ -272,7 +277,7 @@ describe('PR → contract auto-assignment', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/requisitions`, {
+      const response = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -303,7 +308,7 @@ describe('PR → contract auto-assignment', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const created = await fetch(`${base}/api/requisitions`, {
+      const created = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -328,13 +333,13 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(body.source_contract_id, null);
       assert.equal(body.contract_use_status, 'skipped');
 
-      const draft = await (await fetch(`${base}/api/requisitions/${body.id}`)).json();
+      const draft = await (await authed(`${base}/api/requisitions/${body.id}`)).json();
       assert.equal(draft.source_contract_id, null);
       assert.equal(draft.contract_use_status, 'skipped');
       assert.equal(draft.logs.some((row) => row.action === 'CONTRACT_PROPOSED'), false);
       assert.ok(draft.logs.find((row) => row.action === 'CONTRACT_CLEARED'));
 
-      const submitted = await fetch(`${base}/api/requisitions/${body.id}/submit`, {
+      const submitted = await authed(`${base}/api/requisitions/${body.id}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ today: '2026-09-14' })
@@ -344,7 +349,7 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(submitBody.source_contract_id, null);
       assert.equal(submitBody.contract_use_status, 'skipped');
 
-      const after = await (await fetch(`${base}/api/requisitions/${body.id}`)).json();
+      const after = await (await authed(`${base}/api/requisitions/${body.id}`)).json();
       assert.equal(after.source_contract_id, null);
       assert.equal(after.contract_use_status, 'skipped');
       assert.equal(after.status, 'pending_approval');
@@ -359,7 +364,7 @@ describe('PR → contract auto-assignment', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const created = await fetch(`${base}/api/requisitions`, {
+      const created = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -383,7 +388,7 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(body.source_contract_id, figma.id);
       assert.equal(body.contract_use_status, 'proposed');
 
-      const cleared = await fetch(`${base}/api/requisitions/${body.id}/contract`, {
+      const cleared = await authed(`${base}/api/requisitions/${body.id}/contract`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source_contract_id: null, actor_name: 'Alice Chen' })
@@ -393,7 +398,7 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(clearBody.source_contract_id, null);
       assert.equal(clearBody.contract_use_status, 'skipped');
 
-      const submitted = await fetch(`${base}/api/requisitions/${body.id}/submit`, {
+      const submitted = await authed(`${base}/api/requisitions/${body.id}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ today: '2026-09-14' })
@@ -403,7 +408,7 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(submitBody.source_contract_id, null);
       assert.equal(submitBody.contract_use_status, 'skipped');
 
-      const after = await (await fetch(`${base}/api/requisitions/${body.id}`)).json();
+      const after = await (await authed(`${base}/api/requisitions/${body.id}`)).json();
       assert.equal(after.source_contract_id, null);
       assert.equal(after.contract_use_status, 'skipped');
       assert.equal(after.logs.filter((row) => row.action === 'CONTRACT_PROPOSED').length, 1);
@@ -417,7 +422,7 @@ describe('PR → contract auto-assignment', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const created = await fetch(`${base}/api/requisitions`, {
+      const created = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -439,7 +444,7 @@ describe('PR → contract auto-assignment', () => {
       assert.equal(created.status, 201, body.error || 'expected 201');
       assert.equal(body.contract_use_status, 'none');
 
-      const submitted = await fetch(`${base}/api/requisitions/${body.id}/submit`, {
+      const submitted = await authed(`${base}/api/requisitions/${body.id}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ today: '2026-09-14' })
@@ -600,7 +605,7 @@ describe('PR → contract auto-assignment', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/approvals?approver_id=2`);
+      const response = await fetch(`${base}/api/approvals?approver_id=2`, withCookie(2));
       const list = await response.json();
       assert.equal(response.status, 200);
       const row = list.find((item) => item.pr_number === 'PR-TEST-INBOX');

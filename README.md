@@ -6,11 +6,11 @@ Control model (integer cents, sequential approvals, approval delegation / OOO su
 
 ## Start here
 
-- **[Deploy and operations manual → `docs/DEPLOY_MANUAL.md`](docs/DEPLOY_MANUAL.md)** — how to deploy, run, update, and remove one customer install. This is the document an operator follows.
-- **[System manual → `docs/SYSTEM_MANUAL.md`](docs/SYSTEM_MANUAL.md)** — every shipped capability (honest limits).
-- **[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — pointer to the deploy manual. Preferred command: `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply`. Stepped: `npm run turso:customer` then `npm run vercel:customer`.
+- **[Deploy and operations manual → `docs/DEPLOY_MANUAL.md`](docs/DEPLOY_MANUAL.md)** — one customer, one Vercel project, one Turso database: deploy, SSO, audit, update, and offboard. Commands in that file were checked against `package.json` and the CLIs.
+- **[System manual → `docs/SYSTEM_MANUAL.md`](docs/SYSTEM_MANUAL.md)** — every shipped capability (honest limits) and how to stand up a new customer. Hand this to an operator/owner.
+- **[Onboard a new customer → `docs/CUSTOMER_ONBOARDING.md`](docs/CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply --email … --password …`. Stepped: `npm run turso:customer -- --apply` → Vercel project → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. One database and one Vercel project per customer.
 
-Older technical pointer: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Checklist pointer: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Deprovision: `npm run offboard:customer` (dry-run default; `--apply` also needs `--confirm-slug`). Wrapper: `npm run provision:customer -- --with-org` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session; leftover P2P routes still accept body persona ids (not SSO).
+Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator checklist: [`scripts/provision-customer.md`](scripts/provision-customer.md). Env keys: [`.env.example`](.env.example). Preferred operator entry: `npm run onboard:customer` (dry-run default; `--apply` chains Turso + Vercel env + provision). Turso DB + database token + `SESSION_SECRET` only: `npm run turso:customer` (dry-run default; `--apply` to mutate). Vercel Production+Preview env: `npm run vercel:customer` (dry-run default; `--apply` to mutate). Deprovision: `npm run offboard:customer` (dry-run default; `--apply` also needs `--confirm-slug`). Wrapper: `npm run provision:customer -- --with-org` (never seeds). Optional `npm run seed` for the persona demo only (**destructive**). Isolation is the connection (Turso URL or `PROCUREMENT_DB_PATH`), not a shared-row tenant column. Login is a per-tenant httpOnly session on every business API. Optional OIDC or SAML on that same cookie is configured per customer ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)). See [docs/SPRINT-LOG.md](docs/SPRINT-LOG.md).
 
 ---
 
@@ -28,10 +28,10 @@ Older technical pointer: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Checklist
      - **≤ \$1,000**: Department Head (mapped user, else `role=approver` in the requisition’s department)
      - **> \$1,000 and ≤ \$10,000**: Department Head, then Strategic Sourcing (`role=procurement`)
      - **> \$10,000**: Department Head, then Procurement, then Finance Controller (`role=finance`) or CFO (`role=admin`) if no finance user exists
-   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. Department-head APIs stay demo-open like supplier/catalog master-data. Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
+   - **Org Admin (Elena):** assign or clear the step-1 head per department (`GET/PUT /api/departments…`). The sidebar entry is visible only for the admin persona. Department-head writes require an admin session. Seed maps a head on every cost center so submit no longer fails for IT / Facilities / HR / Finance.
    - **Users (Elena / session admin):** list, create, edit, and **soft-deactivate** employees (`users.status` active/inactive). Unique email, role in the existing CHECK, department, title, approval limit in integer cents, optional password (bcrypt in `user_credentials`). Mutating `/api/users` routes require a logged-in admin (`req.user`); `DELETE` is 405. Sidebar **Users** sits next to Department Approvers.
    - Steps are **sequential**, not parallel: only the current step is `pending`; later steps stay `waiting` until the previous step is approved. Waiting steps do not appear in the approver inbox. Rejecting a step skips remaining `waiting`/`pending` rows.
-   - The decide API requires `approver_id` matching the current pending step **or an active delegate** covering now for that mapped approver. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. **Login is a real httpOnly session** for admin user routes; most other P2P routes still accept body persona ids (phased cut — see ARCHITECTURE).
+   - The decide API uses the signed-in user, who must be the current pending step **or an active delegate** covering now. Stored `approver_id` on `approval_requests` is not rewritten when a delegation is created. A body `approver_id` that names someone else is rejected.
    - **Approval delegation (OOO):** an approver (or Elena as org admin) assigns a temporary substitute (`approval_delegations`: window, reason, soft-revoke). The delegate sees the current pending step in their inbox (badge “Delegated from …”) and may decide it. Waiting steps stay waiting. Cannot delegate to self; expired/inactive windows are ignored. Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED`, plus delegated_from on decide.
    - 1-Click approval/rejection modal with audit trail. Department budget is committed only when the **final** step is approved — not when a PO is issued. Final approve **fails closed** if remaining budget (`total − committed − actual`, cents) is less than the PR total.
    - **Contract use gate:** if a contract is proposed, the current approver (Bob / Priya as delegate) must **Allow contract use** or **Refuse contract use** as part of approve. Refuse does **not** reject the PR — it continues as ad-hoc. Omitting the choice is HTTP 400 (no silent force).
@@ -50,15 +50,40 @@ Older technical pointer: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Checklist
    - Automatically updates PO fulfillment status and calculates unreceived balances.
    - **Over-receipt is blocked (HTTP 400)** unless the request includes explicit `allow_over_receipt: true` (audited exception).
    - Service lines are rejected on a GRN — use a Service Entry Sheet instead.
+   - Consignment draw-down lines are rejected on a GRN — supplier-owned stock is issued from **Consignment Stock**.
+
+**Consignment stock** (supplier-owned inventory at the buyer site)
+
+- Record a consignment receipt (`CSN-YYYY-NNN`) for a supplier, goods catalog item, free-text location, and quantity. On-hand goes up. No purchase order and no GRN — the company does not own the stock yet.
+- The Consignment screen lists that on-hand balance next to company-owned GRN receipts so the two are not mixed.
+- Issue stock into use (`CSI-YYYY-NNN`). On-hand goes down and a consignment PO is created (`order_source = consignment`, `quantity_consumed` set, `quantity_received` left at 0). AP enters the supplier invoice against that PO; match uses the drawn quantity.
+- Seed: **CSN-2026-001** received 12 FacilityCare sanitizer stands at HQ facilities cage. **CSI-2026-001** issued 4 as **PO-2026-015**, matched by **INV-FCJ-4402**. **CSN-2026-002** is 20 cases of WorkSpace copy paper still on hand (issue it from the Consignment screen).
+
+**Metered utilities** (water, electricity, gas billed by consumption)
+
+- Open a supply arrangement (`UTA-YYYY-NNN`) with a meter, unit of measure, and price per unit. That is not a goods purchase order.
+- Record a meter reading or billed quantity (`UCN-YYYY-NNN`). Usage is stored to 3 decimal places (milli-units). A payable PO is created (`settlement_kind = utility`, `quantity_consumed` set, `quantity_received` left at 0). No GRN.
+- AP matches the supplier invoice to that measured quantity.
+- Seed: **UTA-2026-001** HQ electricity, **UCN-2026-001** / **PO-2026-016** / **INV-MGU-0901** (842.500 kWh). **UTA-2026-003** gas (**PO-2026-017**) is waiting for an invoice. **UTA-2026-002** water has no reading yet.
+
+**Vendor-managed bulk** (gases and fluids in a container or silo)
+
+- A vessel (`BVL-YYYY-NNN`) has a type (container or silo), capacity, unit of measure, and current measured level. It is not the free-text consignment location, and quantity is not a whole catalog unit.
+- Fill (`BFL-YYYY-NNN`) increases supplier-owned level. No PO and no GRN.
+- Draw (`BDR-YYYY-NNN`) decreases the level and opens a payable (`settlement_kind = bulk`) the same way a consignment issue does: `quantity_consumed` set, no GRN. AP matches the drawn quantity.
+- Seed: **BVL-2026-001** LN2 silo, draw **BDR-2026-001** / **PO-2026-018** / **INV-NIG-1801** (450.250 kg). **BVL-2026-002** argon tube bank is filled and not yet drawn.
 
 5. **Service Entry Sheets (SES)**
    - Acceptance flow for **service** PO lines (consulting, SaaS, marketing): draft → submitted → accepted/rejected.
-   - Line-by-line accepted quantity; amount is qty × PO unit price in integer cents. Numbered `SES-YYYY-NNN`.
+   - A service line is a **lump sum**, **hours**, or **days** (or a legacy unit quantity such as seats). Amount is qty × rate in integer cents.
+   - Line-by-line accepted quantity; amount is qty × PO unit price in integer cents. Numbered `SES-YYYY-NNN`. Acceptance records who accepted, when, and that the service was delivered. No GRN.
    - Accepting an SES increments `po_items.quantity_accepted` (parallel to GRN `quantity_received`).
    - **Over-acceptance is blocked (HTTP 400)** unless `allow_over_acceptance: true` (audited exception).
 
 6. **Dual Invoice Matching (goods 3-way / services SES-backed)**
    - **Goods lines:** PO vs GRN received vs invoice (unchanged 3-way).
+   - **Consignment draw-down lines:** PO vs quantity consumed vs invoice. Physical GRN is not consulted.
+   - **Utility and bulk lines:** PO vs measured quantity consumed vs invoice. Physical GRN is not consulted.
    - **Service lines:** PO vs SES-accepted vs invoice. Physical GRN is not required.
    - Mixed POs combine both; overall invoice status reflects any failing line.
    - Price rules unchanged (exact cents, 1% tolerated warning, else fail).
@@ -122,11 +147,11 @@ Older technical pointer: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Checklist
    - Seed: **CNT-2026-001** Figma (Marketing / CloudCore, 10 seats × $540.00 = $5,400.00 ACV) is the expiring-soon walkthrough. **PR-2026-010** is a new Figma seat already proposed against that contract so Bob/Priya can allow or refuse. **CNT-2026-002** Slack (IT, active). **CNT-2026-003** FacilityCare janitorial (Facilities, expiring soon). **CNT-2026-004** Apex retainer (Marketing, active, no auto-renew).
 
 14. **Sign-in (per customer DB) + optional demo persona switcher**
-    - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`).
-    - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/DEPLOY_MANUAL.md](docs/DEPLOY_MANUAL.md).
+    - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`). Business APIs reject calls with no session. Optional OIDC (`/api/auth/oidc/start`) or SAML (`/api/auth/saml/start`) mints that same cookie when `IDENTITY_PROVIDER` is set for the customer.
+    - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md).
     - **Elena** (admin) manages users under Administration → Users.
-    - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. Default customer deploy shows the login page.
-    - Local seed demo password (README only, never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
+    - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. It signs in again as the chosen seeded user. Default customer deploy shows the login page.
+    - Local seed demo password (never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.
 
 ---
 
@@ -140,7 +165,7 @@ Older technical pointer: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Checklist
 
 From the repo root (`npm install` plus `npm install --prefix server` and `npm install --prefix client` on a fresh clone):
 
-**Local demo login** (after `npm run seed`): `alice.chen@company.com` / `ProcureFlow!demo` (same password for every seeded persona). To keep the old header switcher for walkthroughs: `export DEMO_PERSONA_SWITCHER=1`.
+**Local demo login** (after `npm run seed`): `alice.chen@company.com` / `ProcureFlow!demo` (same password for every seeded persona). Optional header switcher re-logins with that password: `export DEMO_PERSONA_SWITCHER=1`.
 
 1. **Start the Production Application (Single Port)**:
    ```bash
@@ -160,7 +185,7 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
    npm run db:migrate
    npm run db:status
    ```
-   See **[docs/DEPLOY_MANUAL.md](docs/DEPLOY_MANUAL.md)** to stand up customer A vs customer B on two databases. Preferred: `npm run onboard:customer -- --slug <customer> [--apply]`. Turso DB + exports only: `npm run turso:customer -- --slug <customer> [--apply]`. Vercel env + redeploy only: `npm run vercel:customer -- --slug <customer> [--apply]`. Wrapper (migrate, optional `--with-org` skeleton, optional first admin, no seed): `npm run provision:customer`. Org skeleton only: `npm run bootstrap-org`. [docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) point at the manual.
+   See **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** to stand up customer A vs customer B on two databases. Preferred: `npm run onboard:customer -- --slug <customer> [--apply]`. Turso DB + exports only: `npm run turso:customer -- --slug <customer> [--apply]`. Vercel env + redeploy only: `npm run vercel:customer -- --slug <customer> [--apply]`. Wrapper (migrate, optional `--with-org` skeleton, optional first admin, no seed): `npm run provision:customer`. Org skeleton only: `npm run bootstrap-org`. Technical reference: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 4. **Re-seed the Database with Sample Data** (local SQLite unless Turso env is set). **Destructive** — drops application tables first. Use for the laptop demo, not a live customer:
    ```bash
@@ -202,15 +227,90 @@ From the repo root (`npm install` plus `npm install --prefix server` and `npm in
 
 ## ☁️ Deploy: Vercel + Turso
 
-Follow **[docs/DEPLOY_MANUAL.md](docs/DEPLOY_MANUAL.md)**. Do not treat this section as a second runbook.
+**System manual** (capabilities + this sequence): **[docs/SYSTEM_MANUAL.md](docs/SYSTEM_MANUAL.md)**. **Onboard a new customer:** **[docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md)** — preferred: `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (creates/links the Vercel project when this clone is not already linked to it). Stepped: `npm run turso:customer -- --apply` → `npm run vercel:customer -- --apply` → `provision:customer -- --with-org` → smoke → first login. **Deprovision:** `npm run offboard:customer -- --slug <customer>` (dry-run), then `--apply --confirm-slug <customer>` (strips Production+Preview customer env, then `turso db destroy`; leaves the Vercel project).
 
-Each customer gets their own Turso database and Vercel project. Preferred: `npm run onboard:customer -- --slug <customer> --apply --email … --password …`. Stepped: `npm run turso:customer` then `npm run vercel:customer`. Deprovision: `npm run offboard:customer`. Local default is SQLite at `server/data/procurement.db` (`PROCUREMENT_DB_PATH`). With both `TURSO_*` set, the app uses Turso over HTTP (`POST /v2/pipeline`) and does not load a native libsql addon. On Vercel, Turso is required. There is no cron.
+**Customer A vs customer B:** give each customer their own Turso database **and** Vercel project (or documented clone), then `npm run onboard:customer -- --slug <customer> --apply --email … --password …` (or the stepped `turso:customer` → `vercel:customer` → `provision:customer` path) → `BASE_URL=https://<customer>.vercel.app npm run smoke`. Technical reference, secrets, and rollback: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** and [`scripts/provision-customer.md`](scripts/provision-customer.md). Env template: [`.env.example`](.env.example).
 
-`npm run build` copies `client/dist` to `public/`. Vercel serves `public/` and runs [`api/index.js`](api/index.js) as the Node function (`vercel.json` `functions` keys must live under `api/`). `express.static` is ignored on Vercel.
+Local laptop default is **SQLite** at `server/data/procurement.db` (override with `PROCUREMENT_DB_PATH`). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set, the same code uses Turso over **HTTP** (`POST /v2/pipeline`). No native libsql/`.so` is loaded — that crashes Vercel serverless.
+
+On Vercel (`VERCEL` / `VERCEL_ENV`), Turso is **required**. Missing vars (or a 401 from an org JWT instead of a database token) show a readable configuration page / JSON 503 instead of `FUNCTION_INVOCATION_FAILED`. There is **no cron** — this app is request-driven.
+
+### Entrypoint files
+
+| File | Role |
+| --- | --- |
+| [`api/index.js`](api/index.js) | Vercel Node Function — **default-exports** the Express app. CLI 59.x requires `functions` keys under `api/` (root `app.js` is rejected). |
+| [`server/src/app.js`](server/src/app.js) | Express factory (API + lazy DB init). Does not `listen`. |
+| [`server/src/index.js`](server/src/index.js) | Local listen on `PORT` (default 5000) |
+| [`vercel.json`](vercel.json) | `buildCommand`, `functions.api/index.js.includeFiles` for `server/src/schema.sql`, rewrite `/api/*` → `/api` |
+| [`public/`](public/) | Vite build output (`npm run build` copies `client/dist` here). Vercel CDN serves it; `express.static` is ignored on Vercel. |
+
+### Create a Turso database
+
+Use a **classic libSQL** database (not `--tursodb`) and a **database token** (not an org/platform JWT):
+
+```bash
+curl -sSfL https://get.tur.so/install.sh | bash
+turso auth login
+# Preferred: npm run onboard:customer -- --slug <customer> --apply --email … --password …
+npm run turso:customer -- --slug <customer>            # dry-run
+npm run turso:customer -- --slug <customer> --apply    # create/reuse + print exports
+```
+
+`--apply` runs `turso db create procureflow-<slug>` (never `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, then prints shell-ready `export` lines. Existing DBs are reused. `SESSION_SECRET` is minted unless already set in the shell.
+
+### Vercel environment variables
+
+Export this customer’s `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` in the shell (from `turso:customer --apply`), then:
+
+```bash
+npm run vercel:customer -- --slug <customer>            # dry-run (no Vercel network)
+npm run vercel:customer -- --slug <customer> --apply    # Production + Preview + redeploy
+```
+
+The script **refuses to invent secrets**, never sets `DEMO_PERSONA_SWITCHER`, and does not create a Turso DB. Project name defaults to `procureflow-<slug>` (`--project` to override). `--apply` runs `vercel project add` (reuses the project if it already exists) and `vercel link --yes --project` unless this directory is already linked to that name. A link to a different project fails closed (it does not retarget). `vercel project add` does not connect GitHub; production deploy is from this laptop.
+
+Dashboard fallback: project → Settings → Environment Variables, set **both** Turso vars and `SESSION_SECRET` for **Production and Preview** (or All Environments). Preview URLs stay broken if the vars are Production-only.
+
+| Variable | Value |
+| --- | --- |
+| `TURSO_DATABASE_URL` | URL from `turso db show … --url` (often `libsql://…`) |
+| `TURSO_AUTH_TOKEN` | Token from `turso db tokens create …` |
+| `SESSION_SECRET` | Long random string (signs the httpOnly session cookie). Required for customer deploys. |
+
+`--apply` redeploys after saving and waits until that Production deployment is Ready (`vercel inspect --json`, default 4 minutes via `VERCEL_READY_TIMEOUT_MS`), so `onboard:customer --apply --smoke` can close the happy path on one command. Env changes do not apply to an already-built Preview. GitHub auto-deploy is still a dashboard connection.
+
+### Seed against Turso (from your laptop)
+
+```bash
+export TURSO_DATABASE_URL=libsql://…
+export TURSO_AUTH_TOKEN=…
+npm run seed
+```
+
+Then verify the deploy (laptop against Turso, or the Preview URL):
+
+```bash
+# with the same TURSO_* env:
+npm start
+npm run smoke
+# or: BASE_URL=https://<customer>.vercel.app npm run smoke
+```
+
+Omit the Turso vars to keep using local `server/data/procurement.db`.
+
+### Build / deploy
+
+```bash
+npm run build    # client → client/dist and public/
+# Connect the Git repo in Vercel, or: vercel
+```
+
+Vercel runs `npm run build`, deploys `api/index.js` as one Node Function (`includeFiles` keeps `schema.sql` in the bundle), rewrites `/api/*` to that function, and serves `public/` statically. No Hobby-breaking cron is configured.
 
 ---
 
-Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CO-` / `CNT-` / `PAY-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
+Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
 
 Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 
@@ -230,12 +330,15 @@ Money columns (`unit_price`, `total_amount`, budget fields, invoice totals, matc
 - `purchase_requisitions` & `requisition_items`: Requisitions & line items (`source_contract_id` nullable pointer at `contracts.id`; `contract_use_status` `none` | `skipped` | `proposed` | `allowed` | `refused`)
 - `approval_requests`: Multi-tier approval routing steps (stored `approver_id` is the mapped step owner)
 - `approval_delegations`: Out-of-office substitute approvers (`delegator_user_id` → `delegate_user_id`, optional `starts_at` / `ends_at`, `active` soft-revoke)
-- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `line_type`, `revision`, `change_order_count`)
+- `purchase_orders` & `po_items`: Official Purchase Orders (`quantity_received`, `quantity_accepted`, `quantity_consumed`, `receipt_basis`, `order_source`, `settlement_kind`, `quantity_scale`, `line_type`, `revision`, `change_order_count`)
 - `po_change_orders` & `po_change_order_items`: Formal PO revisions (`CO-YYYY-NNN`, before/after totals in cents)
-- `goods_receipts` & `goods_receipt_items`: Inward receiving records (goods)
+- `goods_receipts` & `goods_receipt_items`: Inward receiving records (company-owned goods)
+- `consignment_balances`, `consignment_receipts`, `consignment_issues`: Supplier-owned whole units (`CSN-` / `CSI-`) at a free-text location. Not a GRN.
+- `utility_arrangements`, `utility_consumptions`: Metered water, electricity, and gas (`UTA-` / `UCN-`). Consumption opens a payable. Not a GRN.
+- `bulk_containers`, `bulk_fills`, `bulk_draws`: Vendor-managed container or silo (`BVL-` / `BFL-` / `BDR-`). Measured level; a draw opens a payable. Not discrete consignment and not a GRN.
 - `service_entry_sheets` & `service_entry_sheet_items`: Service acceptance records (SES)
 - `invoices` & `invoice_items`: Supplier billing entries (`total_amount` = billed claim; nullable `payable_total_cents` set by short-pay; `duplicate_status` `clear` | `suspect` | `confirmed_unique` | `confirmed_duplicate`)
-- `match_results`: Line item match logs & variance records (GRN or SES receipt basis)
+- `match_results`: Line item match logs & variance records (GRN, consignment draw-down, measured utility/bulk consumption, or SES receipt basis)
 - `invoice_exception_dispositions`: Structured AP exception resolutions (accept / short-pay / reject / return-to-buyer)
 - `invoice_duplicate_flags`: Likely-duplicate candidate links + AP dispositions (confirm unique / confirm duplicate)
 - `payment_runs` & `payment_run_items`: AP payment proposals (`PAY-YYYY-NNN`; billed/payable snapshots in integer cents; execute reuses mark-paid)

@@ -23,7 +23,14 @@ export const EXPECTED_TABLES = [
   'approval_requests',
   'audit_logs',
   'budgets',
+  'bulk_containers',
+  'bulk_draws',
+  'bulk_fills',
   'catalog_items',
+  'compliance_audit_events',
+  'consignment_balances',
+  'consignment_issues',
+  'consignment_receipts',
   'contract_items',
   'contracts',
   'departments',
@@ -44,9 +51,16 @@ export const EXPECTED_TABLES = [
   'requisition_items',
   'service_entry_sheet_items',
   'service_entry_sheets',
+  'sso_assertion_uses',
+  'sso_login_events',
+  'sso_requests',
   'suppliers',
+  'tenant_settings',
   'user_credentials',
-  'users'
+  'user_identities',
+  'users',
+  'utility_arrangements',
+  'utility_consumptions'
 ];
 
 export const PARTIAL_TURSO_MSG =

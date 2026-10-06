@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, fromCents, toCents } from '../money';
-import { isServiceLine, lineTypeLabel } from '../lineType';
+import { isServiceLine, lineTypeLabel, receiptBasisLabel } from '../lineType';
+import { formatStoredQuantity, isScaledQuantity, measuredLineTotalCents } from '../measuredQty';
 
 export default function InvoicesMatchingView({ currentUser, onDataChanged, onNavigate, focusId }) {
   const [invoices, setInvoices] = useState([]);
@@ -93,7 +94,14 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
         po_unit_price: item.unit_price,
         po_quantity_received: item.quantity_received,
         po_quantity_accepted: item.quantity_accepted || 0,
-        quantity_invoiced: item.quantity, // default to ordered
+        po_quantity_consumed: item.quantity_consumed || 0,
+        receipt_basis: item.receipt_basis || 'grn',
+        quantity_scale: item.quantity_scale || 1,
+        unit_of_measure: item.unit_of_measure || '',
+        settlement_kind: item.settlement_kind || 'purchase',
+        quantity_invoiced: Number(item.quantity_scale) === 1000
+          ? (Number(item.quantity) / 1000).toFixed(3)
+          : item.quantity,
         unit_price: fromCents(item.unit_price) // billed price input is dollars
       }));
       setInvoiceLines(lines);
@@ -104,15 +112,21 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
 
   const handleLineChange = (index, field, value) => {
     const updated = [...invoiceLines];
-    updated[index][field] = Number(value);
+    if (field === 'quantity_invoiced' && isScaledQuantity(updated[index])) {
+      updated[index][field] = value;
+    } else {
+      updated[index][field] = Number(value);
+    }
     setInvoiceLines(updated);
   };
 
+  const linePreviewCents = (item) => {
+    if (isScaledQuantity(item)) return measuredLineTotalCents(item.quantity_invoiced, toCents(item.unit_price));
+    return Math.trunc(Number(item.quantity_invoiced) || 0) * toCents(item.unit_price);
+  };
+
   const calculateSubtotalCents = () => {
-    return invoiceLines.reduce(
-      (sum, item) => sum + Math.trunc(Number(item.quantity_invoiced) || 0) * toCents(item.unit_price),
-      0
-    );
+    return invoiceLines.reduce((sum, item) => sum + linePreviewCents(item), 0);
   };
 
   const handleSubmitInvoice = async () => {
@@ -133,7 +147,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
         items: invoiceLines.map((line) => ({
           po_item_id: line.po_item_id,
           description: line.description,
-          quantity_invoiced: Math.trunc(Number(line.quantity_invoiced) || 0),
+          quantity_invoiced: isScaledQuantity(line)
+            ? line.quantity_invoiced
+            : Math.trunc(Number(line.quantity_invoiced) || 0),
           unit_price: toCents(line.unit_price)
         }))
       });
@@ -437,15 +453,22 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                               </td>
                               <td className="py-2.5 px-3 text-center text-slate-500">${formatMoney(line.po_unit_price)}</td>
                               <td className="py-2.5 px-3 text-center font-semibold text-slate-800">
-                                {isServiceLine(line) ? `${line.po_quantity_accepted} SES` : `${line.po_quantity_received} GRN`}
+                                {isServiceLine(line)
+                                  ? `${line.po_quantity_accepted} SES`
+                                  : isScaledQuantity(line)
+                                    ? `${formatStoredQuantity(line.po_quantity_consumed, line)} consumed`
+                                    : line.receipt_basis === 'consignment'
+                                      ? `${line.po_quantity_consumed} drawn`
+                                      : `${line.po_quantity_received} GRN`}
                               </td>
                               <td className="py-2.5 px-3 text-center">
                                 <input
                                   type="number"
                                   min="0"
+                                  step={isScaledQuantity(line) ? '0.001' : '1'}
                                   value={line.quantity_invoiced}
                                   onChange={(e) => handleLineChange(idx, 'quantity_invoiced', e.target.value)}
-                                  className="w-20 text-center p-1.5 border border-slate-300 rounded font-semibold"
+                                  className="w-24 text-center p-1.5 border border-slate-300 rounded font-semibold"
                                 />
                               </td>
                               <td className="py-2.5 px-3 text-center">
@@ -458,7 +481,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                                 />
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                                ${formatMoney(Math.trunc(Number(line.quantity_invoiced) || 0) * toCents(line.unit_price))}
+                                ${formatMoney(linePreviewCents(line))}
                               </td>
                             </tr>
                           ))}
@@ -466,7 +489,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       </table>
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1.5">
-                      💡 Tip: Edit billed price or quantity to see match exceptions. Service lines need an accepted SES; goods lines need a GRN.
+                      Tip: Edit billed price or quantity to see match exceptions. Service lines need an accepted SES; owned goods need a GRN; consignment lines match the drawn quantity; utility and bulk lines match the measured consumption.
                     </p>
                   </div>
                 </>
@@ -523,7 +546,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
               <div>
                 <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2 flex items-center space-x-2">
                   <span>Line Reconciliation Matrix</span>
-                  <span className="text-slate-400 font-normal">(Goods: PO vs GRN vs invoice · Services: PO vs SES vs invoice)</span>
+                  <span className="text-slate-400 font-normal">(Goods: PO vs GRN vs invoice · Consignment: PO vs draw-down vs invoice · Utility/bulk: PO vs measured consumption vs invoice · Services: PO vs SES vs invoice)</span>
                 </h4>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
@@ -554,10 +577,12 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                                 {lineTypeLabel(res.line_type || 'goods')}
                               </span>
                             </td>
-                            <td className="py-2.5 px-3 text-center bg-blue-50/30 font-semibold">{res.ordered_qty}</td>
+                            <td className="py-2.5 px-3 text-center bg-blue-50/30 font-semibold">{formatStoredQuantity(res.ordered_qty, res)}</td>
                             <td className="py-2.5 px-3 text-center bg-blue-50/30 text-slate-700">${formatMoney(res.po_unit_price)}</td>
-                            <td className="py-2.5 px-3 text-center bg-amber-50/30 font-bold text-amber-900">{res.received_qty}</td>
-                            <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">{res.invoiced_qty}</td>
+                            <td className="py-2.5 px-3 text-center bg-amber-50/30 font-bold text-amber-900">
+                              {formatStoredQuantity(res.received_qty, res)} {receiptBasisLabel(res)}
+                            </td>
+                            <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">{formatStoredQuantity(res.invoiced_qty, res)}</td>
                             <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">${formatMoney(res.invoice_unit_price)}</td>
                             <td className="py-2.5 px-3 text-center">
                               {isFail ? (

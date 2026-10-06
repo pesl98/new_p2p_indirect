@@ -1,14 +1,24 @@
 import { toQty } from './money.js';
-import { isServiceLine } from './lineType.js';
+import { isConsignmentLine, isMeasuredSettlement, isServiceLine } from './lineType.js';
 
-/** Goods: GRN quantity_received. Services: SES quantity_accepted. */
+/**
+ * Goods: GRN quantity_received.
+ * Services: SES quantity_accepted.
+ * Consignment draw-down: quantity_consumed (no GRN).
+ * Utility and bulk: quantity_consumed in milli-units (no GRN).
+ */
 export function lineFulfilledQty(item) {
-  return isServiceLine(item) ? toQty(item.quantity_accepted) : toQty(item.quantity_received);
+  if (isServiceLine(item)) return toQty(item.quantity_accepted);
+  if (isMeasuredSettlement(item)) return toQty(item.quantity_consumed);
+  if (isConsignmentLine(item)) return toQty(item.quantity_consumed);
+  return toQty(item.quantity_received);
 }
 
 /**
  * Recompute PO status from line fulfillment.
  * Goods lines use GRN qty; service lines use accepted SES qty.
+ * Consignment lines use quantity_consumed.
+ * Utility and bulk lines use quantity_consumed (milli-units).
  * Closed / cancelled POs are left unchanged.
  */
 export async function refreshPoFulfillmentStatus(db, poId) {

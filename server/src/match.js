@@ -1,5 +1,6 @@
 import { asCents, formatCents, toQty } from './money.js';
-import { isServiceLine } from './lineType.js';
+import { isConsignmentLine, isMeasuredSettlement, isServiceLine, quantityPhrase } from './lineType.js';
+import { formatMeasured } from './measuredQty.js';
 
 /**
  * Price tolerance for 3-way match: 1% of the PO unit price in cents,
@@ -18,7 +19,9 @@ export function priceToleranceCents(poUnitPriceCents) {
  *
  * Goods lines: 3-way (PO vs GRN `quantity_received` vs invoice).
  * Service lines: SES-backed 2-way (PO vs accepted SES `quantity_accepted` vs invoice).
- * Physical GRN is not required for service lines.
+ * Consignment lines: PO vs draw-down `quantity_consumed` vs invoice. GRN is not consulted.
+ * Utility and bulk lines: PO vs measured `quantity_consumed` (milli-units) vs invoice. GRN is not consulted.
+ * Physical GRN is not required for service lines, consignment draw-downs, or measured consumption.
  *
  * Quantity: fail if prior `po_items.quantity_invoiced` + this claim exceeds
  * the line's receipt basis (GRN or SES) or ordered qty. This function must be
@@ -38,11 +41,28 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     if (!poItem) continue;
 
     const serviceLine = isServiceLine(poItem);
+    const measuredLine = !serviceLine && isMeasuredSettlement(poItem);
+    const consignmentLine = !serviceLine && !measuredLine && isConsignmentLine(poItem);
     const claimedQty = toQty(item.quantity_invoiced);
     const invoicedPrice = asCents(item.unit_price);
     const poPrice = asCents(poItem.unit_price);
-    const receiptQty = serviceLine ? toQty(poItem.quantity_accepted) : toQty(poItem.quantity_received);
-    const receiptLabel = serviceLine ? 'accepted on SES' : 'physically received on GRN';
+    const receiptQty = serviceLine
+      ? toQty(poItem.quantity_accepted)
+      : (measuredLine || consignmentLine)
+        ? toQty(poItem.quantity_consumed)
+        : toQty(poItem.quantity_received);
+    const receiptLabel = serviceLine
+      ? 'accepted on SES'
+      : measuredLine
+        ? (poItem.settlement_kind === 'utility'
+          ? 'measured on the utility reading'
+          : 'drawn from the vendor-managed vessel')
+        : consignmentLine
+          ? 'drawn from consignment'
+          : 'physically received on GRN';
+    const qtyText = (qty) => (
+      measuredLine ? formatMeasured(qty, poItem.unit_of_measure) : String(qty)
+    );
     const poOrderedQty = toQty(poItem.quantity);
     const priorInvoicedQty = toQty(poItem.quantity_invoiced);
     const cumulativeInvoicedQty = priorInvoicedQty + claimedQty;
@@ -58,18 +78,27 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
       status = 'fail';
       hasQuantityVariance = true;
       messages.push(
-        `Quantity variance: Cumulative invoiced ${cumulativeInvoicedQty} (prior ${priorInvoicedQty} + this claim ${claimedQty}) exceeds ${receiptQty} ${receiptLabel}.`
+        `Quantity variance: Cumulative invoiced ${qtyText(cumulativeInvoicedQty)} (prior ${qtyText(priorInvoicedQty)} + this claim ${qtyText(claimedQty)}) exceeds ${qtyText(receiptQty)} ${receiptLabel}.`
       );
     }
     if (cumulativeInvoicedQty > poOrderedQty) {
       status = 'fail';
       hasQuantityVariance = true;
       messages.push(
-        `Quantity variance: Cumulative invoiced ${cumulativeInvoicedQty} exceeds ordered quantity ${poOrderedQty}.`
+        `Quantity variance: Cumulative invoiced ${qtyText(cumulativeInvoicedQty)} exceeds ordered quantity ${qtyText(poOrderedQty)}.`
       );
     }
     if (status !== 'fail' && claimedQty < poOrderedQty && cumulativeInvoicedQty < poOrderedQty) {
-      messages.push(`Partial billing: ${cumulativeInvoicedQty} of ${poOrderedQty} units billed.`);
+      if (measuredLine) {
+        messages.push(
+          `Partial billing: ${qtyText(cumulativeInvoicedQty)} of ${qtyText(poOrderedQty)} billed.`
+        );
+      } else {
+        const noun = poItem.service_basis
+          ? quantityPhrase(poItem.service_basis, poOrderedQty).replace(/^\d+\s/, '')
+          : 'units';
+        messages.push(`Partial billing: ${cumulativeInvoicedQty} of ${poOrderedQty} ${noun} billed.`);
+      }
     }
 
     if (absPriceDiff === 0) {
@@ -96,10 +125,17 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     }
 
     if (messages.length === 0) {
+      const claimed = measuredLine
+        ? formatMeasured(claimedQty, poItem.unit_of_measure)
+        : quantityPhrase(serviceLine ? poItem.service_basis : null, claimedQty);
       messages.push(
         serviceLine
-          ? `Exact SES-backed match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
-          : `Exact match: ${claimedQty} units at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
+          ? `Exact SES-backed match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
+          : measuredLine
+            ? `Exact measured match: ${claimed} at $${formatCents(invoicedPrice)} matches the ${poItem.settlement_kind === 'utility' ? 'utility consumption' : 'bulk draw-down'}. No GRN was posted.`
+            : consignmentLine
+              ? `Exact consignment match: ${claimed} at $${formatCents(invoicedPrice)} matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.`
+              : `Exact match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
       );
     }
 

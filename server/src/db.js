@@ -123,6 +123,19 @@ async function migrateLineTypesAndServiceEntrySheets(database) {
   }
 }
 
+/** Existing DBs: nullable service_basis on catalog, PR, PO, and contract lines. NULL preserves current unit qty. */
+async function migrateServiceBasis(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  for (const table of ['catalog_items', 'requisition_items', 'po_items', 'contract_items']) {
+    if (tables.includes(table) && !(await tableHasColumn(database, table, 'service_basis'))) {
+      await maybe(database.exec(`ALTER TABLE ${table} ADD COLUMN service_basis TEXT`));
+    }
+  }
+}
+
 /** Existing DBs created before catalog master-data maintenance need status. */
 async function migrateCatalogItemStatus(database) {
   const tables = (await maybe(
@@ -386,6 +399,7 @@ export const CONTRACT_ITEMS_TABLE_SQL = `
     unit_price INTEGER NOT NULL,
     total_price INTEGER NOT NULL,
     line_type TEXT NOT NULL DEFAULT 'service' CHECK (line_type IN ('goods', 'service')),
+    service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
     FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
     FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
   )
@@ -553,6 +567,73 @@ async function migratePurchaseRequisitionContractLink(database) {
   }
 }
 
+const PURCHASE_ORDERS_ORDER_SOURCE_COLUMN_SQL =
+  `ALTER TABLE purchase_orders ADD COLUMN order_source TEXT NOT NULL DEFAULT 'standard'`;
+
+const PO_ITEMS_RECEIPT_BASIS_COLUMN_SQL =
+  `ALTER TABLE po_items ADD COLUMN receipt_basis TEXT NOT NULL DEFAULT 'grn'`;
+
+const PO_ITEMS_QUANTITY_CONSUMED_COLUMN_SQL =
+  `ALTER TABLE po_items ADD COLUMN quantity_consumed INTEGER NOT NULL DEFAULT 0`;
+
+/**
+ * Existing databases gain consignment balances plus PO columns that mark a
+ * draw-down. schema.sql CREATE TABLE IF NOT EXISTS covers the new tables.
+ * CHECK on order_source / receipt_basis is enforced for new databases;
+ * added columns on older tables use the DEFAULT and application checks.
+ */
+async function migrateConsignmentStock(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('purchase_orders') && !(await tableHasColumn(database, 'purchase_orders', 'order_source'))) {
+    await maybe(database.exec(PURCHASE_ORDERS_ORDER_SOURCE_COLUMN_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'receipt_basis'))) {
+    await maybe(database.exec(PO_ITEMS_RECEIPT_BASIS_COLUMN_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'quantity_consumed'))) {
+    await maybe(database.exec(PO_ITEMS_QUANTITY_CONSUMED_COLUMN_SQL));
+  }
+}
+
+const PURCHASE_ORDERS_SETTLEMENT_KIND_SQL =
+  `ALTER TABLE purchase_orders ADD COLUMN settlement_kind TEXT NOT NULL DEFAULT 'purchase' CHECK (settlement_kind IN ('purchase', 'utility', 'bulk'))`;
+
+const PO_ITEMS_SETTLEMENT_KIND_SQL =
+  `ALTER TABLE po_items ADD COLUMN settlement_kind TEXT NOT NULL DEFAULT 'purchase' CHECK (settlement_kind IN ('purchase', 'utility', 'bulk'))`;
+
+const PO_ITEMS_QUANTITY_SCALE_SQL =
+  `ALTER TABLE po_items ADD COLUMN quantity_scale INTEGER NOT NULL DEFAULT 1 CHECK (quantity_scale IN (1, 1000))`;
+
+const PO_ITEMS_UNIT_OF_MEASURE_SQL =
+  `ALTER TABLE po_items ADD COLUMN unit_of_measure TEXT`;
+
+/**
+ * Existing databases gain utility/bulk tables from schema.sql and measured
+ * payable columns here. Discrete consignment columns are left unchanged.
+ * settlement_kind CHECK is on the new column (SQLite allows that on ADD COLUMN).
+ */
+async function migrateMeasuredSettlement(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+
+  if (tables.includes('purchase_orders') && !(await tableHasColumn(database, 'purchase_orders', 'settlement_kind'))) {
+    await maybe(database.exec(PURCHASE_ORDERS_SETTLEMENT_KIND_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'quantity_scale'))) {
+    await maybe(database.exec(PO_ITEMS_QUANTITY_SCALE_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'unit_of_measure'))) {
+    await maybe(database.exec(PO_ITEMS_UNIT_OF_MEASURE_SQL));
+  }
+  if (tables.includes('po_items') && !(await tableHasColumn(database, 'po_items', 'settlement_kind'))) {
+    await maybe(database.exec(PO_ITEMS_SETTLEMENT_KIND_SQL));
+  }
+}
+
 async function migratePurchaseOrderChangeOrders(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -575,6 +656,7 @@ export async function applySchema(database) {
   await migrateApprovalRequestsWaitingStatus(database);
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);
+  await migrateServiceBasis(database);
   await migrateCatalogItemStatus(database);
   await migrateInvoiceShortPay(database);
   await migrateDepartmentApprover(database);
@@ -585,6 +667,8 @@ export async function applySchema(database) {
   await migratePurchaseRequisitionContractLink(database);
   await migratePaymentRuns(database);
   await migrateUsersAuth(database);
+  await migrateConsignmentStock(database);
+  await migrateMeasuredSettlement(database);
   return database;
 }
 

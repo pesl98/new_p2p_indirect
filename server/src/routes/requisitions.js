@@ -2,7 +2,7 @@ import express from 'express';
 import { insertApprovalChain } from '../approvalPolicy.js';
 import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
-import { normalizeLineType } from '../lineType.js';
+import { normalizeLineType, resolveServiceBasis } from '../lineType.js';
 import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
 import { assertActiveCatalogItem, assertActiveSupplierForBuyer } from '../masterData.js';
 import {
@@ -12,6 +12,12 @@ import {
   SOURCE_CONTRACT_SELECT_SQL,
   updateDraftContractLink
 } from '../contractAssignment.js';
+import {
+  assertSelfOrAdmin,
+  resolveActorDepartment,
+  sessionActor,
+  withSessionActor
+} from '../requestActor.js';
 
 const router = express.Router();
 
@@ -143,9 +149,13 @@ function httpErrorStatus(error) {
 router.post('/', async (req, res) => {
   try {
     const db = req.db;
+    const actor = sessionActor(req);
+    const body = withSessionActor(req, req.body, {
+      ids: ['requester_id'],
+      names: ['actor_name']
+    });
     const {
       requester_id,
-      department_id,
       justification,
       needed_by_date,
       priority,
@@ -155,7 +165,8 @@ router.post('/', async (req, res) => {
       skip_contract_match,
       actor_name,
       today
-    } = req.body;
+    } = body;
+    const department_id = resolveActorDepartment(actor, body.department_id);
 
     if (!items || items.length === 0) {
       return res.status(400).json({ error: 'Requisition must have at least one line item.' });
@@ -187,8 +198,8 @@ router.post('/', async (req, res) => {
       `);
       const prResult = await insertPR.run(
         prNumber,
-        requester_id || 1,
-        department_id || 1,
+        requester_id,
+        department_id,
         status,
         calculatedTotal,
         justification || 'General operational procurement requirement',
@@ -213,14 +224,15 @@ router.post('/', async (req, res) => {
 
       // Insert line items
       const insertItem = db.prepare(`
-        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type, service_basis)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const item of items) {
         const qty = toQty(item.quantity);
         const unitPrice = asCents(item.unit_price);
         const category = item.category || 'Office Supplies';
+        const lineType = normalizeLineType(item.line_type, category);
         await insertItem.run(
           prId,
           item.catalog_item_id || null,
@@ -230,29 +242,30 @@ router.post('/', async (req, res) => {
           unitPrice,
           lineTotalCents(qty, unitPrice),
           item.estimated_supplier_id || 1,
-          normalizeLineType(item.line_type, category)
+          lineType,
+          resolveServiceBasis(item.service_basis, lineType)
         );
       }
 
       // Log creation
       await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-        VALUES ('requisition', ?, 'CREATED', 'System', ?)
-      `).run(prId, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
+        VALUES ('requisition', ?, 'CREATED', ?, ?)
+      `).run(prId, actor_name, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
 
       const assignment = await assignContractToRequisition(db, prId, {
         source_contract_id,
         skip_contract_match,
-        actor_name: actor_name || 'System',
+        actor_name,
         today
       });
 
       if (submitImmediately) {
-        await insertApprovalChain(db, prId, calculatedTotal, department_id || 1);
+        await insertApprovalChain(db, prId, calculatedTotal, department_id);
         await db.prepare(`
           INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-          VALUES ('requisition', ?, 'SUBMITTED', 'System', 'Submitted for multi-tier approval routing')
-        `).run(prId);
+          VALUES ('requisition', ?, 'SUBMITTED', ?, 'Submitted for multi-tier approval routing')
+        `).run(prId, actor_name);
       }
 
       return { prId, assignment };
@@ -278,16 +291,18 @@ router.post('/:id/submit', async (req, res) => {
     const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(id);
     if (!pr) return res.status(404).json({ error: 'Requisition not found' });
     if (pr.status !== 'draft') return res.status(400).json({ error: 'Only draft requisitions can be submitted' });
+    assertSelfOrAdmin(sessionActor(req), pr.requester_id, 'Only the requisition requester can submit this draft.');
 
-    const { source_contract_id, skip_contract_match, actor_name, today } = req.body || {};
+    const body = withSessionActor(req, req.body || {}, { names: ['actor_name'] });
+    const { source_contract_id, skip_contract_match, actor_name, today } = body;
 
     const assignment = await db.transaction(async () => {
       await db.prepare(`UPDATE purchase_requisitions SET status = 'pending_approval', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
       await insertApprovalChain(db, id, pr.total_amount, pr.department_id);
       await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-        VALUES ('requisition', ?, 'SUBMITTED', 'Requester', 'Submitted for approval routing')
-      `).run(id);
+        VALUES ('requisition', ?, 'SUBMITTED', ?, 'Submitted for approval routing')
+      `).run(id, actor_name);
 
       const alreadyLinked = pr.source_contract_id && pr.contract_use_status
         && pr.contract_use_status !== 'none'
@@ -308,7 +323,7 @@ router.post('/:id/submit', async (req, res) => {
       return assignContractToRequisition(db, id, {
         source_contract_id,
         skip_contract_match,
-        actor_name: actor_name || 'Requester',
+        actor_name,
         today
       });
     });
@@ -326,7 +341,11 @@ router.post('/:id/submit', async (req, res) => {
 // Draft override: set, replace, or clear the proposed contract before submit.
 router.patch('/:id/contract', async (req, res) => {
   try {
-    const { source_contract_id, actor_name, today } = req.body || {};
+    const existing = await req.db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Requisition not found' });
+    assertSelfOrAdmin(sessionActor(req), existing.requester_id, 'Only the requisition requester can change this draft.');
+    const body = withSessionActor(req, req.body || {}, { names: ['actor_name'] });
+    const { source_contract_id, actor_name, today } = body;
     const result = await updateDraftContractLink(req.db, req.params.id, {
       source_contract_id,
       actor_name,

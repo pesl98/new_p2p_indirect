@@ -4,7 +4,7 @@ This is the operator manual for one customer install. Follow it to deploy, run, 
 
 Worked example: customer slug **acme**, first admin **Ada Admin** `<admin@acme.test>`. Replace those with the real slug and email. Run every `npm run` command from the **repository root** (the directory that contains the top-level `package.json`).
 
-What the product can do is **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. This file is how you install it. Older pages [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [DEPLOYMENT.md](DEPLOYMENT.md), and [`scripts/provision-customer.md`](../scripts/provision-customer.md) point here so they do not drift into a second procedure.
+What the product can do is **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. The long environment tables are there and in **[DEPLOYMENT.md](DEPLOYMENT.md)** (SSO in [§2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer), capabilities and report definitions in [SYSTEM_MANUAL.md §3](SYSTEM_MANUAL.md#sso-oidc-or-saml) and [§5.13](SYSTEM_MANUAL.md#513-audit-and-compliance-reports)). This file is the operator procedure: deploy, run, update, and remove one customer. [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and [`scripts/provision-customer.md`](../scripts/provision-customer.md) are the same install, in shorter form, and they point here.
 
 ---
 
@@ -27,7 +27,7 @@ The git repository is the same for every customer. Isolation is the connection: 
 | Schema | [`server/src/schema.sql`](../server/src/schema.sql), plus additive migrations in [`server/src/db.js`](../server/src/db.js) (`applySchema`). `vercel.json` bundles `schema.sql` with the function (`includeFiles`). |
 | Customer data | One classic libSQL database on Turso, reached over HTTPS `POST /v2/pipeline`. The app does not load a native libsql addon (that crashes Vercel serverless). |
 | Laptop data | SQLite via `better-sqlite3` when both Turso variables are omitted. Default file: `server/data/procurement.db`. |
-| Session | httpOnly cookie `pf_session`, HMAC-SHA256 signed with `SESSION_SECRET`. Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Path=/`, and `Secure` when `VERCEL` is set or `NODE_ENV=production`. |
+| Session | httpOnly cookie `pf_session`, HMAC-SHA256 signed with `SESSION_SECRET` (not a JWT library). Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Path=/`, and `Secure` when `VERCEL` is set or `NODE_ENV=production`. Password login and a successful OIDC or SAML callback both set this cookie. |
 | Scheduled jobs | None. The app is request-driven. There is no cron. |
 
 Three ways the process picks a database:
@@ -40,7 +40,11 @@ Three ways the process picks a database:
 
 `npm run db:migrate`, `db:status`, `bootstrap-org`, and `bootstrap-admin` refuse a half-set pair (URL without token, or token without URL). They will not silently create a SQLite file in that case.
 
-Auth is email and a bcrypt password stored in that customer’s database. There is no SSO, SAML, or OIDC. The header persona switcher is off unless `DEMO_PERSONA_SWITCHER=1`. Many older purchase-order routes still accept a user id in the JSON body. That is not an authorization boundary. Admin user create/edit uses the session.
+Sign-in is the `pf_session` cookie for this database. Password login stores a bcrypt hash in `user_credentials`. Optional OIDC or SAML (section 8.6) resolves the IdP user to a local `users.id` and sets the same cookie. Every business API requires that session. A body or query id that names someone else (`requester_id`, `approver_id`, `received_by`, `actor_name`, and the same kind of field) is rejected. Admin user create/edit requires `role=admin`.
+
+`SESSION_SECRET` is the HMAC key. Customer and Vercel deploys must set it. If it is unset, local development uses the built-in insecure default `procureflow-dev-insecure-session-secret`. On Vercel, or when `NODE_ENV=production`, the process logs a warning and still starts with that default — do not ship a customer that way.
+
+The header persona switcher is off unless `DEMO_PERSONA_SWITCHER` is `1`, `true`, or `yes`. When it is on, choosing a person signs in again with the demo password `ProcureFlow!demo`. It does not skip the session. `npm run seed` is a destructive demo wipe of whatever database this shell points at. It is not how you create the first admin (section 6.3).
 
 ---
 
@@ -140,6 +144,23 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `VERCEL_CLI` | Path or name of the Vercel binary. Default `vercel`. | Optional. | No. | No. | |
 | `PROCUREFLOW_LIBSQL_HTTP` | Read into an internal `preferHttp` flag. The database open path still uses HTTP whenever Turso is selected. It does not load a native addon. | Leave unset. | Do not set it on Vercel. | No. | |
 
+### 3.1 SSO and login flags the CLIs do not write
+
+`onboard:customer` and `vercel:customer` write only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER` or any `IDENTITY_PROVIDER` / `OIDC_*` / `SAML_*` / `SSO_*` / `APP_BASE_URL` / `LOCAL_LOGIN` key. Set those yourself on **that** customer’s project (Production and Preview), then redeploy. Column-by-column notes are already in [DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer) and [SYSTEM_MANUAL.md §3](SYSTEM_MANUAL.md#sso-oidc-or-saml). This checklist is the operator decision, not a second copy of those tables.
+
+| Decision | What to set |
+| --- | --- |
+| Live customer, password login only | Leave `IDENTITY_PROVIDER` unset or set `local`. Leave `DEMO_PERSONA_SWITCHER`, `OIDC_ALLOW_INSECURE`, and `SAML_ALLOW_INSECURE` unset. |
+| Password form | `LOCAL_LOGIN` unset or `1` (default **on**). `0`, `false`, or `no` disables `POST /api/auth/login` with **403** `local_login_disabled`. It does not open an unsigned path. |
+| Turn SSO on | `IDENTITY_PROVIDER=oidc` or `saml`, plus `APP_BASE_URL` (this customer’s origin, no path, for example `https://procureflow-acme.vercel.app`). Any other provider value fails closed. |
+| OIDC required | `OIDC_ISSUER` (HTTPS), `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`. |
+| OIDC optional | `OIDC_REDIRECT_URI` (default `{APP_BASE_URL}/api/auth/oidc/callback`). `OIDC_SCOPES` (default `openid email profile`; must include `openid`). Register the redirect URL on the IdP. |
+| SAML required | `SAML_ENTRY_POINT` (HTTPS), `SAML_IDP_CERT`, `SAML_IDP_ISSUER`, `SAML_SP_ENTITY_ID`. |
+| SAML optional | `SAML_ACS_URL` (default `{APP_BASE_URL}/api/auth/saml/acs`). `SAML_AUDIENCE` (default the SP entity id). `SAML_WANT_ASSERTIONS_SIGNED` (default true). `SAML_WANT_RESPONSE_SIGNED` (default false). Setting **both** false is rejected. Give the IdP `GET /api/auth/saml/metadata`. The IdP **posts** the assertion to the ACS URL. |
+| Unknown IdP users | Off by default. `SSO_PROVISIONING` unset or `0`. Optional `SSO_DEFAULT_ROLE` is one of `requester`, `approver`, `procurement`, `finance`, `admin`. The role never comes from an IdP claim. The first admin is still bootstrap (section 6.3), because a just-in-time user is not an admin unless you set that role yourself. |
+
+IdP client secrets and certificates live only in that customer’s environment. The database row `tenant_settings` stores the provisioning switch and the default role, not those secrets. Missing or invalid SSO settings leave `ssoReady` false. OIDC and SAML start/callback set no cookie. A client that sends `Accept: application/json` gets **503** `sso_not_configured`. A browser request, when `APP_BASE_URL` is set, is redirected to `/?sso_error=sso_not_configured`. How to turn provisioning on after go-live is section 8.6.
+
 Template with the same names and no secret values: [`.env.example`](../.env.example).
 
 Changing any of the three customer variables on Vercel does nothing to a deployment that is already built. You must redeploy. `vercel:customer --apply` does that and waits until the new Production deployment is Ready.
@@ -209,7 +230,7 @@ npm run db:migrate -- --turso
 npm run db:status
 ```
 
-`db:migrate` runs `schema.sql` and the additive migrations (`CREATE TABLE IF NOT EXISTS`, `ALTER`, and a few table rebuilds, including `users.status` and `user_credentials`). It does not load cost centers or demo people unless you pass `--seed`.
+`db:migrate` runs `schema.sql` and the additive migrations (`CREATE TABLE IF NOT EXISTS`, `ALTER`, and a few table rebuilds, including `users.status` and `user_credentials`). The same run creates `compliance_audit_events` and the append-only triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger (`CREATE TRIGGER IF NOT EXISTS`). An existing customer database gets them on the next `npm run db:migrate` or the next process start. There is no separate SQL file to apply by hand. Those four tables reject `UPDATE` and `DELETE` (section 9). It does not load cost centers or demo people unless you pass `--seed`.
 
 `db:status` prints the mode (`turso-http` or `sqlite`), how many expected tables exist, and the user count. It does not apply schema and it never prints `TURSO_AUTH_TOKEN`. A new customer should show **0 users**.
 
@@ -314,11 +335,11 @@ printf '%s' "$SESSION_SECRET"     | vercel env add SESSION_SECRET production --y
 printf '%s' "$SESSION_SECRET"     | vercel env add SESSION_SECRET preview --yes --force
 ```
 
-The secret goes on stdin. It is not placed in the argument list. `--force` updates a key that is already there. The command does not set `DEMO_PERSONA_SWITCHER` and does not touch other keys.
+The secret goes on stdin. It is not placed in the argument list. `--force` updates a key that is already there. The command does not set `DEMO_PERSONA_SWITCHER`, `IDENTITY_PROVIDER`, `APP_BASE_URL`, `LOCAL_LOGIN`, or any `OIDC_*`, `SAML_*`, or `SSO_*` key, and it does not delete keys it does not write. SSO for this customer is section 3.1 and section 8.6.
 
 ### 5.3 Environment variables from the dashboard
 
-Project → Settings → Environment Variables. Set `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` for **Production and Preview** (or All Environments). Leave `DEMO_PERSONA_SWITCHER` unset. Then Redeploy. Preview URLs stay broken if the variables exist only on Production. Saving env does not change a deployment that is already built.
+Project → Settings → Environment Variables. Set `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` for **Production and Preview** (or All Environments). Leave `DEMO_PERSONA_SWITCHER` unset. If this customer uses SSO, add the keys from section 3.1 on the same two environments. Then Redeploy. Preview URLs stay broken if the variables exist only on Production. Saving env does not change a deployment that is already built.
 
 ### 5.4 Deploy and redeploy
 
@@ -510,6 +531,10 @@ First admin, if you did not pass `--email` to onboard:
 
 Then sign in and create everyone else under **Administration → Users** (unique email, role, department, title, approval limit, password). Deactivate with status. `DELETE` returns 405. Hand each person their own password. Do not share `ProcureFlow!demo`.
 
+SSO does not replace this step. Just-in-time provisioning is off by default, and when it is on the new user’s role is `SSO_DEFAULT_ROLE` or the stored default (`requester`), never a role from the IdP. An empty database still needs this first admin before anyone can turn provisioning on in the UI (`PUT /api/auth/sso-settings` is admin-only). Bootstrap is `POST /api/auth/bootstrap` or `npm run bootstrap-admin`.
+
+`npm run seed` drops application tables (including the append-only audit tables, via `DROP TABLE`, which the delete triggers do not block) and reloads the fictional walkthrough. It is demo-only. Do not run it against a customer database.
+
 ### 6.4 Smoke checklist
 
 ```bash
@@ -528,14 +553,15 @@ npm run smoke -- --json
 | Check | Expect |
 | --- | --- |
 | `GET /api/health` | `status` ok, `db` is `turso-http` (or `sqlite` on a laptop) |
-| `GET /api/auth/config` | `auth` is `session`, `bootstrapNeeded` is a boolean |
-| `GET /api/users` | A JSON array. Empty tenant: `[]`. If `bootstrapNeeded` is true, the array must be empty |
+| `GET /api/auth/config` | HTTP 200, `auth` is `session`, `bootstrapNeeded` and `demoPersonaSwitcher` are booleans, `identityProvider` is `local`, `oidc`, or `saml`, and `ssoReady` and `localLogin` are booleans |
+| `GET /api/users`, `GET /api/departments`, `GET /api/catalog` | **401** when no session cookie is sent |
 | `GET /api/auth/me` | **401** when no session cookie is sent |
-| `GET /api/departments` | A JSON array (empty before `bootstrap-org`, five rows after) |
-| `GET /api/catalog` | A JSON array (empty until someone adds items) |
-| `POST /api/auth/login` then `GET /api/auth/me` | Only when email and password were provided. The session user matches that email |
+| `POST /api/auth/login` | Only when email and password were provided. HTTP 200 and a user |
+| With that cookie: `GET /api/auth/me` | Session user matches that email |
+| With that cookie: `GET /api/users` | A JSON array, no `password_hash`. Empty only when `bootstrapNeeded` is true. If `bootstrapNeeded` is false the array must not be empty |
+| With that cookie: `GET /api/departments`, `GET /api/catalog` | JSON arrays (departments empty before `bootstrap-org`, five rows after; catalog empty until someone adds items) |
 
-After a successful onboard with `--email` and `--smoke`, you should be able to open the Production URL and sign in as that admin. Confirm `DEMO_PERSONA_SWITCHER` is unset (no header persona switcher).
+After a successful onboard with `--email` and `--smoke`, you should be able to open the Production URL and sign in as that admin. Confirm `DEMO_PERSONA_SWITCHER` is unset (no header persona switcher). If SSO is configured, `identityProvider` matches it and `ssoReady` is true. A false `ssoReady` with `IDENTITY_PROVIDER=oidc` or `saml` means a required IdP setting is missing or invalid (section 10).
 
 ### 6.5 Second customer
 
@@ -581,7 +607,7 @@ For each customer, from a clone that is unlinked or already linked to **that** p
    npm run db:status
    ```
 
-   Migrations are additive. They do not seed. A failed migrate stops here, while the previous deployment is still serving.
+   Migrations are additive. They do not seed. This is also how an existing database picks up `compliance_audit_events` and the append-only triggers. A failed migrate stops here, while the previous deployment is still serving.
 4. Deploy that same checkout.
    - Env unchanged and the directory is already linked to this customer: `vercel deploy --prod --yes`.
    - You also need to refresh the three secrets: `npm run vercel:customer -- --slug <slug> --apply` (writes Production and Preview, redeploys, waits until Ready).
@@ -634,7 +660,79 @@ Section 4.5. Put a Turso dump or the platform’s snapshot on your calendar per 
 - `npm run db:status` with that customer’s `TURSO_*` when the user count or table count looks wrong.
 - `GET /api/health` returns `db: "turso-http"` when the function is on Turso.
 
-There is no uptime hook, no cron, and no error tracker in the repo. A 503 HTML page titled ProcureFlow configuration means Turso env is missing or Turso rejected the token (section 10).
+There is no uptime hook, no cron, and no error tracker in the repo. A 503 HTML page titled ProcureFlow configuration means Turso env is missing or Turso rejected the token (section 10). After the first admin exists, the compliance verification report (section 8.7) is the data health check.
+
+### 8.6 Configure SSO for this customer
+
+Skip this section when the customer will use email and password only. Leave `IDENTITY_PROVIDER` unset.
+
+The names and defaults are section 3.1. Full notes: [DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer). Set the values on **this** project’s Production and Preview, not in the database and not on another customer’s project. Then redeploy. If the three database secrets are already exported:
+
+```bash
+npm run vercel:customer -- --slug acme --apply
+```
+
+That rewrites `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` and redeploys. It does not erase SSO keys you added in the dashboard. If you only changed SSO keys and this checkout is already linked to `procureflow-acme`:
+
+```bash
+vercel deploy --prod --yes
+```
+
+Wait until that deployment is Ready, then:
+
+```bash
+BASE_URL=https://procureflow-acme.vercel.app npm run smoke
+```
+
+`GET /api/auth/config` should show `identityProvider` of `oidc` or `saml` and `ssoReady: true`. If a required value is missing or invalid, OIDC start (`GET /api/auth/oidc/start`), the OIDC callback, SAML start (`GET /api/auth/saml/start`), and the SAML ACS (`POST /api/auth/saml/acs`) set no `pf_session`. With `Accept: application/json` the status is **503** `sso_not_configured`. A browser, when `APP_BASE_URL` is set, is sent to `/?sso_error=sso_not_configured`. An unknown `IDENTITY_PROVIDER` does the same. Password login still works unless `LOCAL_LOGIN=0`.
+
+Register these URLs on the IdP (replace the origin with `APP_BASE_URL`):
+
+| Protocol | Give the IdP |
+| --- | --- |
+| OIDC | Redirect `{APP_BASE_URL}/api/auth/oidc/callback`, unless `OIDC_REDIRECT_URI` overrides it |
+| SAML | ACS `{APP_BASE_URL}/api/auth/saml/acs` (POST), unless `SAML_ACS_URL` overrides it. Metadata is `GET {APP_BASE_URL}/api/auth/saml/metadata` |
+
+Who can sign in: an existing user matched by a stored IdP subject (`user_identities`) or by verified email. OIDC requires `email_verified`. Unknown users are rejected (`403 sso_user_unknown`) until provisioning is turned on.
+
+Provisioning stays **off** unless you choose one of these:
+
+- Set `SSO_PROVISIONING=1` (and optionally `SSO_DEFAULT_ROLE`) on Production and Preview, then redeploy.
+- As a signed-in admin, `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases for those two fields. A bad role, a bad flag, or aliases that disagree is rejected and does not change the row. A `role` field on the body is ignored.
+
+`SSO_DEFAULT_ROLE` overrides the stored role when it is one of the five roles. The role never comes from an IdP claim. The first admin still comes from bootstrap. A just-in-time user has no password. `GET /api/auth/sso-settings` is admin-only.
+
+`OIDC_CLIENT_SECRET` and `SAML_IDP_CERT` stay in this customer’s env. Do not insert them into `tenant_settings` or any other table.
+
+### 8.7 Audit and compliance
+
+`npm run db:migrate`, or the next process start, applies the ledger and the triggers. You do not run extra SQL.
+
+These tables are append-only. `UPDATE` and `DELETE` abort in the database:
+
+| Table | What it holds |
+| --- | --- |
+| `audit_logs` | Procurement decisions (approvals, receipts, invoices, payment runs, contracts, delegations, and the rest of the buying journey). Not hash-chained. |
+| `sso_login_events` | SSO success and failure. Reports read this table in place. |
+| `sso_assertion_uses` | Assertion ids already consumed. |
+| `compliance_audit_events` | Local login, logout, bootstrap, user changes, SSO settings, just-in-time user create, and CSV export. Each row stores `prev_hash` (`GENESIS` on the first row, otherwise the previous `row_hash`) and a SHA-256 `row_hash`. A broken link is rejected on insert. |
+
+`sso_requests` are single-use login state and **are** deleted when the attempt finishes. They are not evidence.
+
+Admin and finance can open **Audit & Compliance** and call:
+
+| Report | Path |
+| --- | --- |
+| Audit trail | `GET /api/compliance/audit-trail` |
+| Approval and segregation | `GET /api/compliance/approval-policy` |
+| Paid documents missing support | `GET /api/compliance/payment-support` |
+| Verification | `GET /api/compliance/verification` |
+
+Requester, approver, and procurement receive **403**. No cookie is **401**. What each report flags is [SYSTEM_MANUAL.md §5.13](SYSTEM_MANUAL.md#513-audit-and-compliance-reports).
+
+**Ops health check.** Sign in as the customer admin (or a finance user) and open Verification, or `GET /api/compliance/verification` with the session cookie. A healthy result has `findings` empty. An empty `compliance_audit_events` chain is valid. `hash_chain_prev_mismatch` or `hash_chain_digest_mismatch` means that ledger was altered outside the app. Money findings mean a stored total does not match the line rows. CSV is `?format=csv` on any of those paths. The file is built first, then a `COMPLIANCE_EXPORT` row is appended, so the export shows up on the next query. There is no npm script that runs these reports.
+
+Because the rows cannot be edited or deleted, a manual `DELETE FROM audit_logs` (or the other three tables) fails. Section 9 says what actually removes them.
 
 ---
 
@@ -662,7 +760,7 @@ What `--apply` does, in order:
    vercel env rm SESSION_SECRET preview --yes --project procureflow-acme
    ```
 
-   Other keys are left alone. A key that is already absent counts as success. `DEMO_PERSONA_SWITCHER` is not set or removed.
+   Other keys are left alone, including `IDENTITY_PROVIDER`, `APP_BASE_URL`, `LOCAL_LOGIN`, `OIDC_*`, `SAML_*`, `SSO_*`, and `DEMO_PERSONA_SWITCHER`. A key that is already absent counts as success. Remove IdP secrets from the project yourself before you delete the project, or they remain in Vercel until the project is gone. The script does not copy them into the database.
 4. `turso db destroy procureflow-acme --yes`. If the database is already gone, that counts as success.
 
 It never seeds and never prints full tokens.
@@ -674,8 +772,9 @@ What it does **not** remove:
 - The token inside Turso. Deleting the env var does not revoke it.
 - Password-manager copies. Delete or rotate those yourself.
 - A SQLite file on a laptop. Offboard only talks to Vercel and Turso.
+- Individual audit rows. `UPDATE` and `DELETE` on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and `compliance_audit_events` abort. Do not plan a SQL cleanup of those tables before destroy. `turso db destroy` removes the whole database, which is how that customer’s evidence goes away. Deleting a local SQLite file does the same for a laptop database. `npm run seed` also removes them, by `DROP TABLE`, and then loads demo data — that is a wipe, not an offboard, and it is not for a customer you are keeping.
 
-Delete the empty Vercel project in the dashboard: Settings → General → Delete Project. Do that after offboard, or accept that an empty project remains. If you delete the project first, the next offboard cannot strip env (the project is missing) and will not reach Turso destroy. In that case run `turso db destroy` yourself.
+Delete the empty Vercel project in the dashboard: Settings → General → Delete Project. Do that after offboard, or accept that an empty project remains. If you delete the project first, the next offboard cannot strip env (the project is missing) and will not reach Turso destroy. In that case run `turso db destroy` yourself. IdP secrets that offboard left on the project are deleted with the project.
 
 `--db` and `--project` override the names. Help: `npm run offboard:customer -- --help`.
 
@@ -799,7 +898,17 @@ There is no cost center, or no FY 2026 budget, or no department head (and no use
 
 ### Password rejected
 
-The minimum length is 8 characters. The CLI and the bootstrap API both enforce that.
+The minimum length is 8 characters. The CLI and the bootstrap API both enforce that. An inactive user gets **403**, not a wrong-password **401**.
+
+### SSO fails closed (`sso_not_configured`)
+
+`IDENTITY_PROVIDER` is `oidc` or `saml` (or some other non-`local` value) and a required setting is missing or invalid, so `ssoReady` is false. Start and callback set no cookie. A JSON client sees **503** `sso_not_configured`. The login page may instead land on `/?sso_error=sso_not_configured` when `APP_BASE_URL` is set. Password login still works unless `LOCAL_LOGIN=0`.
+
+What to do: compare the project env with section 3.1. `APP_BASE_URL` must be the origin only. OIDC issuer and SAML entry point must be HTTPS unless you are on a local mock (`OIDC_ALLOW_INSECURE` / `SAML_ALLOW_INSECURE`). Do not set those insecure flags on a customer project. Both SAML signature flags false is rejected. Redeploy after the env edit. `GET /api/auth/config` then shows `ssoReady: true`.
+
+### SQL cleanup of audit rows fails
+
+`UPDATE` or `DELETE` on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, or `compliance_audit_events` aborts with an append-only error. That is expected. Destroy the database (section 9) or, for a disposable demo file only, `npm run seed` (it drops the tables). Do not disable the triggers to “fix” a report. Use the verification report (section 8.7) when a total looks wrong.
 
 ### Git push did not deploy
 
@@ -809,18 +918,22 @@ The minimum length is 8 characters. The CLI and the bootstrap API both enforce t
 
 ## 11. Security checklist
 
-- [ ] Customer A and customer B have different Turso URLs and different Vercel projects.
+- [ ] Customer A and customer B have different Turso URLs, different Vercel projects, and different `SESSION_SECRET` values.
 - [ ] `TURSO_AUTH_TOKEN` is a **database** token from `turso db tokens create`, not an org JWT.
-- [ ] `SESSION_SECRET` is unique per customer, set on Production and Preview, and stored only in Vercel and the password manager.
+- [ ] `SESSION_SECRET` is set on Production and Preview and stored only in Vercel and the password manager. It is not the dev default.
 - [ ] `DEMO_PERSONA_SWITCHER` is unset on the customer project.
 - [ ] `npm run seed` was not run against this database (or you accepted a full wipe).
-- [ ] The first admin password is not `ProcureFlow!demo`.
+- [ ] The first admin was created with `POST /api/auth/bootstrap` or `npm run bootstrap-admin`. The password is not `ProcureFlow!demo`.
+- [ ] Business APIs require `pf_session`. You are not relying on a user id in the JSON body.
+- [ ] If SSO is off, `IDENTITY_PROVIDER` is unset or `local`. If it is on, the IdP secret (`OIDC_CLIENT_SECRET` or `SAML_IDP_CERT`) is only in this project’s env, Production and Preview, and `ssoReady` is true after redeploy. `OIDC_ALLOW_INSECURE` and `SAML_ALLOW_INSECURE` are unset.
+- [ ] Provisioning is still off unless this customer asked for just-in-time users. The default role is not taken from the IdP. The first admin was not created by SSO.
 - [ ] `.env`, tokens, and `*.db` are not in git. `vercel.json` does not contain secrets.
-- [ ] Preview and Production both have the three variables. You redeployed after the last env edit.
+- [ ] Preview and Production both have the three database variables. You redeployed after the last env edit.
 - [ ] `BASE_URL=https://<this-customer>.vercel.app npm run smoke` exited 0 after that redeploy.
-- [ ] Extra people were created in Administration → Users with their own passwords.
-- [ ] You know that many P2P routes still trust a user id in the request body. Admin user management uses the session. There is no SSO.
-- [ ] Offboard, when you use it, is followed by deleting the password-manager copies and revoking the Turso token in Turso. The script does not revoke the token, and it does not delete the Vercel project.
+- [ ] Extra people were created in Administration → Users with their own passwords, or they sign in through the IdP against accounts you created.
+- [ ] An admin or finance user can open **Audit & Compliance → Verification** and the findings list is empty (section 8.7). CSV export is expected to append a `COMPLIANCE_EXPORT` row.
+- [ ] You have not planned a SQL `DELETE` of audit rows. Offboard destroys the database instead.
+- [ ] Offboard, when you use it, is followed by deleting the password-manager copies, removing leftover IdP env vars (or deleting the Vercel project), and revoking the Turso token in Turso. The script does not revoke the token, does not remove SSO env vars, and does not delete the Vercel project.
 - [ ] A Turso dump or platform snapshot exists before any `turso db destroy`.
 
 ---
@@ -836,10 +949,12 @@ All of these are dry-run unless noted. `--help` prints the flags.
 | `npm run turso:customer -- --slug <slug> --apply` | Create or reuse the database, print exports. |
 | `npm run vercel:customer -- --slug <slug> --apply` | Link, set Production and Preview, redeploy, wait for Ready. |
 | `npm run provision:customer -- --with-org --email … --password '…'` | Migrate, org skeleton, first admin. Never seeds. |
-| `npm run db:migrate -- --turso` | Schema only. `--seed` wipes. |
+| `npm run db:migrate -- --turso` | Schema, including `compliance_audit_events` and the append-only triggers. `--seed` wipes. |
 | `npm run db:status` | Mode, tables, user count. No secrets. |
 | `npm run bootstrap-org` | Five cost centers and FY 2026 budgets. |
-| `npm run bootstrap-admin -- --email … --password '…'` | First admin only. Exit 2 if users exist. |
-| `npm run smoke` | HTTP checks. Set `BASE_URL`. |
-| `npm run offboard:customer -- --slug <slug> --apply --confirm-slug <slug>` | Strip the three env vars, then `turso db destroy`. Leaves the Vercel project. |
-| `npm run seed` | Destructive demo. Not for a live customer. |
+| `npm run bootstrap-admin -- --email … --password '…'` | First admin only (`POST /api/auth/bootstrap` is the UI equivalent). Exit 2 if users exist. Optional `--name` and `--title`. |
+| `npm run smoke` | HTTP checks. Set `BASE_URL`. Optional `--email` and `--password` together. |
+| `npm run offboard:customer -- --slug <slug> --apply --confirm-slug <slug>` | Strip the three env vars, then `turso db destroy`. Leaves the Vercel project and any SSO env vars. |
+| `npm run seed` | Destructive demo. Drops application tables and loads personas. Not for a live customer. |
+
+There is no npm script for SSO settings or compliance reports. Those are environment variables (section 3.1) and `GET /api/compliance/…` for an admin or finance session (section 8.7).

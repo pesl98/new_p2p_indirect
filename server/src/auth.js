@@ -2,7 +2,10 @@
  * Per-tenant session auth (httpOnly cookie + bcrypt password hashes).
  *
  * Identity is local to the connected database (SQLite file or Turso DB).
- * There is no org_id / shared-row tenancy and no SSO in this phase.
+ * There is no org_id / shared-row tenancy. OIDC and SAML callbacks resolve
+ * an external subject to a local `users.id` and call `signSessionToken`.
+ * The `pf_session` cookie stays the only request identity — do not add a
+ * second header or accept persona ids from the body.
  *
  * Cookie payload is HMAC-SHA256 signed — not a JWT library. SESSION_SECRET
  * must be set in customer deploys; local/dev falls back to an insecure default.
@@ -11,6 +14,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { runningOnVercel } from './dbConfig.js';
+import { loadSsoConfig } from './ssoConfig.js';
 
 export const SESSION_COOKIE = 'pf_session';
 export const MIN_PASSWORD_LENGTH = 8;
@@ -18,6 +22,12 @@ export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** Documented local-demo password only. Never a production secret. */
 export const DEMO_SEED_PASSWORD = 'ProcureFlow!demo';
+
+/**
+ * Default when IDENTITY_PROVIDER is unset. Runtime value comes from
+ * loadAuthConfig().sso (local, oidc, or saml).
+ */
+export const IDENTITY_PROVIDER = 'local';
 
 const DEV_SESSION_SECRET = 'procureflow-dev-insecure-session-secret';
 
@@ -33,14 +43,26 @@ export function loadAuthConfig(env = process.env, overrides = {}) {
     || DEV_SESSION_SECRET;
   const bcryptRounds = Number(overrides.bcryptRounds ?? env.BCRYPT_ROUNDS) || 10;
   const cookieSecure = overrides.cookieSecure ?? Boolean(env.VERCEL || env.NODE_ENV === 'production');
+  const sso = loadSsoConfig(env);
   return {
     sessionSecret,
     bcryptRounds: Number.isInteger(bcryptRounds) && bcryptRounds >= 4 ? bcryptRounds : 10,
     cookieSecure,
     demoPersonaSwitcher: overrides.demoPersonaSwitcher ?? isDemoPersonaSwitcher(env),
     sessionTtlSeconds: overrides.sessionTtlSeconds || SESSION_TTL_SECONDS,
-    usingDevSecret: !String(overrides.sessionSecret || env.SESSION_SECRET || '').trim()
+    usingDevSecret: !String(overrides.sessionSecret || env.SESSION_SECRET || '').trim(),
+    sso,
+    identityProvider: sso.identityProvider,
+    localLogin: sso.localLogin
   };
+}
+
+export function attachSessionCookie(res, config, userId) {
+  const token = signSessionToken(userId, config.sessionSecret, Date.now(), config.sessionTtlSeconds);
+  res.setHeader('Set-Cookie', sessionCookieHeader(token, {
+    ttlSeconds: config.sessionTtlSeconds,
+    secure: config.cookieSecure
+  }));
 }
 
 export async function hashPassword(password, rounds = 10) {

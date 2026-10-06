@@ -14,6 +14,11 @@ import {
   normalizeOptionalTimestamp,
   revokeDelegation
 } from './delegationsService.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(2, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -163,7 +168,7 @@ describe('approval delegation create/revoke', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const created = await json(await fetch(`${base}/api/approval-delegations`, {
+      const created = await json(await authed(`${base}/api/approval-delegations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -176,23 +181,23 @@ describe('approval delegation create/revoke', () => {
       assert.equal(created.status, 201);
       assert.equal(created.body.delegate_name, 'Priya Nair');
 
-      const listed = await json(await fetch(`${base}/api/approval-delegations?user_id=2&active=1`));
+      const listed = await json(await authed(`${base}/api/approval-delegations?user_id=2&active=1`));
       assert.equal(listed.status, 200);
       assert.equal(listed.body.length, 1);
 
-      const self = await json(await fetch(`${base}/api/approval-delegations`, {
+      const self = await json(await authed(`${base}/api/approval-delegations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delegator_user_id: 2, delegate_user_id: 2 })
       }));
       assert.equal(self.status, 400);
 
-      const del = await json(await fetch(`${base}/api/approval-delegations/${created.body.id}`, {
+      const del = await json(await authed(`${base}/api/approval-delegations/${created.body.id}`, {
         method: 'DELETE'
       }));
       assert.equal(del.status, 405);
 
-      const revoked = await json(await fetch(`${base}/api/approval-delegations/${created.body.id}/revoke`, {
+      const revoked = await json(await authed(`${base}/api/approval-delegations/${created.body.id}/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor_name: 'Elena Rostova' })

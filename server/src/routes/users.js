@@ -12,6 +12,7 @@ import {
 } from '../usersService.js';
 import { MasterDataError } from '../masterData.js';
 import { loadAuthConfig } from '../auth.js';
+import { recordUserChange } from '../complianceAudit.js';
 
 const router = express.Router();
 
@@ -26,9 +27,8 @@ function bcryptRounds(req) {
   return (req.authConfig || loadAuthConfig()).bcryptRounds;
 }
 
-// List all users (with department details). GET stays demo-open so the
-// optional persona switcher can load people without a session. Mutating
-// routes require a logged-in admin (req.user) — see docs/ARCHITECTURE.md.
+// Directory of users. Requires a session (see requireApiSession). Mutating
+// routes require a logged-in admin (req.user). Password hashes are never returned.
 router.get('/', async (req, res) => {
   try {
     const users = await listUsers(req.db, { status: req.query.status });
@@ -58,6 +58,11 @@ router.get('/:id', async (req, res) => {
 router.post('/', requireAdmin, async (req, res) => {
   try {
     const created = await createUser(req.db, req.body || {}, { bcryptRounds: bcryptRounds(req) });
+    await recordUserChange(req.db, req.user, {
+      action: 'USER_CREATED',
+      user: created,
+      details: { email: created.email, role: created.role, status: created.status }
+    });
     res.status(201).json(created);
   } catch (error) {
     sendError(res, error);
@@ -66,7 +71,19 @@ router.post('/', requireAdmin, async (req, res) => {
 
 router.patch('/:id', requireAdmin, async (req, res) => {
   try {
+    const before = await loadUser(req.db, req.params.id);
     const updated = await updateUser(req.db, req.params.id, req.body || {}, req.user);
+    await recordUserChange(req.db, req.user, {
+      action: 'USER_UPDATED',
+      user: updated,
+      details: {
+        previous_role: before.role,
+        role: updated.role,
+        previous_status: before.status,
+        status: updated.status,
+        email: updated.email
+      }
+    });
     res.json(updated);
   } catch (error) {
     sendError(res, error);
@@ -76,6 +93,11 @@ router.patch('/:id', requireAdmin, async (req, res) => {
 router.patch('/:id/status', requireAdmin, async (req, res) => {
   try {
     const updated = await setUserStatus(req.db, req.params.id, req.body?.status, req.user);
+    await recordUserChange(req.db, req.user, {
+      action: 'USER_STATUS_CHANGED',
+      user: updated,
+      details: { status: updated.status }
+    });
     res.json(updated);
   } catch (error) {
     sendError(res, error);
@@ -86,6 +108,11 @@ router.post('/:id/password', requireAdmin, async (req, res) => {
   try {
     const updated = await setUserPassword(req.db, req.params.id, req.body?.password, {
       bcryptRounds: bcryptRounds(req)
+    });
+    await recordUserChange(req.db, req.user, {
+      action: 'USER_PASSWORD_SET',
+      user: updated,
+      details: { password: 'redacted' }
     });
     res.json({ ok: true, user: updated });
   } catch (error) {

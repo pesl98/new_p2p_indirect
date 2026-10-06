@@ -94,6 +94,9 @@ describe('auth HTTP', () => {
       const { status, body } = await json(await fetch(`${base}/api/auth/config`));
       assert.equal(status, 200);
       assert.equal(body.auth, 'session');
+      assert.equal(body.identityProvider, 'local');
+      assert.equal(body.ssoReady, false);
+      assert.equal(body.localLogin, true);
       assert.equal(body.bootstrapNeeded, true);
       assert.equal(body.demoPersonaSwitcher, false);
     });

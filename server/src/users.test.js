@@ -71,7 +71,13 @@ describe('admin user CRUD', () => {
     await seedUsers(db);
     const app = createApp({ db, config: loadDbConfig({}), authConfig: TEST_AUTH });
     await withServer(app, async (base) => {
-      const { status, body } = await json(await fetch(`${base}/api/users`));
+      const anon = await json(await fetch(`${base}/api/users`));
+      assert.equal(anon.status, 401);
+
+      const alice = await loginAs(base, 'alice@example.com');
+      const { status, body } = await json(await fetch(`${base}/api/users`, {
+        headers: { Cookie: alice.cookie }
+      }));
       assert.equal(status, 200);
       assert.equal(body.length, 2);
       const elena = body.find((u) => u.email === 'elena@example.com');
@@ -200,7 +206,9 @@ describe('admin user CRUD', () => {
       }));
       assert.equal(inactiveLogin.status, 403);
 
-      const listed = await json(await fetch(`${base}/api/users?status=active`));
+      const listed = await json(await fetch(`${base}/api/users?status=active`, {
+        headers: { Cookie: cookie }
+      }));
       assert.equal(listed.body.some((u) => u.id === newId), false);
 
       const del = await json(await fetch(`${base}/api/users/${newId}`, {

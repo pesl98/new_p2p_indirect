@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
-import { isServiceLine } from '../lineType';
+import { formatLineQuantity, isServiceLine, serviceBasisLabel } from '../lineType';
 
 export default function ServiceEntrySheetsView({ currentUser, onDataChanged, focusId }) {
   const [sheets, setSheets] = useState([]);
@@ -78,6 +78,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
             accepted_already: item.quantity_accepted || 0,
             remaining_qty: remaining,
             unit_price: item.unit_price,
+            service_basis: item.service_basis || null,
             quantity_accepted: remaining,
             comments: ''
           };
@@ -122,7 +123,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
     try {
       const created = await api.createServiceEntrySheet({
         po_id: Number(selectedPOId),
-        created_by: currentUser?.id || 1,
+        created_by: currentUser?.id,
         service_period_start: periodStart || null,
         service_period_end: periodEnd || null,
         notes: sesNotes,
@@ -164,7 +165,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
   const handleAccept = async (id) => {
     try {
       await api.acceptServiceEntrySheet(id, {
-        decided_by: currentUser?.id || 3,
+        decided_by: currentUser?.id,
         actor_name: currentUser?.name || 'Procurement Officer',
         decision_comments: decisionComments,
         allow_over_acceptance: allowOverAcceptance
@@ -180,7 +181,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
   const handleReject = async (id) => {
     try {
       await api.rejectServiceEntrySheet(id, {
-        decided_by: currentUser?.id || 3,
+        decided_by: currentUser?.id,
         actor_name: currentUser?.name || 'Procurement Officer',
         decision_comments: decisionComments
       });
@@ -262,7 +263,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                     </td>
                     <td className="py-3 px-4 text-slate-700">{ses.created_by_name}</td>
                     <td className="py-3 px-4">
-                      <div className="font-bold text-indigo-700">{ses.total_qty_accepted} units</div>
+                      <div className="font-bold text-indigo-700">{ses.total_qty_accepted} accepted</div>
                       <div className="text-[10px] text-slate-400">${formatMoney(ses.total_amount_cents)}</div>
                     </td>
                     <td className="py-3 px-4">{getStatusBadge(ses.status)}</td>
@@ -348,9 +349,16 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                           const wouldOver = Number(item.accepted_already) + Number(item.quantity_accepted) > Number(item.ordered_qty);
                           return (
                             <tr key={idx} className={wouldOver ? 'bg-amber-50' : 'hover:bg-slate-50'}>
-                              <td className="py-2.5 px-3 font-medium text-slate-900">{item.description}</td>
-                              <td className="py-2.5 px-3 text-center">{item.ordered_qty}</td>
-                              <td className="py-2.5 px-3 text-center text-slate-500">{item.accepted_already}</td>
+                              <td className="py-2.5 px-3 font-medium text-slate-900">
+                                {item.description}
+                                {serviceBasisLabel(item.service_basis) ? (
+                                  <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                                    {serviceBasisLabel(item.service_basis)}
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">{formatLineQuantity({ quantity: item.ordered_qty, service_basis: item.service_basis })}</td>
+                              <td className="py-2.5 px-3 text-center text-slate-500">{formatLineQuantity({ quantity: item.accepted_already, service_basis: item.service_basis })}</td>
                               <td className="py-2.5 px-3 text-center">
                                 <input
                                   type="number"
@@ -426,8 +434,12 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                   <div className="font-semibold text-slate-900">{selectedSES.created_by_name}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Decided By:</span>
+                  <span className="text-slate-500">Accepted by:</span>
                   <div className="font-semibold text-slate-900">{selectedSES.decided_by_name || '—'}</div>
+                </div>
+                <div>
+                  <span className="text-slate-500">Accepted at:</span>
+                  <div className="font-semibold text-slate-900">{selectedSES.decided_at || '—'}</div>
                 </div>
                 <div>
                   <span className="text-slate-500">Service Period:</span>
@@ -440,6 +452,13 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                   <div className="font-semibold text-slate-900">{selectedSES.decision_comments || '—'}</div>
                 </div>
               </div>
+
+              {selectedSES.status === 'accepted' && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900">
+                  Service delivered. Accepted by {selectedSES.decided_by_name || 'the approver'}
+                  {selectedSES.decided_at ? ` on ${selectedSES.decided_at}` : ''}. No goods receipt is required.
+                </div>
+              )}
 
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <table className="w-full text-left text-xs">
@@ -454,8 +473,17 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                   <tbody className="divide-y divide-slate-100">
                     {selectedSES.items?.map((item) => (
                       <tr key={item.id}>
-                        <td className="py-2 px-3 font-medium text-slate-900">{item.item_description}</td>
-                        <td className="py-2 px-3 text-center font-bold text-indigo-700">{item.quantity_accepted}</td>
+                        <td className="py-2 px-3 font-medium text-slate-900">
+                          {item.item_description}
+                          {serviceBasisLabel(item.service_basis) ? (
+                            <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
+                              {serviceBasisLabel(item.service_basis)}
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="py-2 px-3 text-center font-bold text-indigo-700">
+                          {formatLineQuantity({ quantity: item.quantity_accepted, service_basis: item.service_basis })}
+                        </td>
                         <td className="py-2 px-3 text-right font-bold">${formatMoney(item.amount_cents)}</td>
                         <td className="py-2 px-3 text-slate-500">{item.comments || '-'}</td>
                       </tr>

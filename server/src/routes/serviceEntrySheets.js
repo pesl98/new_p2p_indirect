@@ -1,4 +1,5 @@
 import express from 'express';
+import { withSessionActor } from '../requestActor.js';
 import {
   acceptServiceEntrySheet,
   createServiceEntrySheet,
@@ -82,7 +83,8 @@ router.get('/:id', async (req, res) => {
         poi.quantity as ordered_quantity,
         poi.unit_price,
         poi.quantity_accepted as po_quantity_accepted,
-        poi.line_type
+        poi.line_type,
+        poi.service_basis
       FROM service_entry_sheet_items si
       JOIN po_items poi ON si.po_item_id = poi.id
       WHERE si.ses_id = ?
@@ -97,7 +99,11 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const db = req.db;
-    const result = await createServiceEntrySheet(db, req.body);
+    const body = withSessionActor(req, req.body, {
+      ids: ['created_by'],
+      names: ['actor_name']
+    });
+    const result = await createServiceEntrySheet(db, body);
     res.status(201).json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,
@@ -112,7 +118,8 @@ router.post('/', async (req, res) => {
 router.post('/:id/submit', async (req, res) => {
   try {
     const db = req.db;
-    const result = await submitServiceEntrySheet(db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['actor_name'] });
+    const result = await submitServiceEntrySheet(db, req.params.id, body);
     res.json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,
@@ -127,7 +134,11 @@ router.post('/:id/submit', async (req, res) => {
 router.post('/:id/accept', async (req, res) => {
   try {
     const db = req.db;
-    const result = await acceptServiceEntrySheet(db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, {
+      ids: ['decided_by'],
+      names: ['actor_name']
+    });
+    const result = await acceptServiceEntrySheet(db, req.params.id, body);
     res.json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,
@@ -144,7 +155,11 @@ router.post('/:id/accept', async (req, res) => {
 router.post('/:id/reject', async (req, res) => {
   try {
     const db = req.db;
-    const result = await rejectServiceEntrySheet(db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, {
+      ids: ['decided_by'],
+      names: ['actor_name']
+    });
+    const result = await rejectServiceEntrySheet(db, req.params.id, body);
     res.json({
       sesId: result.sesId,
       sesNumber: result.sesNumber,

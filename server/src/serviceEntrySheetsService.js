@@ -1,6 +1,6 @@
 import { lineTotalCents, toQty } from './money.js';
 import { nextDocumentNumber } from './docNumbers.js';
-import { isServiceLine } from './lineType.js';
+import { isMeasuredSettlement, isServiceLine, quantityPhrase } from './lineType.js';
 import { refreshPoFulfillmentStatus } from './poFulfillment.js';
 
 export class ServiceEntrySheetError extends Error {
@@ -39,6 +39,14 @@ async function collectOverAcceptances(db, poId, items) {
         `PO line ${item.po_item_id} was not found on this purchase order.`
       );
     }
+    if (isMeasuredSettlement(poItem)) {
+      const where = poItem.settlement_kind === 'bulk'
+        ? 'Draw it from the vendor-managed vessel'
+        : 'Record it on Metered Utilities';
+      throw new ServiceEntrySheetError(
+        `PO line ${poItem.id} (${poItem.item_description}) is measured consumption. ${where}, not a service entry sheet or a GRN.`
+      );
+    }
     if (!isServiceLine(poItem)) {
       throw new ServiceEntrySheetError(
         `PO line ${poItem.id} (${poItem.item_description}) is a goods line. Record a GRN, not a service entry sheet.`
@@ -64,7 +72,8 @@ async function collectOverAcceptances(db, poId, items) {
       quantity_accepted: qty,
       amount_cents: lineTotalCents(qty, poItem.unit_price),
       comments: item.comments || null,
-      description: poItem.item_description
+      description: poItem.item_description,
+      service_basis: poItem.service_basis || null
     });
   }
 
@@ -204,10 +213,8 @@ export async function acceptServiceEntrySheet(db, sesId, payload = {}) {
       SET quantity_accepted = quantity_accepted + ?
       WHERE id = ?
     `);
-    let totalAccepted = 0;
     for (const item of validItems) {
       await updatePOItem.run(item.quantity_accepted, item.po_item_id);
-      totalAccepted += item.quantity_accepted;
     }
 
     await db.prepare(`
@@ -218,6 +225,9 @@ export async function acceptServiceEntrySheet(db, sesId, payload = {}) {
 
     const newPOStatus = await refreshPoFulfillmentStatus(db, ses.po_id);
     const actor = actor_name || 'Procurement Officer';
+    const delivered = validItems
+      .map((item) => quantityPhrase(item.service_basis, item.quantity_accepted))
+      .join(', ');
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
@@ -225,7 +235,7 @@ export async function acceptServiceEntrySheet(db, sesId, payload = {}) {
     `).run(
       sesId,
       actor,
-      `Accepted ${ses.ses_number} for PO ${po?.po_number || ses.po_id} (${totalAccepted} units)`
+      `Accepted ${ses.ses_number} for PO ${po?.po_number || ses.po_id}: service delivered (${delivered}).`
     );
 
     if (overages.length > 0 && allowOver) {
@@ -246,6 +256,7 @@ export async function acceptServiceEntrySheet(db, sesId, payload = {}) {
       sesId,
       sesNumber: ses.ses_number,
       status: 'accepted',
+      delivered: true,
       newPOStatus,
       overAcceptance: overages.length > 0
     };

@@ -113,7 +113,14 @@ describe('smoke response evaluators', () => {
   test('auth/config and users stay consistent for empty vs bootstrapped', () => {
     const emptyCfg = checkAuthConfigResponse({
       status: 200,
-      json: { auth: 'session', bootstrapNeeded: true, demoPersonaSwitcher: false }
+      json: {
+        auth: 'session',
+        identityProvider: 'local',
+        ssoReady: false,
+        localLogin: true,
+        bootstrapNeeded: true,
+        demoPersonaSwitcher: false
+      }
     });
     assert.equal(emptyCfg.ok, true);
     assert.match(emptyCfg.detail, /empty tenant/);
@@ -160,16 +167,17 @@ describe('smoke against a live Express app', () => {
       assert.deepEqual(names, [
         'GET /api/health',
         'GET /api/auth/config',
-        'GET /api/users',
+        'GET /api/users (no session)',
         'GET /api/auth/me',
-        'GET /api/departments',
-        'GET /api/catalog',
+        'GET /api/departments (no session)',
+        'GET /api/catalog (no session)',
         'POST /api/auth/login'
       ]);
       const skipped = result.checks.find((check) => check.name === 'POST /api/auth/login');
       assert.equal(skipped.skipped, true);
-      const users = result.checks.find((check) => check.name === 'GET /api/users');
-      assert.match(users.detail, /0 users/);
+      const users = result.checks.find((check) => check.name === 'GET /api/users (no session)');
+      assert.equal(users.ok, true);
+      assert.equal(users.status, 401);
     });
   });
 

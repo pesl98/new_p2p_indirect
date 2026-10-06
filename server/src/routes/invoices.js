@@ -2,6 +2,7 @@ import express from 'express';
 import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from '../invoicesService.js';
 import { attachExceptionToInvoice } from '../invoiceExceptionsService.js';
 import { attachDuplicateToInvoice } from '../invoiceDuplicatesService.js';
+import { AP_ROLES, requireRole, withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
 
@@ -89,15 +90,21 @@ router.get('/:id', async (req, res) => {
         poi.total_price as po_total_price,
         poi.quantity_received as po_quantity_received,
         poi.quantity_accepted as po_quantity_accepted,
+        poi.quantity_consumed as po_quantity_consumed,
+        poi.receipt_basis as receipt_basis,
         poi.line_type as po_line_type,
-        poi.item_description as po_description
+        poi.item_description as po_description,
+        poi.quantity_scale as quantity_scale,
+        poi.unit_of_measure as unit_of_measure,
+        poi.settlement_kind as settlement_kind
       FROM invoice_items ii
       JOIN po_items poi ON ii.po_item_id = poi.id
       WHERE ii.invoice_id = ?
     `).all(id);
 
     const matchResults = await db.prepare(`
-      SELECT mr.*, poi.item_description, poi.line_type
+      SELECT mr.*, poi.item_description, poi.line_type, poi.receipt_basis,
+        poi.quantity_scale, poi.unit_of_measure, poi.settlement_kind
       FROM match_results mr
       LEFT JOIN po_items poi ON mr.po_item_id = poi.id
       WHERE mr.invoice_id = ?
@@ -154,21 +161,23 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Approve invoice for payment (Finance / Accounts Payable)
-router.post('/:id/approve-payment', async (req, res) => {
+// Approve invoice for payment (Finance / Accounts Payable). Actor is the session user.
+router.post('/:id/approve-payment', requireRole(...AP_ROLES), async (req, res) => {
   try {
     const db = req.db;
-    const result = await approveInvoicePayment(db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['approver_name', 'actor_name'] });
+    const result = await approveInvoicePayment(db, req.params.id, body);
     res.json(result);
   } catch (error) {
     httpError(res, error);
   }
 });
 
-// Mark invoice as Paid
-router.post('/:id/mark-paid', async (req, res) => {
+// Mark invoice as Paid. Actor is the session user.
+router.post('/:id/mark-paid', requireRole(...AP_ROLES), async (req, res) => {
   try {
-    const result = await markInvoicePaid(req.db, req.params.id, req.body);
+    const body = withSessionActor(req, req.body, { names: ['payer_name', 'actor_name', 'approver_name'] });
+    const result = await markInvoicePaid(req.db, req.params.id, body);
     res.json(result);
   } catch (error) {
     httpError(res, error);

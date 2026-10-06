@@ -21,9 +21,12 @@
     "test": "node --test src/*.test.js"
   },
   "dependencies": {
+    "@node-saml/node-saml": "^5.1.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "jose": "^6.2.12",
+    "openid-client": "^6.8.8"
   }
 }

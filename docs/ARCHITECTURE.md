@@ -1,16 +1,16 @@
 # ProcureFlow architecture
 
-Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite locally (`better-sqlite3`) or Turso (libSQL **SQL-over-HTTP** `/v2/pipeline`) on Vercel. Money is integer **cents**. Quantities are whole units.
+Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite locally (`better-sqlite3`) or Turso (libSQL **SQL-over-HTTP** `/v2/pipeline`) on Vercel. Money is integer **cents**. Discrete quantities are whole units. Metered utility and vendor-managed bulk quantities are integer milli-units (scale 1000).
 
 **Operator/owner entry point (capabilities + new-customer deploy):** [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md).
 
 This document describes the control model implemented in code.
 
-**Authentication (this phase):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Admin user CRUD uses `req.user` (session), not spoofable body ids. Operator manual: [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md). Older pointers: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and [DEPLOYMENT.md](DEPLOYMENT.md) (first-admin bootstrap, `SESSION_SECRET`, `npm run smoke`).
+**Authentication (Sprint 1):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Every `/api` route except `/api/health` and `/api/auth/*` requires that session and fails closed (401). Approvals, buyer inbox, and AP actions use `req.user`. A body or query persona id (`approver_id`, `requester_id`, `received_by`, `actor_name`, …) that names someone else is rejected (403). Admin user CRUD and department-head assignment require `req.user.role === 'admin'`. AP money movement (approve, mark paid, exception resolve, duplicate resolve, aging, payment runs) requires `finance` or `admin`. Operator procedure: [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md). Runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md). Daily program: [SPRINT-LOG.md](SPRINT-LOG.md).
 
-**Phased cut — legacy persona ids:** most existing P2P mutating routes still trust body fields (`approver_id`, `received_by`, `requester_id`, `actor_name`). Anyone who can reach those APIs can still send any persona id. That is **not** a full SoD rewrite. Follow-up work should require login on those routes and prefer `req.user`. The header persona switcher is **demo-only** (`DEMO_PERSONA_SWITCHER=1`); default customer deploy uses login.
+**Identity provider:** `local` (default), `oidc`, or `saml`. An OIDC or SAML callback resolves the IdP subject to `users.id` and calls `signSessionToken` — the same `pf_session` cookie, no second identity header. IdP endpoints and secrets are env vars on that customer’s deployment. `tenant_settings` stores only the provisioning switch (default off) and the default role (`requester`). Unknown users are rejected unless provisioning is explicitly enabled. A role is never taken from an IdP claim. There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer. Configure: [DEPLOYMENT.md](DEPLOYMENT.md).
 
-SSO / SAML / OIDC is out of scope (next). There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer.
+**Demo walkthrough:** `npm run seed` (destructive) loads eight personas. Every one signs in with password `ProcureFlow!demo` (example: `elena.rostova@company.com`). `DEMO_PERSONA_SWITCHER=1` shows a header dropdown that **re-logins** with that seed password. It does not swap a client-only persona. Default customer deploy leaves the flag unset.
 
 ## Authentication & admin users
 
@@ -175,7 +175,7 @@ Resolution (`server/src/delegationsService.js`, used by `listApprovalInbox` / `d
 3. Inbox: pending steps assigned to the viewer **or** pending steps whose `approver_id` has a covering delegation to the viewer. Waiting steps stay hidden.
 4. Decide: mapped `approver_id` **or** that covering delegate. Sequential promotion/skip is unchanged.
 
-Fail-closed: cannot delegate to self; both users must exist; revoke only when active. APIs are demo-open like department-head mapping (no JWT). The UI shows **Delegations** for approval-capable personas + Elena; a user creates/revokes as themselves; Elena can manage any pair.
+Fail-closed: cannot delegate to self; both users must exist; revoke only when active. Creating or revoking requires a session. A non-admin may only open or revoke a window where they are the delegator; an admin may manage any pair. `created_by` / `actor_name` are the signed-in user. The UI shows **Delegations** for approval-capable personas + Elena.
 
 Audit: `DELEGATION_CREATED` / `DELEGATION_REVOKED` on `entity_type=approval_delegation`. A decide by a delegate appends `Delegated from {name} (id=…, delegation_id=…)` to the existing `STEP_APPROVED` / `APPROVED` / `REJECTED` requisition audit row.
 
@@ -272,6 +272,8 @@ Catalog, requisition, and PO lines store `line_type` (`goods` | `service`). Defa
 
 An explicit `line_type` on create wins over category. The stored type is what GRN, SES, and match use — they do not re-derive at control time.
 
+Service lines may also store `service_basis` (`lump_sum` | `hours` | `days`). Goods lines store NULL (a basis sent on a goods line is dropped). Omitted basis on a service keeps legacy unit quantity, such as software seats. Lump sum quantity is a whole number of fixed-fee occurrences; hours and days are whole time units. `unit_price` is the fee or rate in integer cents. Line total remains `quantity × unit_price`. Acceptance is an SES (`decided_by`, `decided_at`, `quantity_accepted`); match uses that accepted quantity and does not consult GRN. Existing customer databases gain a nullable `service_basis` column; NULL leaves current lines unchanged.
+
 ## Master data (suppliers & catalog)
 
 Suppliers and catalog items are **edit + soft-deactivate**, not hard-delete. Historical PR / PO / invoice / GRN / SES lines keep their FKs (no `ON DELETE CASCADE` on those tables).
@@ -279,7 +281,7 @@ Suppliers and catalog items are **edit + soft-deactivate**, not hard-delete. His
 | Resource | Update | Status | Delete |
 | --- | --- | --- | --- |
 | Supplier | `PATCH /api/suppliers/:id` (name, contact, email, phone, address, payment_terms, status). `code` is **immutable**. | `active` \| `inactive` \| `under_review` (also `PATCH /api/suppliers/:id/status`) | **405** — deactivate instead |
-| Catalog item | `PATCH /api/catalog/:id` (sku, name, description, category, unit, unit_price cents, preferred_supplier_id, lead_time_days, image_url, line_type, status) | `active` \| `inactive` (also `PATCH /api/catalog/:id/status`) | **405** — deactivate instead |
+| Catalog item | `PATCH /api/catalog/:id` (sku, name, description, category, unit, unit_price cents, preferred_supplier_id, lead_time_days, image_url, line_type, service_basis, status) | `active` \| `inactive` (also `PATCH /api/catalog/:id/status`) | **405** — deactivate instead |
 
 List filters:
 
@@ -331,7 +333,36 @@ Exception: body includes `allow_over_receipt: true`. The GRN is stored, PO qty r
 
 Partial receipts at or below remaining ordered qty are allowed. Over-receipt is an exception path, not silent.
 
-GRN is goods-only. Posting a service line on a GRN returns **400**.
+GRN is goods-only. Posting a service line on a GRN returns **400**. Posting a consignment draw-down line (`receipt_basis = consignment`) also returns **400**. Posting a utility or bulk payable (`settlement_kind` `utility` or `bulk`) also returns **400**.
+
+## Consignment stock
+
+Supplier-owned inventory at the buyer site, tracked on `consignment_balances` (supplier, catalog goods item, free-text `location_label`, quantity on hand, agreed unit price in cents). There is no location master.
+
+- **Receive** (`POST /api/consignment/receipts`, `CSN-YYYY-NNN`) increases on-hand only. No PO, no GRN, no invoice, and `quantity_received` is not touched.
+- **Issue** (`POST /api/consignment/issues`, `CSI-YYYY-NNN`) decreases on-hand and creates a PO with `order_source = consignment`. The line stores `receipt_basis = consignment` and `quantity_consumed`. `quantity_received` stays 0. PO fulfillment treats the line as received because it was drawn. AP invoices that PO; match uses `quantity_consumed`.
+- Owned stock shown beside consignment is cumulative GRN quantity. The two balances are not added together.
+
+Demo: **CSN-2026-001** (12 sanitizer stands) → **CSI-2026-001** / **PO-2026-015** (4 drawn) → **INV-FCJ-4402**. **CSN-2026-002** is 20 cases of copy paper still on hand.
+
+Discrete consignment is whole catalog units and a free-text `location_label`. It does not store measured volume, weight, or a container/silo.
+
+## Metered utilities
+
+Ongoing water, electricity, and gas supply lives on `utility_arrangements` (`UTA-YYYY-NNN`: supplier, type, meter, unit of measure, cents per 1.000 of that unit). `POST /api/utilities/consumptions` (`UCN-YYYY-NNN`) records a reading difference or a billed quantity and opens a payable. `settlement_kind = utility`. `quantity` and `quantity_consumed` are milli-units (`quantity_scale = 1000`). `quantity_received` stays 0. No GRN. Match uses `quantity_consumed`.
+
+`order_source` stays `standard` and `receipt_basis` stays `grn`. Those checks are only `standard|consignment` and `grn|consignment`. The measured path is `settlement_kind`, so discrete consignment queries are unchanged.
+
+Demo: **UTA-2026-001** / **UCN-2026-001** / **PO-2026-016** / **INV-MGU-0901** (842.500 kWh). **UTA-2026-003** gas is uninvoiced (**PO-2026-017**). **UTA-2026-002** water has no reading.
+
+## Vendor-managed bulk
+
+`bulk_containers` (`BVL-YYYY-NNN`) is a container or silo: catalog goods item, capacity, unit of measure, and current level, all in milli-units. It is not `consignment_balances.location_label`.
+
+- **Fill** (`POST /api/bulk-vessels/fills`, `BFL-YYYY-NNN`) increases level only. No PO and no GRN.
+- **Draw** (`POST /api/bulk-vessels/draws`, `BDR-YYYY-NNN`) decreases level and opens a payable with `settlement_kind = bulk`, `quantity_consumed` set, `quantity_received` 0. Match uses that quantity. No GRN.
+
+Demo: **BVL-2026-001** LN2 silo → **BFL-2026-001** (3200.000 kg) → **BDR-2026-001** / **PO-2026-018** (450.250 kg) → **INV-NIG-1801**. **BVL-2026-002** argon tube bank is filled and not drawn.
 
 ## Service entry sheets (SES)
 
@@ -351,7 +382,9 @@ SES is service-only. Posting a goods line on an SES returns **400**.
 
 Receipt basis is per line:
 
-- **Goods:** physically received (`quantity_received` from GRNs)
+- **Goods:** physically received (`quantity_received` from GRNs). Unchanged when `receipt_basis` is `grn` (the default).
+- **Consignment draw-down:** `quantity_consumed`. Physical GRN is not consulted.
+- **Utility and bulk:** `quantity_consumed` in milli-units. Physical GRN is not consulted. Invoice quantity is the measured amount (up to 3 decimal places), stored as milli-units.
 - **Services:** SES-accepted (`quantity_accepted`). Physical GRN is not required and is not consulted.
 
 Quantity fail if:
@@ -526,7 +559,7 @@ Seed: **CNT-2026-001** Figma (10 × $540.00) is the expiring-soon 1-click walkth
 
 ## Document numbers
 
-`PR-` / `PO-` / `GRN-` / `SES-` / `CO-` / `CNT-` / `PAY-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, `co_number`, `contract_number`, and `run_number` are UNIQUE.
+`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, `receipt_number`, `issue_number`, `co_number`, `contract_number`, and `run_number` are UNIQUE.
 
 Invoice numbers are unique per supplier: `UNIQUE(supplier_id, invoice_number)`. The same number from two vendors is allowed.
 
@@ -579,7 +612,7 @@ npm run seed
 # or: npm run db:migrate -- --seed
 # Demo login: alice.chen@company.com / ProcureFlow!demo
 # Optional header switcher: DEMO_PERSONA_SWITCHER=1
-# Customer: SESSION_SECRET=… and first-admin bootstrap — see docs/DEPLOY_MANUAL.md
+# Customer: SESSION_SECRET=… and first-admin bootstrap — see docs/CUSTOMER_ONBOARDING.md
 
 # Unit tests (node --test) — SQLite in-memory plus Turso HTTP mocks
 npm test
@@ -595,7 +628,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 
 ## Known demo limits (out of scope)
 
-- **Auth is per-tenant session cookies, not a full SoD rewrite.** Login, logout, `/api/auth/me`, and admin user CRUD (`req.user.role === 'admin'`) are enforced. Legacy P2P routes still accept body persona ids (`approver_id`, `requester_id`, `actor_name`, …) until a follow-up. Org Admin department-head `PUT` and catalog PATCH stay demo-open like before. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default). Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not SSO and not `org_id` row tenancy. Do not treat remaining unauthenticated routes as an authorization boundary.
+- **Auth is a per-tenant session on the whole P2P API.** Unauthenticated calls are 401. Body persona ids cannot choose the actor. Role gates: admin for user CRUD and department-head assignment; finance or admin for AP actions; the signed-in user for approvals and the buyer inbox. Finer separation of duties (for example procurement-only catalog edits) is not a separate matrix. Optional OIDC/SAML mints the same cookie; it is not a second tenancy model. The header persona switcher is gated by `DEMO_PERSONA_SWITCHER=1` (off by default) and re-authenticates with the seed password. Customer isolation is **database-per-tenant** ([docs/CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [docs/DEPLOYMENT.md](DEPLOYMENT.md)), not `org_id` row tenancy.
 - Delegation is **direct only** (no chains / no “delegate of a delegate”). Parallel / AND approval steps are out of scope. Calendar sync and recurring OOO rules are out of scope.
 - SES acceptance is quantity-based (whole units); amount stored is qty × PO unit price in cents, not a free-form T&M amount match.
 - Fiscal year 2026 is fixed in queries.
@@ -606,7 +639,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Payment runs ship as a **draft proposal + one-shot execute** (`PAY-YYYY-NNN`, shared ACH reference, same mark-paid write). Still out of scope: bank NACHA/ACH file export, early-pay discount calendar, supplier remittance portal, and multi-currency.
 - Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute.
 - Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR with `source_contract_id` proposed. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT). Carrying `source_contract_id` onto the PO at convert time is out of scope.
-- **No SSO / SAML / OIDC** in this phase. Auth is email+password local to the customer DB (`SESSION_SECRET` signs the session cookie).
+- **SCIM is not implemented.** OIDC and SAML login are optional per customer and still end in email+password’s `pf_session` cookie (`SESSION_SECRET` signs it). Audit and compliance reports are Sprint 3: append-only triggers on `audit_logs` and the SSO evidence tables, a hash-chained `compliance_audit_events` ledger for local auth and admin changes, and read-only reports for admin and finance. See [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md) §5.13.
 
 ## Customer isolation = DB per tenant
 
@@ -621,7 +654,7 @@ Pointing two deployments at the same URL merges those customers. Partial Turso c
 
 `db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `bootstrap-org` then inserts the default five cost centers + FY 2026 budgets (idempotent; never wipes). `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
 
-Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET`), first-admin bootstrap, smoke, and rollback: **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md) point there. Capabilities overview: **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. Env template: [`.env.example`](../.env.example). SSO/SAML/OIDC is still out of scope. Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
+Install path, Vercel per-customer projects, secrets (including `SESSION_SECRET` and optional IdP settings), first-admin bootstrap, smoke, and rollback: **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** (operator runbook) and **[DEPLOYMENT.md](DEPLOYMENT.md)** / [`scripts/provision-customer.md`](../scripts/provision-customer.md). Capabilities overview: **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)**. Env template: [`.env.example`](../.env.example). Header persona switching is demo-only (`DEMO_PERSONA_SWITCHER=1`).
 
 ## Local vs Vercel / Turso
 
@@ -635,4 +668,4 @@ The access layer (`server/src/db.js`, `tursoHttp.js`, `sqliteAdapter.js`) expose
 
 Vercel entry: [`api/index.js`](../api/index.js) default-exports the Express app. CLI 59.x requires `vercel.json` `functions` patterns under `api/` (a root `app.js` key fails with unmatched-function-pattern). [`vercel.json`](../vercel.json) runs `npm run build` (Vite → `public/`), includes `server/src/schema.sql` on `api/index.js`, and rewrites `/api/*` to that function. `express.static` is ignored on Vercel — static UI must live in `public/`. No scrape/cron job.
 
-Create the Turso DB with `npm run turso:customer -- --slug <customer> --apply` (`turso db create …`, `turso db show … --url`, and `turso db tokens create …` — database token, not an org JWT; classic libSQL, never `--tursodb`). The full operator sequence is **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) and **[DEPLOYMENT.md](DEPLOYMENT.md)** point there.
+Create the Turso DB with `npm run turso:customer -- --slug <customer> --apply` (`turso db create …`, `turso db show … --url`, and `turso db tokens create …` — database token, not an org JWT; classic libSQL, never `--tursodb`). Export those plus `SESSION_SECRET`, then `npm run vercel:customer -- --slug <customer> --apply` to set Production **and** Preview and redeploy. Apply schema with `npm run provision:customer -- --with-org` (or `db:migrate` + `bootstrap-org`) — do not `npm run seed` unless you want a demo wipe. Then `BASE_URL=https://<customer>.vercel.app npm run smoke`. See **[CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md)** and **[DEPLOYMENT.md](DEPLOYMENT.md)**.

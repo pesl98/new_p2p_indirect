@@ -1,5 +1,16 @@
 import { applySchema, getDb } from './db.js';
 import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
+import { measuredAmountCents } from './measuredQty.js';
+
+const ELECTRICITY_MILLI = 842500;
+const ELECTRICITY_PRICE = 18;
+const ELECTRICITY_AMOUNT = measuredAmountCents(ELECTRICITY_MILLI, ELECTRICITY_PRICE);
+const GAS_MILLI = 310250;
+const GAS_PRICE = 95;
+const GAS_AMOUNT = measuredAmountCents(GAS_MILLI, GAS_PRICE);
+const NITROGEN_MILLI = 450250;
+const NITROGEN_PRICE = 125;
+const NITROGEN_AMOUNT = measuredAmountCents(NITROGEN_MILLI, NITROGEN_PRICE);
 
 console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
 console.warn('Do not run this against a live customer database.');
@@ -10,6 +21,14 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'bulk_draws',
+  'bulk_fills',
+  'bulk_containers',
+  'utility_consumptions',
+  'utility_arrangements',
+  'consignment_issues',
+  'consignment_receipts',
+  'consignment_balances',
   'payment_run_items',
   'payment_runs',
   'invoice_duplicate_flags',
@@ -34,9 +53,15 @@ const allTables = [
   'contracts',
   'suppliers',
   'budgets',
+  'sso_login_events',
+  'sso_assertion_uses',
+  'sso_requests',
+  'user_identities',
+  'tenant_settings',
   'user_credentials',
   'users',
   'departments',
+  'compliance_audit_events',
   'audit_logs'
 ];
 
@@ -112,6 +137,8 @@ await db.transaction(async () => {
   await insertSupplier.run(4, 'FacilityCare & Janitorial Pro', 'SUP-FCJ', 'Maria Gonzalez', 'orders@facilitycare.com', '+1 (555) 901-2345', '77 Commerce Rd, Chicago, IL', 'Net 30', 4.6, 'active');
   await insertSupplier.run(5, 'Apex Advisory & Digital', 'SUP-AAD', 'Dr. Liam Sterling', 'engagements@apexadvisory.com', '+1 (555) 432-1098', '350 Park Avenue, New York, NY', 'Net 60', 5.0, 'active');
   await insertSupplier.run(6, 'FastTrack Express Freight', 'SUP-FEF', 'Tim O’Brian', 'dispatch@fasttracklogistics.com', '+1 (555) 678-9012', '12 Airport Loop, Dallas, TX', 'Net 15', 4.5, 'active');
+  await insertSupplier.run(7, 'MetroGrid Utilities', 'SUP-MGU', 'Helen Cho', 'billing@metrogrid.example', '+1 (555) 210-4400', '1 Utility Plaza, Austin, TX', 'Net 30', 4.4, 'active');
+  await insertSupplier.run(8, 'Northwind Industrial Gases', 'SUP-NIG', 'Omar Haddad', 'bulk@northwindgases.example', '+1 (555) 773-0190', '900 Pipeline Road, Houston, TX', 'Net 30', 4.7, 'active');
 
   // 5. Non-Production Catalog Items — unit_price in cents
   const insertCatalog = db.prepare(`
@@ -138,10 +165,14 @@ await db.transaction(async () => {
   await insertCatalog.run('SKU-FAC-001', 'Blueair Pro XL Commercial HEPA Air Purifier', 'Commercial grade air filtration for meeting rooms and open spaces', 'Facilities & MRO', 'each', 89000, 4, 3, '💨');
   await insertCatalog.run('SKU-FAC-002', 'OSHA 4-Shelf Industrial First Aid Station', 'Compliant wall-mounted emergency medical care unit', 'Facilities & MRO', 'kit', 21000, 4, 2, '🩹');
   await insertCatalog.run('SKU-FAC-003', 'Commercial Touchless Sanitizer & Dispenser Stand', 'Floor-standing automatic sensor sanitizer station', 'Facilities & MRO', 'set', 14500, 4, 2, '🧴');
+  await insertCatalog.run('SKU-GAS-001', 'Industrial liquid nitrogen', 'Vendor-managed cryogenic nitrogen for the LN2 silo', 'Facilities & MRO', 'kg', 125, 8, 5, '🧪');
+  await insertCatalog.run('SKU-GAS-002', 'Welding-grade argon', 'Vendor-managed argon in a tube bank', 'Facilities & MRO', 'm3', 480, 8, 4, '🛢️');
 
   await insertCatalog.run('SKU-SRV-001', 'Enterprise UX Audit & Design System Sprint', 'Two-week dedicated product design sprint and component audit', 'Consulting & Professional Services', 'sprint', 850000, 5, 14, '📐');
   await insertCatalog.run('SKU-SRV-002', 'SOC 2 Type II Annual Security Penetration Test', 'Full external threat simulation, vulnerability assessment, and report', 'Consulting & Professional Services', 'engagement', 1250000, 5, 21, '🛡️');
   await insertCatalog.run('SKU-SRV-003', 'Executive Team Coaching & Alignment Workshop', 'Two-day facilitator-led offsite strategy alignment workshop', 'Consulting & Professional Services', 'event', 620000, 5, 10, '👥');
+  await insertCatalog.run('SKU-SRV-004', 'Senior Consultant — Hourly Advisory', 'Time-based professional services billed by the hour', 'Consulting & Professional Services', 'hour', 18500, 5, 5, '⏱️');
+  await insertCatalog.run('SKU-SRV-005', 'On-site Implementation Day', 'One consultant on site for a day, billed by the day', 'Consulting & Professional Services', 'day', 145000, 5, 7, '📅');
 
   await db.exec(`
     UPDATE catalog_items
@@ -151,13 +182,18 @@ await db.transaction(async () => {
       'Software & Cloud',
       'Marketing & Events',
       'Travel & Subscriptions'
-    )
+    );
+    UPDATE catalog_items SET service_basis = 'lump_sum'
+      WHERE sku IN ('SKU-SRV-001', 'SKU-SRV-002', 'SKU-SRV-003');
+    UPDATE catalog_items SET service_basis = 'hours' WHERE sku = 'SKU-SRV-004';
+    UPDATE catalog_items SET service_basis = 'days' WHERE sku = 'SKU-SRV-005';
   `);
 
   // 6. Purchase Requisitions & Items
   // Document trail demos:
   //   PR-2026-001 — complete goods path: PR → approvals → PO-2026-001 → GRN-2026-001 → INV-WED-9042 → AP paid
-  //   PR-2026-005 — complete service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched)
+  //   PR-2026-005 — complete lump-sum service path: PR → approvals → PO-2026-003 → SES-2026-001 → INV-AAD-5501 (matched, no GRN)
+  //   PR-2026-011 — draft time-based service (16 hours + 2 days). Accept on SES, not a GRN.
   //   PR-2026-006 — approved multi-supplier split; after convert the trail shows two PO branches
   // Exception workbench: INV-TSG-11029 is open (David can accept, reject, return, or short-pay).
   // INV-FCJ-7701 is already accept_variance. Short-pay walkthrough: pay 2 × $749.00 = $1,498.00.
@@ -169,6 +205,13 @@ await db.transaction(async () => {
   // Duplicate suspects: INV-TSG-6610 (paid original) + INV-TSG-6611 (open suspect, same $99 / near date).
   // Payment run: INV-WED-4419 + INV-FCJ-9920 are approved and on draft PAY-2026-001.
   // Leave INV-FCJ-8810 as the AP Aging single mark-paid practice invoice.
+  // Consignment: CSN-2026-001 received 12 sanitizer stands (supplier-owned, no GRN).
+  // CSI-2026-001 issued 4 into use as PO-2026-015; INV-FCJ-4402 matches the draw-down.
+  // CSN-2026-002 leaves 20 cases of copy paper on hand at HQ facilities cage for a live issue.
+  // Utilities: UTA-2026-001 electricity UCN-2026-001 / PO-2026-016 / INV-MGU-0901 (matched, no GRN).
+  // UTA-2026-003 gas UCN-2026-002 / PO-2026-017 is uninvoiced. UTA-2026-002 water has no reading yet.
+  // Bulk: BVL-2026-001 LN2 silo filled then BDR-2026-001 / PO-2026-018 / INV-NIG-1801.
+  // BVL-2026-002 argon tube bank is filled and not yet drawn.
   // Contracts hub: CNT-2026-001 Figma (expiring soon) is the 1-click renewal walkthrough.
   // PR-2026-010 is the auto-assign walkthrough (Figma seat proposed against CNT-2026-001).
   // Do not convert that live renewal onto INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
@@ -228,7 +271,10 @@ await db.transaction(async () => {
       'Software & Cloud',
       'Marketing & Events',
       'Travel & Subscriptions'
-    )
+    );
+    UPDATE requisition_items
+    SET service_basis = 'lump_sum'
+    WHERE line_type = 'service' AND category = 'Consulting & Professional Services';
   `);
 
   // 7. Approval Requests
@@ -554,6 +600,65 @@ await db.transaction(async () => {
   );
   await insertPOItem.run(14, 14, null, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO', 1, 14500, 14500, 1, 1);
 
+  // Consignment draw-down. quantity_received stays 0 — this is not a GRN.
+  // 4 stands × $145.00 = $580.00. On-hand after the issue is 8 (receipt of 12).
+  await db.prepare(`
+    INSERT INTO purchase_orders (
+      id, po_number, requisition_id, supplier_id, created_by, status, total_amount,
+      issue_date, expected_delivery_date, payment_terms, shipping_address, notes, order_source
+    ) VALUES (
+      15, 'PO-2026-015', NULL, 4, 3, 'received', 58000,
+      '2026-09-18', '2026-09-18', 'Net 30', 'HQ facilities cage',
+      'Consignment draw-down CSI-2026-001. Supplier-owned sanitizer stands issued into company use. No GRN.',
+      'consignment'
+    )
+  `).run();
+  await db.prepare(`
+    INSERT INTO po_items (
+      id, po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price,
+      quantity_received, quantity_consumed, quantity_invoiced, line_type, receipt_basis
+    ) VALUES (
+      15, 15, NULL, 'Commercial Touchless Sanitizer & Dispenser Stand', 'Facilities & MRO',
+      4, 14500, 58000, 0, 4, 4, 'goods', 'consignment'
+    )
+  `).run();
+
+  // Metered utility payables. quantity_* is milli-units (scale 1000). No GRN.
+  // Electricity 842.500 kWh × $0.18 = $151.65. Gas 310.250 therm × $0.95 is not invoiced yet.
+  await db.prepare(`
+    INSERT INTO purchase_orders (
+      id, po_number, requisition_id, supplier_id, created_by, status, total_amount,
+      issue_date, expected_delivery_date, payment_terms, shipping_address, notes,
+      order_source, settlement_kind
+    ) VALUES
+      (16, 'PO-2026-016', NULL, 7, 3, 'received', ?, '2026-09-30', '2026-09-30', 'Net 30', 'Meter E-104',
+        'Utility consumption UCN-2026-001 on UTA-2026-001. Electricity billed by measured usage. No GRN.',
+        'standard', 'utility'),
+      (17, 'PO-2026-017', NULL, 7, 3, 'received', ?, '2026-09-30', '2026-09-30', 'Net 30', 'Meter G-7',
+        'Utility consumption UCN-2026-002 on UTA-2026-003. Gas billed by measured usage. No invoice yet. No GRN.',
+        'standard', 'utility'),
+      (18, 'PO-2026-018', NULL, 8, 3, 'received', ?, '2026-09-18', '2026-09-18', 'Net 30', 'LN2 silo S-1',
+        'Bulk draw BDR-2026-001 from BVL-2026-001. Supplier-owned nitrogen drawn from the silo. No GRN.',
+        'standard', 'bulk')
+  `).run(ELECTRICITY_AMOUNT, GAS_AMOUNT, NITROGEN_AMOUNT);
+  await db.prepare(`
+    INSERT INTO po_items (
+      id, po_id, requisition_item_id, item_description, category, quantity, unit_price, total_price,
+      quantity_received, quantity_consumed, quantity_invoiced, line_type, receipt_basis,
+      quantity_scale, unit_of_measure, settlement_kind
+    ) VALUES
+      (16, 16, NULL, 'HQ campus electricity (E-104) 2026-09-01 to 2026-09-30', 'Facilities & MRO',
+        ?, ?, ?, 0, ?, ?, 'goods', 'grn', 1000, 'kWh', 'utility'),
+      (17, 17, NULL, 'HQ natural gas (G-7) 2026-09-01 to 2026-09-30', 'Facilities & MRO',
+        ?, ?, ?, 0, ?, 0, 'goods', 'grn', 1000, 'therm', 'utility'),
+      (18, 18, NULL, 'Industrial liquid nitrogen drawn from LN2 silo S-1', 'Facilities & MRO',
+        ?, ?, ?, 0, ?, ?, 'goods', 'grn', 1000, 'kg', 'bulk')
+  `).run(
+    ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT, ELECTRICITY_MILLI, ELECTRICITY_MILLI,
+    GAS_MILLI, GAS_PRICE, GAS_AMOUNT, GAS_MILLI,
+    NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_AMOUNT, NITROGEN_MILLI, NITROGEN_MILLI
+  );
+
   // 9. Goods Receipts
   const insertGRN = db.prepare(`
     INSERT INTO goods_receipts (id, grn_number, po_id, received_by, receipt_date, carrier_tracking, delivery_note_number, notes)
@@ -606,6 +711,9 @@ await db.transaction(async () => {
       'Marketing & Events',
       'Travel & Subscriptions'
     );
+    UPDATE po_items
+    SET service_basis = 'lump_sum'
+    WHERE line_type = 'service' AND category = 'Consulting & Professional Services';
     UPDATE po_items SET quantity_accepted = 1 WHERE id = 3;
   `);
 
@@ -895,6 +1003,150 @@ await db.transaction(async () => {
   await insertInvoiceItem.run(12, 14, 'Commercial Touchless Sanitizer & Dispenser Stand', 1, 14500, 14500);
   await insertMatch.run(12, 14, 14, 1, 1, 1, 14500, 14500, 0, 0, 'pass', 'Exact match on quantity (1) and price ($145.00).');
 
+  // Consignment draw-down invoice. Receipt basis is quantity_consumed (4), not a GRN.
+  await insertInvoice.run(
+    13,
+    'INV-FCJ-4402',
+    15,
+    4,
+    '2026-09-20',
+    '2026-10-20',
+    58000,
+    0,
+    58000,
+    'matched',
+    'perfect_match',
+    null,
+    'Consignment match against CSI-2026-001 and PO-2026-015. Four stands drawn from supplier-owned stock. No GRN.'
+  );
+  await insertInvoiceItem.run(13, 15, 'Commercial Touchless Sanitizer & Dispenser Stand', 4, 14500, 58000);
+  await insertMatch.run(
+    13, 15, 15, 4, 4, 4, 14500, 14500, 0, 0, 'pass',
+    'Exact consignment match: 4 units at $145.00 matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.'
+  );
+
+  await insertInvoice.run(
+    14,
+    'INV-MGU-0901',
+    16,
+    7,
+    '2026-10-01',
+    '2026-10-31',
+    ELECTRICITY_AMOUNT,
+    0,
+    ELECTRICITY_AMOUNT,
+    'matched',
+    'perfect_match',
+    null,
+    'Measured match against UCN-2026-001 and PO-2026-016. 842.500 kWh of electricity. No GRN.'
+  );
+  await insertInvoiceItem.run(14, 16, 'HQ campus electricity (E-104) 2026-09-01 to 2026-09-30', ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT);
+  await insertMatch.run(
+    14, 16, 16, ELECTRICITY_MILLI, ELECTRICITY_MILLI, ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_PRICE, 0, 0, 'pass',
+    'Exact measured match: 842.500 kWh at $0.18 matches the utility consumption. No GRN was posted.'
+  );
+
+  await insertInvoice.run(
+    15,
+    'INV-NIG-1801',
+    18,
+    8,
+    '2026-09-20',
+    '2026-10-20',
+    NITROGEN_AMOUNT,
+    0,
+    NITROGEN_AMOUNT,
+    'matched',
+    'perfect_match',
+    null,
+    'Measured match against BDR-2026-001 and PO-2026-018. 450.250 kg drawn from the LN2 silo. No GRN.'
+  );
+  await insertInvoiceItem.run(15, 18, 'Industrial liquid nitrogen drawn from LN2 silo S-1', NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_AMOUNT);
+  await insertMatch.run(
+    15, 18, 18, NITROGEN_MILLI, NITROGEN_MILLI, NITROGEN_MILLI, NITROGEN_PRICE, NITROGEN_PRICE, 0, 0, 'pass',
+    'Exact measured match: 450.250 kg at $1.25 matches the bulk draw-down. No GRN was posted.'
+  );
+
+  const sanitizerItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-FAC-003'`).get();
+  const paperItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-OFF-004'`).get();
+  await db.prepare(`
+    INSERT INTO consignment_balances (
+      id, supplier_id, catalog_item_id, location_label, quantity_on_hand, unit_price, notes, status
+    ) VALUES
+      (1, 4, ?, 'HQ facilities cage', 8, 14500, 'Vendor-owned sanitizer stands staged in the facilities cage.', 'active'),
+      (2, 3, ?, 'HQ facilities cage', 20, 5800, 'Vendor-owned copy paper. Not yet drawn into company use.', 'active')
+  `).run(sanitizerItem.id, paperItem.id);
+  await db.prepare(`
+    INSERT INTO consignment_receipts (
+      id, receipt_number, balance_id, supplier_id, catalog_item_id, location_label,
+      quantity, unit_price, received_by, receipt_date, notes
+    ) VALUES
+      (1, 'CSN-2026-001', 1, 4, ?, 'HQ facilities cage', 12, 14500, 3, '2026-09-10', 'Supplier delivered 12 stands. Still owned by FacilityCare.'),
+      (2, 'CSN-2026-002', 2, 3, ?, 'HQ facilities cage', 20, 5800, 3, '2026-09-12', 'Supplier delivered 20 cases. Still owned by WorkSpace.')
+  `).run(sanitizerItem.id, paperItem.id);
+  await db.prepare(`
+    INSERT INTO consignment_issues (
+      id, issue_number, balance_id, supplier_id, catalog_item_id, location_label,
+      quantity, unit_price, amount_cents, po_id, po_item_id, issued_by, issue_date, notes
+    ) VALUES (
+      1, 'CSI-2026-001', 1, 4, ?, 'HQ facilities cage',
+      4, 14500, 58000, 15, 15, 3, '2026-09-18',
+      'Four stands placed in the lobby. Payable PO-2026-015.'
+    )
+  `).run(sanitizerItem.id);
+
+  const nitrogenItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-GAS-001'`).get();
+  const argonItem = await db.prepare(`SELECT id FROM catalog_items WHERE sku = 'SKU-GAS-002'`).get();
+  await db.prepare(`
+    INSERT INTO utility_arrangements (
+      id, arrangement_number, supplier_id, utility_type, name, meter_label,
+      unit_of_measure, unit_price, notes, status
+    ) VALUES
+      (1, 'UTA-2026-001', 7, 'electricity', 'HQ campus electricity', 'E-104', 'kWh', ?, 'Main campus meter. Billed from the monthly reading.', 'active'),
+      (2, 'UTA-2026-002', 7, 'water', 'HQ domestic water', 'W-12', 'm3', 210, 'No consumption recorded yet. Enter a reading from Metered Utilities.', 'active'),
+      (3, 'UTA-2026-003', 7, 'gas', 'HQ natural gas', 'G-7', 'therm', ?, 'September usage is on PO-2026-017 and still needs a supplier invoice.', 'active')
+  `).run(ELECTRICITY_PRICE, GAS_PRICE);
+  await db.prepare(`
+    INSERT INTO utility_consumptions (
+      id, consumption_number, arrangement_id, supplier_id, period_start, period_end,
+      reading_previous_milli, reading_current_milli, quantity_milli, unit_of_measure,
+      unit_price, amount_cents, po_id, po_item_id, recorded_by, notes
+    ) VALUES
+      (1, 'UCN-2026-001', 1, 7, '2026-09-01', '2026-09-30', 10240000, 11082500, ?, 'kWh', ?, ?, 16, 16, 3,
+        'Meter E-104 advanced 842.500 kWh. Payable PO-2026-016. Matched by INV-MGU-0901.'),
+      (2, 'UCN-2026-002', 3, 7, '2026-09-01', '2026-09-30', NULL, NULL, ?, 'therm', ?, ?, 17, 17, 3,
+        'Billed quantity from the gas utility. Payable PO-2026-017 is waiting for the invoice.')
+  `).run(
+    ELECTRICITY_MILLI, ELECTRICITY_PRICE, ELECTRICITY_AMOUNT,
+    GAS_MILLI, GAS_PRICE, GAS_AMOUNT
+  );
+  await db.prepare(`
+    INSERT INTO bulk_containers (
+      id, container_number, supplier_id, catalog_item_id, name, vessel_type,
+      unit_of_measure, capacity_milli, level_milli, unit_price, notes, status
+    ) VALUES
+      (1, 'BVL-2026-001', 8, ?, 'LN2 silo S-1', 'silo', 'kg', 5000000, 2749750, ?, 'Cryogenic silo at the facilities yard. Supplier-owned until drawn.', 'active'),
+      (2, 'BVL-2026-002', 8, ?, 'Argon tube bank A-3', 'container', 'm3', 800000, 640000, 480, 'Filled and not yet drawn. Draw it from Vendor-Managed Bulk.', 'active')
+  `).run(nitrogenItem.id, NITROGEN_PRICE, argonItem.id);
+  await db.prepare(`
+    INSERT INTO bulk_fills (
+      id, fill_number, container_id, supplier_id, catalog_item_id, quantity_milli,
+      unit_of_measure, unit_price, level_after_milli, filled_by, fill_date, notes
+    ) VALUES
+      (1, 'BFL-2026-001', 1, 8, ?, 3200000, 'kg', ?, 3200000, 3, '2026-09-08', 'Supplier filled the silo. Still owned by Northwind. No GRN.'),
+      (2, 'BFL-2026-002', 2, 8, ?, 640000, 'm3', 480, 640000, 3, '2026-09-09', 'Tube bank delivered full. Still supplier-owned. No GRN.')
+  `).run(nitrogenItem.id, NITROGEN_PRICE, argonItem.id);
+  await db.prepare(`
+    INSERT INTO bulk_draws (
+      id, draw_number, container_id, supplier_id, catalog_item_id, quantity_milli,
+      unit_of_measure, unit_price, amount_cents, level_after_milli,
+      po_id, po_item_id, drawn_by, draw_date, notes
+    ) VALUES (
+      1, 'BDR-2026-001', 1, 8, ?, 450250, 'kg', ?, ?, 2749750,
+      18, 18, 3, '2026-09-18', '450.250 kg drawn into the lab. Payable PO-2026-018. No GRN.'
+    )
+  `).run(nitrogenItem.id, NITROGEN_PRICE, NITROGEN_AMOUNT);
+
   const insertDupFlag = db.prepare(`
     INSERT INTO invoice_duplicate_flags (
       invoice_id, candidate_invoice_id, match_rule,
@@ -980,8 +1232,8 @@ await db.transaction(async () => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertContractItem = db.prepare(`
-    INSERT INTO contract_items (contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO contract_items (contract_id, catalog_item_id, description, quantity, unit_price, total_price, line_type, service_basis)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const figEnd = utcYmdOffset(20);
@@ -990,16 +1242,16 @@ await db.transaction(async () => {
   const apexEnd = utcYmdOffset(120);
 
   await insertContract.run(1, 'CNT-2026-001', 2, 1, 'Figma Enterprise Organization Subscription', 'Software & Cloud', utcYmdOffset(-345), figEnd, 30, 540000, 1, 'active', 'Annual enterprise tier with unlimited design workspaces. 30 days written notice required.');
-  await insertContractItem.run(1, 5, 'Figma Organization Annual User License', 10, 54000, 540000, 'service');
+  await insertContractItem.run(1, 5, 'Figma Organization Annual User License', 10, 54000, 540000, 'service', null);
 
   await insertContract.run(2, 'CNT-2026-002', 2, 2, 'Slack Enterprise Grid Annual Agreement', 'Software & Cloud', utcYmdOffset(-275), slackEnd, 60, 900000, 1, 'active', 'Enterprise grid corporate communications. 60 days advance cancellation notice.');
-  await insertContractItem.run(2, 6, 'Slack Enterprise Grid Annual Subscription', 50, 18000, 900000, 'service');
+  await insertContractItem.run(2, 6, 'Slack Enterprise Grid Annual Subscription', 50, 18000, 900000, 'service', null);
 
   await insertContract.run(3, 'CNT-2026-003', 4, 3, 'CleanPro Commercial Facilities & Janitorial Master Agreement', 'Facilities & MRO', utcYmdOffset(-357), cleanEnd, 30, 1200000, 1, 'active', 'Daily commercial facility cleaning and maintenance across HQ wings.');
-  await insertContractItem.run(3, null, 'Annual Comprehensive Facility Cleaning & Janitorial Retainer', 1, 1200000, 1200000, 'service');
+  await insertContractItem.run(3, null, 'Annual Comprehensive Facility Cleaning & Janitorial Retainer', 1, 1200000, 1200000, 'service', 'lump_sum');
 
   await insertContract.run(4, 'CNT-2026-004', 5, 1, 'Apex Strategic Design & UX On-Demand Retainer', 'Consulting & Professional Services', utcYmdOffset(-250), apexEnd, 30, 1700000, 0, 'active', 'Bi-weekly sprint design advisory and product design system support.');
-  await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service');
+  await insertContractItem.run(4, 16, 'Enterprise UX Audit & Design System Sprint', 2, 850000, 1700000, 'service', 'lump_sum');
 
   // Live auto-assign walkthrough: Alice's extra Figma seat is already proposed against
   // CNT-2026-001 so Bob (or Priya via the seeded OOO delegation) can allow/refuse.
@@ -1019,28 +1271,68 @@ await db.transaction(async () => {
   await db.prepare(`UPDATE requisition_items SET line_type = 'service' WHERE requisition_id = 10`).run();
   await insertApproval.run(10, 2, 1, 'pending', null, null);
 
+  // Time-based service draft (hours + days). Not approved, so it does not move budget.
+  // Close it later with a service entry sheet — there is no GRN on this path.
+  await insertPR.run(
+    11,
+    'PR-2026-011',
+    1,
+    2,
+    'draft',
+    586000,
+    'Apex advisory for the SOC 2 remediation follow-up: 16 hours plus 2 on-site days. Service lines are accepted on a service entry sheet, not a goods receipt.',
+    '2026-10-30',
+    'Medium',
+    '0 days'
+  );
+  await insertPRItem.run(11, 20, 'Senior Consultant — Hourly Advisory', 'Consulting & Professional Services', 16, 18500, 296000, 5);
+  await insertPRItem.run(11, 21, 'On-site Implementation Day', 'Consulting & Professional Services', 2, 145000, 290000, 5);
+  await db.prepare(`
+    UPDATE requisition_items
+    SET line_type = 'service', service_basis = 'hours'
+    WHERE requisition_id = 11 AND catalog_item_id = 20
+  `).run();
+  await db.prepare(`
+    UPDATE requisition_items
+    SET line_type = 'service', service_basis = 'days'
+    WHERE requisition_id = 11 AND catalog_item_id = 21
+  `).run();
+
   // 12. Audit Logs
-  const insertAudit = db.prepare(`
+  const insertAuditRelative = db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
     VALUES (?, ?, ?, ?, ?, datetime('now', ?))
   `);
+  const insertAuditAbsolute = db.prepare(`
+    INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  // audit_logs rejects UPDATE, so absolute chronology is written on insert.
+  const insertAudit = {
+    run: (entityType, entityId, action, actorName, details, createdAt) => {
+      if (/^\d{4}-\d{2}-\d{2}/.test(String(createdAt || ''))) {
+        return insertAuditAbsolute.run(entityType, entityId, action, actorName, details, createdAt);
+      }
+      return insertAuditRelative.run(entityType, entityId, action, actorName, details, createdAt);
+    }
+  };
   await insertAudit.run('requisition', 1, 'CREATED', 'Alice Chen', 'Requisition created for 2 Herman Miller Chairs', '-7 days');
   await insertAudit.run('requisition', 1, 'SUBMITTED', 'Alice Chen', 'Submitted for manager approval', '-7 days');
   await insertAudit.run('requisition', 1, 'APPROVED', 'Bob Martinez', 'Approved PR-2026-001 for $2,590.00', '-6 days');
   await insertAudit.run('purchase_order', 1, 'ISSUED', 'Carol Zhang', 'PO-2026-001 issued to WorkSpace Ergonomics Depot', '-5 days');
   await insertAudit.run('goods_receipt', 1, 'RECEIVED', 'Carol Zhang', 'GRN-2026-001 confirmed 2 chairs received in good condition', '-2 days');
   await insertAudit.run('invoice', 1, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-2 days');
-  await insertAudit.run('invoice', 1, 'APPROVED_PAYMENT', 'David Miller', 'Approved invoice INV-WED-9042 for payment', '-1 days');
-  await insertAudit.run('invoice', 1, 'PAID', 'David Miller', 'Marked as paid with reference ACH-1017-WED9042', '0 days');
+  await insertAudit.run('invoice', 1, 'APPROVED_PAYMENT', 'David Miller', 'Approved invoice INV-WED-9042 for payment', '2026-09-03 10:00:00');
+  await insertAudit.run('invoice', 1, 'PAID', 'David Miller', 'Marked as paid with reference ACH-1017-WED9042', '2026-09-04 08:00:00');
   await insertAudit.run('invoice', 2, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged price variance (+ $50/unit) and quantity discrepancy', '0 days');
   await insertAudit.run('requisition', 5, 'CREATED', 'Alice Chen', 'Requisition created for SOC 2 Type II penetration test', '-10 days');
   await insertAudit.run('requisition', 5, 'APPROVED', 'David Miller', 'Final approval and ITE budget commit for PR-2026-005', '-9 days');
   await insertAudit.run('purchase_order', 3, 'ISSUED', 'Carol Zhang', 'PO-2026-003 issued to Apex Advisory & Digital', '-9 days');
   await insertAudit.run('service_entry_sheet', 1, 'CREATED', 'Alice Chen', 'SES-2026-001 recorded acceptance of SOC 2 engagement', '-2 days');
-  await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003 (1 unit)', '-2 days');
+  await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003: service delivered (1 lump sum).', '-2 days');
   await insertAudit.run('invoice', 3, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-AAD-5501 SES-backed match passed (PO+SES+invoice)', '-1 days');
   await insertAudit.run('invoice', 4, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-7701 flagged price_variance (400¢ over PO)', '-1 days');
-  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '0 days');
+  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '2026-09-06 09:30:00');
   await insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
   await insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
   await insertAudit.run('requisition', 7, 'CREATED', 'Alice Chen', 'Requisition created for 3 Logitech MX Master 3S mice', '-4 days');
@@ -1049,7 +1341,7 @@ await db.transaction(async () => {
   await insertAudit.run('purchase_order', 6, 'ISSUED', 'Carol Zhang', 'PO-2026-006 issued to TechSupply Global', '-3 days');
   await insertAudit.run('goods_receipt', 4, 'RECEIVED', 'Carol Zhang', 'GRN-2026-004 confirmed 2 of 3 mice received; one on backorder', '-1 days');
   await insertAudit.run('invoice', 5, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged quantity variance (3 billed vs 2 received)', '-1 days');
-  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '0 days');
+  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '2026-09-08 09:15:00');
   await insertAudit.run(
     'approval_delegation',
     1,
@@ -1067,23 +1359,27 @@ await db.transaction(async () => {
     'CHANGE_ORDER_APPLIED',
     'Carol Zhang',
     'CO-2026-001 (rev 1) applied to PO-2026-007: $2,670.00 → $2,550.00 (delta -$120.00). Reason: Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged. Lines: Blueair Pro XL Commercial HEPA Air Purifier (unit $890.00→$850.00). Budget committed released by $120.00.',
-    '-4 days'
+    '2026-09-04 10:15:00'
   );
   await insertAudit.run('requisition', 9, 'CREATED', 'Sofia Berg', 'Requisition created for 2 cases of recycled copy paper', '-8 days');
   await insertAudit.run('requisition', 9, 'APPROVED', 'Sofia Berg', 'Approved PR-2026-009 for $116.00', '-8 days');
   await insertAudit.run('purchase_order', 8, 'ISSUED', 'Carol Zhang', 'PO-2026-008 issued to FacilityCare & Janitorial Pro', '-20 days');
   await insertAudit.run('purchase_order', 9, 'ISSUED', 'Carol Zhang', 'PO-2026-009 issued to WorkSpace Ergonomics Depot', '-8 days');
+  await insertAudit.run('consignment_receipt', 1, 'RECEIVED', 'Carol Zhang', 'Recorded CSN-2026-001: 12 SKU-FAC-003 from FacilityCare at HQ facilities cage. Supplier-owned; no GRN.', '-20 days');
+  await insertAudit.run('consignment_receipt', 2, 'RECEIVED', 'Carol Zhang', 'Recorded CSN-2026-002: 20 SKU-OFF-004 from WorkSpace at HQ facilities cage. Supplier-owned; no GRN.', '-18 days');
+  await insertAudit.run('consignment_issue', 1, 'ISSUED', 'Carol Zhang', 'Issued CSI-2026-001: 4 SKU-FAC-003 from HQ facilities cage onto PO-2026-015. No GRN.', '-12 days');
+  await insertAudit.run('purchase_order', 15, 'ISSUED', 'Carol Zhang', 'PO-2026-015 opened for consignment draw-down CSI-2026-001 (4 × Commercial Touchless Sanitizer & Dispenser Stand).', '-12 days');
   await insertAudit.run('purchase_order', 10, 'ISSUED', 'Carol Zhang', 'PO-2026-010 issued to TechSupply Global', '-14 days');
   await insertAudit.run('goods_receipt', 5, 'RECEIVED', 'Carol Zhang', 'GRN-2026-005 confirmed first-aid station received', '-17 days');
   await insertAudit.run('goods_receipt', 6, 'RECEIVED', 'Carol Zhang', 'GRN-2026-006 confirmed 2 cases of copy paper received', '-4 days');
   await insertAudit.run('goods_receipt', 7, 'RECEIVED', 'Carol Zhang', 'GRN-2026-007 confirmed CalDigit dock received', '-10 days');
   await insertAudit.run('invoice', 6, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-8810 flagged price_variance (1000¢ over PO)', '-17 days');
-  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', 'Short-pay INV-FCJ-8810: billed $220.00 → payable $210.00 (delta $10.00). Reason: Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.', '-15 days');
-  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-8810 for Billed $220.00 → Pay $210.00 payment', '-14 days');
+  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', 'Short-pay INV-FCJ-8810: billed $220.00 → payable $210.00 (delta $10.00). Reason: Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.', '2026-08-28 10:00:00');
+  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-8810 for Billed $220.00 → Pay $210.00 payment', '2026-08-29 09:00:00');
   await insertAudit.run('invoice', 7, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-6 days');
-  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '-5 days');
+  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '2026-09-09 09:00:00');
   await insertAudit.run('invoice', 8, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-10 days');
-  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '-9 days');
+  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '2026-09-03 09:30:00');
   await insertAudit.run('purchase_order', 11, 'ISSUED', 'Carol Zhang', 'PO-2026-011 issued to TechSupply Global', '-6 days');
   await insertAudit.run('purchase_order', 12, 'ISSUED', 'Carol Zhang', 'PO-2026-012 issued to TechSupply Global', '-3 days');
   await insertAudit.run('goods_receipt', 8, 'RECEIVED', 'Carol Zhang', 'GRN-2026-008 confirmed spare MX Master received', '-5 days');
@@ -1131,10 +1427,6 @@ await db.transaction(async () => {
     UPDATE purchase_orders SET created_at = '2026-08-29 09:30:00' WHERE id = 1;
     UPDATE goods_receipts SET created_at = '2026-09-02 11:00:00' WHERE id = 1;
     UPDATE invoices SET created_at = '2026-09-02 15:00:00' WHERE id = 1;
-    UPDATE audit_logs SET created_at = '2026-09-03 10:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'APPROVED_PAYMENT';
-    UPDATE audit_logs SET created_at = '2026-09-04 08:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'PAID';
 
     UPDATE purchase_requisitions SET created_at = '2026-08-24 09:00:00' WHERE id = 5;
     UPDATE purchase_requisitions SET created_at = '2026-09-03 08:00:00' WHERE id = 6;
@@ -1145,21 +1437,15 @@ await db.transaction(async () => {
     UPDATE purchase_orders SET created_at = '2026-09-01 10:00:00' WHERE id = 5;
     UPDATE goods_receipts SET created_at = '2026-09-04 14:00:00' WHERE id = 3;
     UPDATE invoices SET created_at = '2026-09-05 11:00:00' WHERE id = 4;
-    UPDATE audit_logs SET created_at = '2026-09-06 09:30:00'
-      WHERE entity_type = 'invoice' AND entity_id = 4 AND action = 'EXCEPTION_ACCEPT_VARIANCE';
 
     UPDATE purchase_requisitions SET created_at = '2026-09-03 16:00:00' WHERE id = 7;
     UPDATE purchase_orders SET created_at = '2026-09-04 11:00:00' WHERE id = 6;
     UPDATE goods_receipts SET created_at = '2026-09-06 13:00:00' WHERE id = 4;
     UPDATE invoices SET created_at = '2026-09-07 10:30:00' WHERE id = 5;
-    UPDATE audit_logs SET created_at = '2026-09-08 09:15:00'
-      WHERE entity_type = 'invoice' AND entity_id = 5 AND action = 'EXCEPTION_RETURN_TO_BUYER';
 
     UPDATE purchase_requisitions SET created_at = '2026-09-01 09:00:00' WHERE id = 8;
     UPDATE purchase_orders SET created_at = '2026-09-03 11:00:00' WHERE id = 7;
     UPDATE po_change_orders SET created_at = '2026-09-04 10:15:00', applied_at = '2026-09-04 10:15:00' WHERE id = 1;
-    UPDATE audit_logs SET created_at = '2026-09-04 10:15:00'
-      WHERE entity_type = 'purchase_order' AND entity_id = 7 AND action = 'CHANGE_ORDER_APPLIED';
 
     UPDATE purchase_requisitions SET created_at = '2026-09-03 09:00:00' WHERE id = 9;
     UPDATE purchase_orders SET created_at = '2026-08-20 10:00:00' WHERE id = 8;
@@ -1171,14 +1457,6 @@ await db.transaction(async () => {
     UPDATE invoices SET created_at = '2026-08-26 16:00:00' WHERE id = 6;
     UPDATE invoices SET created_at = '2026-09-08 13:00:00' WHERE id = 7;
     UPDATE invoices SET created_at = '2026-09-02 16:30:00' WHERE id = 8;
-    UPDATE audit_logs SET created_at = '2026-08-28 10:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 6 AND action = 'EXCEPTION_SHORT_PAY';
-    UPDATE audit_logs SET created_at = '2026-08-29 09:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 6 AND action = 'APPROVED_FOR_PAYMENT';
-    UPDATE audit_logs SET created_at = '2026-09-09 09:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 7 AND action = 'APPROVED_FOR_PAYMENT';
-    UPDATE audit_logs SET created_at = '2026-09-03 09:30:00'
-      WHERE entity_type = 'invoice' AND entity_id = 8 AND action = 'APPROVED_FOR_PAYMENT';
 
     UPDATE purchase_orders SET created_at = '2026-09-01 10:00:00' WHERE id = 11;
     UPDATE purchase_orders SET created_at = '2026-09-04 10:00:00' WHERE id = 12;
@@ -1193,10 +1471,21 @@ await db.transaction(async () => {
     UPDATE goods_receipts SET created_at = '2026-09-07 15:00:00' WHERE id = 11;
     UPDATE invoices SET created_at = datetime('now', '-8 days') WHERE id = 11;
     UPDATE invoices SET created_at = datetime('now', '-7 days') WHERE id = 12;
+
+    UPDATE purchase_orders SET created_at = '2026-09-30 09:00:00' WHERE id IN (16, 17);
+    UPDATE purchase_orders SET created_at = '2026-09-18 11:00:00' WHERE id = 18;
+    UPDATE utility_consumptions SET created_at = '2026-09-30 09:05:00' WHERE id IN (1, 2);
+    UPDATE bulk_fills SET created_at = '2026-09-08 08:00:00' WHERE id = 1;
+    UPDATE bulk_fills SET created_at = '2026-09-09 08:00:00' WHERE id = 2;
+    UPDATE bulk_draws SET created_at = '2026-09-18 11:05:00' WHERE id = 1;
+    UPDATE invoices SET created_at = '2026-10-01 10:00:00' WHERE id = 14;
+    UPDATE invoices SET created_at = '2026-09-20 10:00:00' WHERE id = 15;
   `);
 
 });
 
 console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
+console.log('   Utilities: UTA-2026-001 electricity (INV-MGU-0901 matched), UTA-2026-003 gas awaiting invoice, UTA-2026-002 water with no reading.');
+console.log('   Bulk: LN2 silo BVL-2026-001 drawn as PO-2026-018 (INV-NIG-1801). Argon tube bank BVL-2026-002 is filled and not drawn.');
 console.log(`   Demo login (local only): alice.chen@company.com / ${DEMO_SEED_PASSWORD}`);
 console.log('   Same password for Bob, Carol, David, Elena, Priya, James, Sofia. Never use this in a customer DB.');

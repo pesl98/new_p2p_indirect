@@ -6,6 +6,9 @@ import {
   CheckSquare, 
   ShoppingCart, 
   PackageCheck,
+  Warehouse,
+  Gauge,
+  Cylinder,
   ClipboardCheck,
   FileSpreadsheet, 
   Landmark, 
@@ -19,7 +22,8 @@ import {
   UserCog,
   UserCheck,
   FileCheck,
-  Users
+  Users,
+  ScrollText
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -83,6 +87,24 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       desc: 'Physical receiving for goods lines'
     },
     {
+      id: 'consignment',
+      label: 'Consignment Stock',
+      icon: Warehouse,
+      desc: 'Supplier-owned inventory at your site'
+    },
+    {
+      id: 'utilities',
+      label: 'Metered Utilities',
+      icon: Gauge,
+      desc: 'Water, electricity, and gas by consumption'
+    },
+    {
+      id: 'bulk',
+      label: 'Vendor-Managed Bulk',
+      icon: Cylinder,
+      desc: 'Measured gas and fluid in a container or silo'
+    },
+    {
       id: 'service_entry',
       label: 'Service Entry (SES)',
       icon: ClipboardCheck,
@@ -139,6 +161,11 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           badge: paymentRunDraftCount > 0 ? paymentRunDraftCount : null,
           badgeColor: 'bg-indigo-500 text-white',
           desc: 'Batch ACH payment proposals'
+        }, {
+          id: 'compliance',
+          label: 'Audit & Compliance',
+          icon: ScrollText,
+          desc: 'Trail, segregation of duties, and verification'
         }]
       : []),
     {

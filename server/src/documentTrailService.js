@@ -4,6 +4,7 @@
  */
 
 import { formatCents } from './money.js';
+import { formatMeasured } from './measuredQty.js';
 
 const AP_AUDIT_ACTIONS = new Set(['APPROVED_FOR_PAYMENT', 'APPROVED_PAYMENT', 'PAID']);
 
@@ -43,6 +44,9 @@ const KIND_ORDER = {
   purchase_order: 4,
   change_order: 5,
   goods_receipt: 6,
+  consignment_issue: 6,
+  utility_consumption: 6,
+  bulk_draw: 6,
   service_entry_sheet: 7,
   invoice: 8,
   exception: 9,
@@ -89,6 +93,12 @@ function tabForKind(kind) {
       return 'purchase_orders';
     case 'goods_receipt':
       return 'goods_receipt';
+    case 'consignment_issue':
+      return 'consignment';
+    case 'utility_consumption':
+      return 'utilities';
+    case 'bulk_draw':
+      return 'bulk';
     case 'service_entry_sheet':
       return 'service_entry';
     case 'invoice':
@@ -449,6 +459,97 @@ async function loadChangeOrderEvents(db, poId) {
     }));
 }
 
+async function loadConsignmentIssues(db, poId) {
+  const rows = await db.prepare(`
+    SELECT
+      ci.*,
+      u.name as issued_by_name,
+      c.sku,
+      c.name as item_name
+    FROM consignment_issues ci
+    JOIN users u ON ci.issued_by = u.id
+    JOIN catalog_items c ON ci.catalog_item_id = c.id
+    WHERE ci.po_id = ?
+    ORDER BY ci.id ASC
+  `).all(poId);
+  return rows.map((row) => ({
+    id: row.id,
+    issue_number: row.issue_number,
+    quantity: row.quantity,
+    unit_price: row.unit_price,
+    amount_cents: row.amount_cents,
+    location_label: row.location_label,
+    issue_date: row.issue_date,
+    notes: row.notes,
+    sku: row.sku,
+    item_name: row.item_name,
+    issued_by_name: row.issued_by_name,
+    created_at: toIsoTimestamp(row.created_at)
+  }));
+}
+
+async function loadUtilityConsumptions(db, poId) {
+  const rows = await db.prepare(`
+    SELECT
+      uc.*,
+      u.name as recorded_by_name,
+      a.name as arrangement_name,
+      a.meter_label,
+      a.utility_type
+    FROM utility_consumptions uc
+    JOIN users u ON uc.recorded_by = u.id
+    JOIN utility_arrangements a ON uc.arrangement_id = a.id
+    WHERE uc.po_id = ?
+    ORDER BY uc.id ASC
+  `).all(poId);
+  return rows.map((row) => ({
+    id: row.id,
+    consumption_number: row.consumption_number,
+    quantity_milli: row.quantity_milli,
+    unit_of_measure: row.unit_of_measure,
+    amount_cents: row.amount_cents,
+    period_start: row.period_start,
+    period_end: row.period_end,
+    arrangement_name: row.arrangement_name,
+    meter_label: row.meter_label,
+    utility_type: row.utility_type,
+    recorded_by_name: row.recorded_by_name,
+    notes: row.notes,
+    created_at: toIsoTimestamp(row.created_at)
+  }));
+}
+
+async function loadBulkDraws(db, poId) {
+  const rows = await db.prepare(`
+    SELECT
+      d.*,
+      u.name as drawn_by_name,
+      c.name as container_name,
+      c.vessel_type,
+      i.name as item_name
+    FROM bulk_draws d
+    JOIN users u ON d.drawn_by = u.id
+    JOIN bulk_containers c ON d.container_id = c.id
+    JOIN catalog_items i ON d.catalog_item_id = i.id
+    WHERE d.po_id = ?
+    ORDER BY d.id ASC
+  `).all(poId);
+  return rows.map((row) => ({
+    id: row.id,
+    draw_number: row.draw_number,
+    quantity_milli: row.quantity_milli,
+    unit_of_measure: row.unit_of_measure,
+    amount_cents: row.amount_cents,
+    container_name: row.container_name,
+    vessel_type: row.vessel_type,
+    item_name: row.item_name,
+    draw_date: row.draw_date,
+    drawn_by_name: row.drawn_by_name,
+    notes: row.notes,
+    created_at: toIsoTimestamp(row.created_at)
+  }));
+}
+
 async function loadPoLineSummary(db, poId) {
   return await db.prepare(`
     SELECT
@@ -465,8 +566,14 @@ async function loadPurchaseOrderBranches(db, poRows) {
     const lines = await loadPoLineSummary(db, po.id);
     const goodsReceipts = await loadGoodsReceipts(db, po.id);
     const serviceEntrySheets = await loadServiceEntrySheets(db, po.id);
+    const consignmentIssues = await loadConsignmentIssues(db, po.id);
+    const utilityConsumptions = await loadUtilityConsumptions(db, po.id);
+    const bulkDraws = await loadBulkDraws(db, po.id);
     const invoices = await loadInvoiceRows(db, po.id);
     const changeOrderEvents = await loadChangeOrderEvents(db, po.id);
+    const consignmentDrawdown = po.order_source === 'consignment' || consignmentIssues.length > 0;
+    const utilityConsumption = po.settlement_kind === 'utility' || utilityConsumptions.length > 0;
+    const bulkDrawdown = po.settlement_kind === 'bulk' || bulkDraws.length > 0;
     return {
       id: po.id,
       po_number: po.po_number,
@@ -487,11 +594,22 @@ async function loadPurchaseOrderBranches(db, poRows) {
       revision: po.revision ?? 0,
       change_order_count: po.change_order_count ?? 0,
       change_order_events: changeOrderEvents,
+      order_source: po.order_source || 'standard',
+      settlement_kind: po.settlement_kind || 'purchase',
       goods_receipts: goodsReceipts,
       service_entry_sheets: serviceEntrySheets,
+      consignment_issues: consignmentIssues,
+      utility_consumptions: utilityConsumptions,
+      bulk_draws: bulkDraws,
       invoices,
       receiving: {
-        goods: goodsReceipts.length > 0 ? 'recorded' : ((lines?.goods_line_count || 0) > 0 ? 'not_started' : 'not_applicable'),
+        goods: consignmentDrawdown
+          ? 'consignment'
+          : utilityConsumption
+            ? 'utility'
+            : bulkDrawdown
+              ? 'bulk'
+              : (goodsReceipts.length > 0 ? 'recorded' : ((lines?.goods_line_count || 0) > 0 ? 'not_started' : 'not_applicable')),
         services: serviceEntrySheets.length > 0 ? 'recorded' : ((lines?.service_line_count || 0) > 0 ? 'not_started' : 'not_applicable')
       }
     };
@@ -511,8 +629,38 @@ function buildStages({ requisition, approvals, purchaseOrders }) {
   const approvalPending = approvals.some((step) => step.status === 'pending');
   const hasPos = purchaseOrders.length > 0;
   const hasReceiving = purchaseOrders.some(
-    (po) => po.goods_receipts.length > 0 || po.service_entry_sheets.length > 0
+    (po) => po.goods_receipts.length > 0
+      || po.service_entry_sheets.length > 0
+      || po.receiving?.goods === 'consignment'
+      || po.receiving?.goods === 'utility'
+      || po.receiving?.goods === 'bulk'
   );
+  const consumptionModes = new Set(
+    purchaseOrders
+      .map((po) => po.receiving?.goods)
+      .filter((mode) => mode === 'consignment' || mode === 'utility' || mode === 'bulk')
+  );
+  const consumptionOnly = hasReceiving && purchaseOrders.every(
+    (po) => po.receiving?.goods === 'consignment'
+      || po.receiving?.goods === 'utility'
+      || po.receiving?.goods === 'bulk'
+      || (
+        po.goods_receipts.length === 0
+        && po.service_entry_sheets.length === 0
+        && (po.goods_line_count || 0) === 0
+        && (po.service_line_count || 0) === 0
+      )
+  );
+  let receivingLabel = 'GRN / SES';
+  if (consumptionOnly && consumptionModes.size === 1 && consumptionModes.has('consignment')) {
+    receivingLabel = 'Consignment issue';
+  } else if (consumptionOnly && consumptionModes.size === 1 && consumptionModes.has('utility')) {
+    receivingLabel = 'Utility reading';
+  } else if (consumptionOnly && consumptionModes.size === 1 && consumptionModes.has('bulk')) {
+    receivingLabel = 'Bulk draw';
+  } else if (consumptionOnly && consumptionModes.size > 1) {
+    receivingLabel = 'Consumption';
+  }
   const invoices = purchaseOrders.flatMap((po) => po.invoices);
   const hasInvoice = invoices.length > 0;
   const hasAp = invoices.some(
@@ -542,7 +690,7 @@ function buildStages({ requisition, approvals, purchaseOrders }) {
     },
     {
       key: 'receiving',
-      label: 'GRN / SES',
+      label: receivingLabel,
       status: stageStatus({ complete: hasReceiving, current: false })
     },
     {
@@ -671,6 +819,63 @@ function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents 
         supplier_name: po.supplier_name,
         source: 'audit',
         tab: 'purchase_orders'
+      }));
+    }
+
+    for (const issue of po.consignment_issues || []) {
+      events.push(timelineEvent({
+        id: `consignment_issue:${issue.id}`,
+        kind: 'consignment_issue',
+        entity_type: 'consignment_issue',
+        entity_id: issue.id,
+        number: issue.issue_number,
+        title: 'Consignment issue',
+        status: 'issued',
+        at: toIsoTimestamp(issue.issue_date) || issue.created_at,
+        actor_name: issue.issued_by_name,
+        details: issue.notes || `${issue.quantity} ${issue.item_name || ''} drawn at ${issue.location_label}`.trim(),
+        amount_cents: issue.amount_cents,
+        po_id: po.id,
+        po_number: po.po_number,
+        supplier_name: po.supplier_name
+      }));
+    }
+
+    for (const consumption of po.utility_consumptions || []) {
+      events.push(timelineEvent({
+        id: `utility_consumption:${consumption.id}`,
+        kind: 'utility_consumption',
+        entity_type: 'utility_consumption',
+        entity_id: consumption.id,
+        number: consumption.consumption_number,
+        title: 'Utility consumption',
+        status: 'recorded',
+        at: toIsoTimestamp(consumption.period_end) || consumption.created_at,
+        actor_name: consumption.recorded_by_name,
+        details: consumption.notes || `${formatMeasured(consumption.quantity_milli, consumption.unit_of_measure)} on ${consumption.arrangement_name}`,
+        amount_cents: consumption.amount_cents,
+        po_id: po.id,
+        po_number: po.po_number,
+        supplier_name: po.supplier_name
+      }));
+    }
+
+    for (const draw of po.bulk_draws || []) {
+      events.push(timelineEvent({
+        id: `bulk_draw:${draw.id}`,
+        kind: 'bulk_draw',
+        entity_type: 'bulk_draw',
+        entity_id: draw.id,
+        number: draw.draw_number,
+        title: 'Bulk draw',
+        status: 'drawn',
+        at: toIsoTimestamp(draw.draw_date) || draw.created_at,
+        actor_name: draw.drawn_by_name,
+        details: draw.notes || `${formatMeasured(draw.quantity_milli, draw.unit_of_measure)} from ${draw.container_name}`,
+        amount_cents: draw.amount_cents,
+        po_id: po.id,
+        po_number: po.po_number,
+        supplier_name: po.supplier_name
       }));
     }
 

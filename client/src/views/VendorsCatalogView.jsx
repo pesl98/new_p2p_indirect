@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Store, BookOpen, Plus, Search, Star, Phone, Mail, MapPin, X, Pencil, Ban, RotateCcw } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney, toCents, fromCents } from '../money';
-import { lineTypeLabel } from '../lineType';
+import { lineTypeFromCategory, lineTypeLabel, serviceBasisLabel } from '../lineType';
 
 const CATALOG_CATEGORIES = [
   'IT Hardware',
@@ -55,6 +55,7 @@ export default function VendorsCatalogView() {
   const [newDesc, setNewDesc] = useState('');
   const [newCategory, setNewCategory] = useState('IT Hardware');
   const [newUnit, setNewUnit] = useState('each');
+  const [newBasis, setNewBasis] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [newSupplierId, setNewSupplierId] = useState('');
   const [newLeadDays, setNewLeadDays] = useState(3);
@@ -100,6 +101,7 @@ export default function VendorsCatalogView() {
     setNewDesc('');
     setNewCategory('IT Hardware');
     setNewUnit('each');
+    setNewBasis('');
     setNewPrice('');
     setNewSupplierId(firstSupplierId || '');
     setNewLeadDays(3);
@@ -130,6 +132,7 @@ export default function VendorsCatalogView() {
     setNewDesc(item.description || '');
     setNewCategory(item.category || 'IT Hardware');
     setNewUnit(item.unit || 'each');
+    setNewBasis(item.service_basis || '');
     setNewPrice(item.unit_price != null ? String(fromCents(item.unit_price).toFixed(2)) : '');
     setNewSupplierId(item.preferred_supplier_id ? String(item.preferred_supplier_id) : '');
     setNewLeadDays(item.lead_time_days || 3);
@@ -165,6 +168,7 @@ export default function VendorsCatalogView() {
       description: newDesc,
       category: newCategory,
       unit: newUnit,
+      service_basis: lineTypeFromCategory(newCategory) === 'service' ? (newBasis || null) : null,
       unit_price: toCents(newPrice),
       preferred_supplier_id: newSupplierId ? Number(newSupplierId) : null,
       lead_time_days: Number(newLeadDays)
@@ -346,7 +350,7 @@ export default function VendorsCatalogView() {
                     <span className="flex items-center gap-1">
                       <StatusBadge status={item.status} />
                       <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${item.line_type === 'service' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
-                        {lineTypeLabel(item)}
+                        {lineTypeLabel(item)}{serviceBasisLabel(item.service_basis) ? ` · ${serviceBasisLabel(item.service_basis)}` : ''}
                       </span>
                       <span className="bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded text-[10px]">
                         {item.category}
@@ -525,7 +529,15 @@ export default function VendorsCatalogView() {
                   <label className="block text-slate-600 mb-1">Category</label>
                   <select
                     value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
+                    onChange={(e) => {
+                      const category = e.target.value;
+                      setNewCategory(category);
+                      if (lineTypeFromCategory(category) === 'service') {
+                        setNewBasis((current) => current || 'lump_sum');
+                      } else {
+                        setNewBasis('');
+                      }
+                    }}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   >
                     {CATALOG_CATEGORIES.map((cat) => (
@@ -572,6 +584,22 @@ export default function VendorsCatalogView() {
                   ))}
                 </select>
               </div>
+
+              {lineTypeFromCategory(newCategory) === 'service' && (
+                <div>
+                  <label className="block text-slate-600 mb-1">Service basis</label>
+                  <select
+                    value={newBasis}
+                    onChange={(e) => setNewBasis(e.target.value)}
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs"
+                  >
+                    <option value="">Unit quantity (seats, licenses)</option>
+                    <option value="lump_sum">Lump sum</option>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-2">
                 <div>

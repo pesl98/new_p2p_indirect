@@ -142,6 +142,25 @@ export function splitSqlScript(sql) {
   let inDouble = false;
   let inLineComment = false;
   let inBlockComment = false;
+  let word = '';
+  // Trigger bodies contain semicolons. Transaction BEGIN; does not, and it
+  // does not follow the word TRIGGER, so it still splits as its own statement.
+  let beginDepth = 0;
+
+  const flushWord = () => {
+    if (!word) return;
+    const upper = word.toUpperCase();
+    word = '';
+    if (upper === 'END') {
+      if (beginDepth > 0) beginDepth -= 1;
+      return;
+    }
+    if (upper !== 'BEGIN') return;
+    let j = i;
+    while (j < source.length && /\s/.test(source[j])) j += 1;
+    if (source[j] === ';') return;
+    if (/\bTRIGGER\b/i.test(current)) beginDepth += 1;
+  };
 
   while (i < source.length) {
     const ch = source[i];
@@ -190,6 +209,15 @@ export function splitSqlScript(sql) {
       continue;
     }
 
+    if (/[A-Za-z0-9_]/.test(ch)) {
+      word += ch;
+      current += ch;
+      i += 1;
+      continue;
+    }
+
+    flushWord();
+
     if (ch === '-' && next === '-') {
       current += ch + next;
       inLineComment = true;
@@ -215,9 +243,13 @@ export function splitSqlScript(sql) {
       continue;
     }
     if (ch === ';') {
-      const stmt = stripLeadingSqlComments(current);
-      if (stmt) statements.push(stmt);
-      current = '';
+      if (beginDepth === 0) {
+        const stmt = stripLeadingSqlComments(current);
+        if (stmt) statements.push(stmt);
+        current = '';
+      } else {
+        current += ch;
+      }
       i += 1;
       continue;
     }
@@ -225,6 +257,8 @@ export function splitSqlScript(sql) {
     current += ch;
     i += 1;
   }
+
+  flushWord();
 
   const tail = stripLeadingSqlComments(current);
   if (tail) statements.push(tail);

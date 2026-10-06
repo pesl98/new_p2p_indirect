@@ -1,4 +1,5 @@
 import { asCents, formatCents, lineTotalCents, toQty } from './money.js';
+import { MEASURED_SCALE, measuredAmountCents, parseMeasuredMilli } from './measuredQty.js';
 import { run3WayMatch } from './match.js';
 import { assertCanApprovePayment, assertCanMarkPaid, invoicePayableCents } from './invoiceExceptionsService.js';
 import {
@@ -28,15 +29,10 @@ export async function createVendorInvoice(db, payload) {
     throw err;
   }
 
-  const normalizedItems = items.map((item) => ({
-    po_item_id: item.po_item_id,
-    description: item.description,
-    quantity_invoiced: toQty(item.quantity_invoiced),
-    unit_price: asCents(item.unit_price)
-  }));
+  const normalizedItems = await normalizeInvoiceItems(db, items);
 
   const calculatedSubtotal = normalizedItems.reduce(
-    (acc, item) => acc + lineTotalCents(item.quantity_invoiced, item.unit_price),
+    (acc, item) => acc + item.line_total,
     0
   );
   const tax = asCents(tax_amount);
@@ -83,7 +79,7 @@ export async function createVendorInvoice(db, payload) {
         item.description,
         item.quantity_invoiced,
         item.unit_price,
-        lineTotalCents(item.quantity_invoiced, item.unit_price)
+        item.line_total
       );
     }
 
@@ -102,7 +98,7 @@ export async function createVendorInvoice(db, payload) {
       VALUES ('invoice', ?, '3_WAY_MATCHED', 'System 3-Way Matcher', ?)
     `).run(
       invoiceId,
-      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; services: PO+SES+invoice)`
+      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; consignment: PO+draw-down+invoice; utility/bulk: PO+measured consumption+invoice; services: PO+SES+invoice)`
     );
 
     // Soft-hold likely duplicates after the invoice exists (same transaction).
@@ -131,6 +127,34 @@ export async function createVendorInvoice(db, payload) {
     }
     throw error;
   }
+}
+
+/**
+ * Whole-unit lines keep integer qty. Measured utility and bulk lines accept a
+ * decimal quantity in the unit of measure and store milli-units, matching the PO.
+ */
+async function normalizeInvoiceItems(db, items) {
+  const normalized = [];
+  for (const item of items) {
+    const poItem = item?.po_item_id
+      ? await db.prepare(`SELECT quantity_scale FROM po_items WHERE id = ?`).get(item.po_item_id)
+      : null;
+    const unitPrice = asCents(item.unit_price);
+    const measured = Number(poItem?.quantity_scale) === MEASURED_SCALE;
+    const quantity = measured
+      ? parseMeasuredMilli(item.quantity_invoiced, 'quantity_invoiced')
+      : toQty(item.quantity_invoiced);
+    normalized.push({
+      po_item_id: item.po_item_id,
+      description: item.description,
+      quantity_invoiced: quantity,
+      unit_price: unitPrice,
+      line_total: measured
+        ? measuredAmountCents(quantity, unitPrice)
+        : lineTotalCents(quantity, unitPrice)
+    });
+  }
+  return normalized;
 }
 
 function isUniqueConstraint(error) {

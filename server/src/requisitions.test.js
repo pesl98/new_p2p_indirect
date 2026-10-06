@@ -5,6 +5,11 @@ import { createMemoryDatabase } from './db.js';
 import { createApp } from './app.js';
 import { loadDbConfig } from './dbConfig.js';
 import { TursoHttpClient } from './tursoHttp.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(1, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -76,7 +81,7 @@ describe('POST /api/requisitions', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/requisitions`, {
+      const response = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(createPayload())
@@ -85,7 +90,7 @@ describe('POST /api/requisitions', () => {
       assert.equal(response.status, 201, body.error || 'expected 201');
       assert.ok(Number(body.id) > 0, 'create must return a real new PR id');
 
-      const detail = await fetch(`${base}/api/requisitions/${body.id}`);
+      const detail = await authed(`${base}/api/requisitions/${body.id}`);
       const pr = await detail.json();
       assert.equal(detail.status, 200);
       assert.equal(pr.status, 'draft');
@@ -97,6 +102,7 @@ describe('POST /api/requisitions', () => {
       assert.equal(pr.items[0].resolved_supplier_name, 'TechSupply Global');
       assert.equal(pr.items[1].item_description, 'Q4 Security Audit');
       assert.equal(pr.items[1].line_type, 'service');
+      assert.equal(pr.items[1].service_basis, null);
       assert.equal(pr.approvals.length, 0);
       assert.match(pr.pr_number, /^PR-\d{4}-\d{3}$/);
     });
@@ -107,7 +113,7 @@ describe('POST /api/requisitions', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/requisitions`, {
+      const response = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(createPayload({ submitImmediately: true }))
@@ -116,7 +122,7 @@ describe('POST /api/requisitions', () => {
       assert.equal(response.status, 201, body.error || 'expected 201');
       assert.ok(Number(body.id) > 0);
 
-      const detail = await fetch(`${base}/api/requisitions/${body.id}`);
+      const detail = await authed(`${base}/api/requisitions/${body.id}`);
       const pr = await detail.json();
       assert.equal(pr.status, 'pending_approval');
       assert.ok(pr.approvals.length >= 2, 'amount > $1,000 adds procurement');
@@ -132,7 +138,7 @@ describe('POST /api/requisitions', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/requisitions`, {
+      const response = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(createPayload({ items: [] }))
@@ -152,7 +158,7 @@ describe('POST /api/requisitions', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const inactiveCatalog = await fetch(`${base}/api/requisitions`, {
+      const inactiveCatalog = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(createPayload({
@@ -171,7 +177,7 @@ describe('POST /api/requisitions', () => {
       assert.equal(inactiveCatalog.status, 400);
       assert.match(catalogBody.error, /inactive/i);
 
-      const inactiveSupplier = await fetch(`${base}/api/requisitions`, {
+      const inactiveSupplier = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(createPayload({
@@ -300,7 +306,7 @@ describe('POST /api/requisitions', () => {
     const app = createApp({ db: turso, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const response = await fetch(`${base}/api/requisitions`, {
+      const response = await authed(`${base}/api/requisitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(createPayload({ submitImmediately: true }))

@@ -6,6 +6,9 @@ import {
   CheckSquare,
   ShoppingCart,
   PackageCheck,
+  Warehouse,
+  Gauge,
+  Cylinder,
   ClipboardCheck,
   FileSpreadsheet,
   CreditCard,
@@ -18,6 +21,7 @@ import {
   Banknote
 } from 'lucide-react';
 import { api } from '../api';
+import { documentTrailQueryFromLookup } from '../documentTrailNav';
 import { formatMoney } from '../money';
 
 const STAGE_ICONS = {
@@ -106,6 +110,12 @@ function eventIcon(kind) {
       return FileEdit;
     case 'goods_receipt':
       return PackageCheck;
+    case 'consignment_issue':
+      return Warehouse;
+    case 'utility_consumption':
+      return Gauge;
+    case 'bulk_draw':
+      return Cylinder;
     case 'service_entry_sheet':
       return ClipboardCheck;
     case 'invoice':
@@ -123,7 +133,7 @@ function eventIcon(kind) {
   }
 }
 
-export default function DocumentTrailView({ onNavigate, lookupQ }) {
+export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState({ requisitions: [], purchase_orders: [], invoices: [] });
   const [trail, setTrail] = useState(null);
@@ -158,10 +168,24 @@ export default function DocumentTrailView({ onNavigate, lookupQ }) {
     }
   };
 
+  const lookupKey = JSON.stringify(
+    documentTrailQueryFromLookup(
+      lookup && (
+        lookup.po_id != null
+        || lookup.po_number
+        || lookup.requisition_id != null
+        || lookup.pr_number
+        || lookup.q
+      )
+        ? lookup
+        : (lookupQ ? { q: lookupQ } : null)
+    )
+  );
+
   useEffect(() => {
     loadSuggestions('');
-    loadTrail({ q: lookupQ || 'PR-2026-001' });
-  }, [lookupQ]);
+    loadTrail(JSON.parse(lookupKey));
+  }, [lookupKey]);
 
   const handleSearch = (event) => {
     event.preventDefault();
@@ -346,7 +370,17 @@ export default function DocumentTrailView({ onNavigate, lookupQ }) {
                   </div>
                   <div className="mt-3 text-xs text-slate-600 space-y-1">
                     <div>Amount: <span className="font-semibold">${formatMoney(po.total_amount)}</span></div>
-                    <div>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">not started</span>}</div>
+                    <div>
+                      {po.receiving?.goods === 'consignment' ? (
+                        <>Consignment: {po.consignment_issues?.[0]?.issue_number || 'issued'} <span className="text-slate-400">(no GRN)</span></>
+                      ) : po.receiving?.goods === 'utility' ? (
+                        <>Utility: {po.utility_consumptions?.[0]?.consumption_number || 'recorded'} <span className="text-slate-400">(no GRN)</span></>
+                      ) : po.receiving?.goods === 'bulk' ? (
+                        <>Bulk draw: {po.bulk_draws?.[0]?.draw_number || 'drawn'} <span className="text-slate-400">(no GRN)</span></>
+                      ) : (
+                        <>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">not started</span>}</>
+                      )}
+                    </div>
                     <div>SES: {po.service_entry_sheets[0]?.ses_number || <span className="text-slate-400">not started</span>}</div>
                     <div>
                       Invoice: {po.invoices[0]?.invoice_number || <span className="text-slate-400">not started</span>}

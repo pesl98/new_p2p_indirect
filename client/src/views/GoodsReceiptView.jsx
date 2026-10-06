@@ -135,7 +135,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
     try {
       await api.createGoodsReceipt({
         po_id: Number(selectedPOId),
-        received_by: currentUser?.id || 3,
+        received_by: currentUser?.id,
         receipt_date: receiptDate,
         carrier_tracking: carrierTracking,
         delivery_note_number: deliveryNote,
@@ -175,7 +175,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Goods Receipts (GRN)</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Log physical deliveries against goods PO lines. Service lines use Service Entry Sheets, not GRN.
+            Log physical deliveries of company-owned goods. Service lines use Service Entry Sheets. Supplier-owned stock is recorded on Consignment, not here.
           </p>
         </div>
 

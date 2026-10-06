@@ -2,13 +2,43 @@ import React, { useState } from 'react';
 import { Lock, ShieldCheck, UserPlus } from 'lucide-react';
 import { api } from '../api';
 
-export default function LoginView({ bootstrapNeeded, onAuthenticated, error: externalError }) {
+const SSO_ERRORS = {
+  sso_not_configured: 'SSO is not configured for this customer.',
+  sso_state_invalid: 'SSO sign-in could not be verified. Start again from this page.',
+  sso_nonce_invalid: 'SSO sign-in could not be verified. Start again from this page.',
+  sso_signature_invalid: 'The identity provider signature was rejected.',
+  sso_audience_invalid: 'The identity provider audience was rejected.',
+  sso_expired: 'SSO sign-in expired. Start again from this page.',
+  sso_token_invalid: 'SSO sign-in was rejected.',
+  sso_pkce_invalid: 'SSO sign-in could not be verified. Start again from this page.',
+  sso_user_unknown: 'No ProcureFlow user is mapped to this identity. Ask an admin to add you.',
+  sso_user_inactive: 'This account is inactive.',
+  sso_replay: 'This SSO sign-in was already used. Start again from this page.',
+  sso_recipient_invalid: 'The SAML response was rejected.',
+  sso_email_unverified: 'The identity provider did not confirm the email.',
+  sso_provisioning_misconfigured: 'SSO provisioning is misconfigured.',
+  sso_idp_unavailable: 'The identity provider could not be reached.',
+  sso_identity_conflict: 'This identity is already linked to another user.',
+  sso_failed: 'SSO sign-in failed.'
+};
+
+export default function LoginView({
+  bootstrapNeeded,
+  onAuthenticated,
+  error: externalError,
+  identityProvider = 'local',
+  ssoReady = false,
+  localLogin = true,
+  ssoError = ''
+}) {
   const [mode, setMode] = useState(bootstrapNeeded ? 'bootstrap' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(externalError || '');
+  const [error, setError] = useState(externalError || (ssoError ? (SSO_ERRORS[ssoError] || 'SSO sign-in was rejected.') : ''));
+  const showSso = ssoReady && (identityProvider === 'oidc' || identityProvider === 'saml');
+  const showPassword = localLogin || bootstrapNeeded;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -54,8 +84,10 @@ export default function LoginView({ bootstrapNeeded, onAuthenticated, error: ext
           </div>
           <p className="text-xs text-slate-500 mb-5">
             {mode === 'bootstrap'
-              ? 'This tenant database has no users yet. Create an admin account. Auth is local to this customer DB — not SSO.'
-              : 'Use the email and password stored in this customer database. Session cookie is httpOnly.'}
+              ? 'This tenant database has no users yet. Create an admin account in this customer database.'
+              : showSso
+                ? 'Sign in with this customer’s identity provider. A mapped user gets the same httpOnly session as a password login.'
+                : 'Use the email and password stored in this customer database. Session cookie is httpOnly. After npm run seed, every demo user signs in with ProcureFlow!demo (for example elena.rostova@company.com).'}
           </p>
 
           {error && (
@@ -64,6 +96,16 @@ export default function LoginView({ bootstrapNeeded, onAuthenticated, error: ext
             </div>
           )}
 
+          {showSso && (
+            <a
+              href={identityProvider === 'saml' ? '/api/auth/saml/start' : '/api/auth/oidc/start'}
+              className="mb-4 flex w-full items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+            >
+              {identityProvider === 'saml' ? 'Sign in with SAML' : 'Sign in with OpenID Connect'}
+            </a>
+          )}
+
+          {showPassword ? (
           <form onSubmit={submit} className="space-y-3">
             {mode === 'bootstrap' && (
               <label className="block">
@@ -114,6 +156,11 @@ export default function LoginView({ bootstrapNeeded, onAuthenticated, error: ext
                   : 'Sign in'}
             </button>
           </form>
+          ) : (
+            !showSso && (
+              <p className="text-sm text-slate-600">Sign-in is not configured for this customer.</p>
+            )
+          )}
 
           <div className="mt-5 flex items-start space-x-2 text-[11px] text-slate-400">
             <ShieldCheck className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />

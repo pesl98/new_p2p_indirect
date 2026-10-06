@@ -14,6 +14,11 @@ import {
   lineQtyFloor,
   listPurchaseOrderChangeOrders
 } from './changeOrdersService.js';
+import { withCookie } from './testSession.js';
+
+function authed(url, options) {
+  return fetch(url, withCookie(3, options));
+}
 
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
@@ -394,12 +399,12 @@ describe('change order HTTP API', () => {
     const app = createApp({ db, config: loadDbConfig({}) });
 
     await withServer(app, async (base) => {
-      const empty = await fetch(`${base}/api/purchase-orders/${poId}/change-orders`);
+      const empty = await authed(`${base}/api/purchase-orders/${poId}/change-orders`);
       assert.equal(empty.status, 200);
       const emptyBody = await empty.json();
       assert.equal(emptyBody.change_orders.length, 0);
 
-      const created = await fetch(`${base}/api/purchase-orders/${poId}/change-orders`, {
+      const created = await authed(`${base}/api/purchase-orders/${poId}/change-orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -413,18 +418,18 @@ describe('change order HTTP API', () => {
       assert.equal(createdBody.change_order.co_number, 'CO-2026-001');
       assert.equal(createdBody.change_order.after_total_cents, 162000);
 
-      const listed = await fetch(`${base}/api/purchase-orders/${poId}/change-orders`);
+      const listed = await authed(`${base}/api/purchase-orders/${poId}/change-orders`);
       const listedBody = await listed.json();
       assert.equal(listedBody.change_orders.length, 1);
       assert.equal(listedBody.change_orders[0].items[0].new_quantity, 3);
 
-      const detail = await fetch(`${base}/api/purchase-orders/${poId}`);
+      const detail = await authed(`${base}/api/purchase-orders/${poId}`);
       const detailBody = await detail.json();
       assert.equal(detailBody.change_orders.length, 1);
       assert.equal(detailBody.total_amount, 162000);
       assert.equal(detailBody.revision, 1);
 
-      const bad = await fetch(`${base}/api/purchase-orders/${poId}/change-orders`, {
+      const bad = await authed(`${base}/api/purchase-orders/${poId}/change-orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actor_name: 'Carol Zhang', lines: [] })
