@@ -50,6 +50,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 
 | PR | Theme | Merge SHA | Date |
 | --- | --- | --- | --- |
+| [#41](https://github.com/pesl98/new_p2p_indirect/pull/41) | Deploy and operations manual | `d3e8b656` | on `main` |
 | [#42](https://github.com/pesl98/new_p2p_indirect/pull/42) | Service procurement (lump sum, hours, days) | `736f328` | on `main` |
 | [#43](https://github.com/pesl98/new_p2p_indirect/pull/43) | Consignment stock, separate from owned GRN | `dfd83b7` | on `main` |
 | [#44](https://github.com/pesl98/new_p2p_indirect/pull/44) | View PO document trail | `5560f8b` | on `main` |
@@ -62,6 +63,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | [#46](https://github.com/pesl98/new_p2p_indirect/pull/46) | Sprint 1 — Full authorization rewrite | `e6bdf1ea7ba144c12a95da4cabeebd9430def42a` | merged |
 | 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | `9bbd4fbf83ce5277a18435d2693d91aa58b755da` | merged |
 | 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | `4472b2725a70f7743a978ecfb5cdd02488aca72e` | merged |
+| 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -178,3 +180,40 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 - **Who can read.** `admin` and `finance`. Finance is the existing control lens for payables and segregation. There is no sixth `auditor` role. Procurement, approvers, and requesters fail closed. Reports are read-only; CSV export is the only write, and it appends `COMPLIANCE_EXPORT`.
 - **Reports.** See the PR body and [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md). Segregation findings are detective. They do not add a new block on every P2P route.
 - **Existing databases.** `npm run db:migrate`, or the next process start, runs `schema.sql`. `CREATE TABLE IF NOT EXISTS` and `CREATE TRIGGER IF NOT EXISTS` add the ledger and the guards. No manual SQL. Demo `npm run seed` still wipes and reloads; it inserts audit timestamps directly because `audit_logs` can no longer be updated.
+
+## Sprint 4 — Integrations
+
+**Date:** 2026-10-06
+
+**Goal:** Customer-facing integrations that plug one ProcureFlow deployment into an external ERP/AP and catalog system: scoped API keys, idempotent vendor and catalog upserts, signed webhooks with a durable outbox, and a pull export. No SSO changes. No EUR (Sprint 5) and no Dutch i18n (Sprint 6).
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/49 (#49). Draft. Do not merge until the Architect dual-ACKs and Peter merges.
+
+**Merge SHA:** (blank until merge).
+
+**Status:** in progress.
+
+### Done when
+
+- Admins create, list, and revoke scoped API keys with `pf_session`. The plaintext is shown once. The database stores SHA-256 only. Each key has scopes, an optional expiry, last-used, and a per-key rate limit.
+- A missing, invalid, revoked, expired, or out-of-scope key is 401/403. The key is the actor (a named integration principal). It never impersonates a user and a body user id is rejected. Vendor, catalog, and export routes do not accept `pf_session` instead of a key. A key does not open business APIs.
+- Vendor and catalog upserts are keyed by external id, idempotent, validated, and written to `audit_logs` and `compliance_audit_events` under that principal. Key create and revoke are on the compliance ledger under the admin session.
+- Webhooks for PO issued, goods receipt posted, invoice approved, and payment run created or paid are HMAC-SHA256 signed with a timestamp, queued in `webhook_outbox`, retried with backoff, dead-lettered, and replayable by an admin.
+- Approved invoices and payment runs can be pulled as JSON or CSV with `export:read`.
+- Webhook URL and signing secret are environment variables on that customer’s deployment. The secret is never stored or returned.
+- Docs name the migration and the operator steps. Tests cover the list above. Sprint 1–3 behavior stays: business APIs without a cookie are 401, and the audit tables stay append-only.
+
+### Decisions
+
+- **Partner-API style, not a shared persona.** Principle 4. Scopes shipped: `vendors:write`, `catalog:write`, `export:read`. There is no `invoices:write`. Inbound supplier invoices are a follow-up (see the PR). They are not stubbed.
+- **Key storage.** `pfk_` plus 32 random bytes. `api_keys.key_hash` is SHA-256 hex. `key_prefix` is the first 12 characters, for the admin list. Revoke sets `revoked_at`. Rows are not deleted.
+- **Rate limit.** Fixed one-minute window in `api_key_rate_windows`, default 60 requests, admin-set from 1 to 6000. Over the limit is 429. The window is per key, in that customer’s database, so it holds across serverless instances.
+- **Machine routes ignore the cookie.** `POST /api/integrations/vendors`, `POST /api/integrations/catalog`, and `GET /api/integrations/exports/*` require `Authorization: Bearer pfk_…`. Admin routes (`/api/integrations/keys`, `/api/integrations/outbox`, `/api/integrations/config`) require `pf_session` and role `admin`. That split is intentional.
+- **Actor.** Integration writes use `actor_name` = the key’s name, `actor_role` = `integration`, `actor_user_id` = null. A body `user_id`, `actor_name`, `created_by`, or similar is 400. Admin key create/revoke and webhook replay use the session admin, the same way Sprint 3 user changes do.
+- **Idempotency.** The external id is the entity key (repeat upsert updates one row). `Idempotency-Key` replays the first successful response for that key and body. The same key with a different body is 409.
+- **Upsert shape.** Money is integer cents (`unit_price`). Catalog preferred vendor is `preferred_supplier_external_id`, after the vendor upsert. Supplier `code` is immutable after create. Omitted optional vendor/catalog fields are cleared to their defaults on update, so the same JSON is the same row. Send the full record.
+- **Webhooks.** Events: `po.issued`, `receipt.posted` (goods receipt, not a service entry), `invoice.approved`, `payment_run.created`, `payment_run.paid`. Header `X-ProcureFlow-Signature: t=<unix>,v1=<hex>` is HMAC-SHA256 of `${t}.${rawBody}` using `WEBHOOK_SIGNING_SECRET`. Receivers should reject a timestamp more than 5 minutes off and dedupe on `evt_<outbox id>`. The timestamp is the send time, so a retry is a new signature for the same event id.
+- **Outbox.** Inserted in the same transaction as the business write. Status `pending`, then `delivered` or `dead`. Five attempts. Backoff after a failure is 30s, 2m, 10m, 1h. A missing URL or secret does not burn attempts. Replay (admin) resets the attempt count and tries again. `npm start` retries every 30 seconds. On Vercel the write attempts once, and later retries run from **Deliver pending**, replay, or the next business event’s sweep. There is no platform cron.
+- **Config.** `WEBHOOK_TARGET_URL` and `WEBHOOK_SIGNING_SECRET` are environment variables on that one deployment (Production and Preview). `vercel:customer` does not set them. They are not in the database. `GET /api/integrations/config` returns booleans and the target host only.
+- **Export.** `GET /api/integrations/exports/invoices` defaults to `approved_for_payment` (`paid` optional). `GET /api/integrations/exports/payment-runs` defaults to `executed` (`draft` or `all`). `?format=csv` or `Accept: text/csv`. Amounts are cents. `currency` is `USD` until Sprint 5. Each pull appends `INTEGRATION_EXPORT` on the compliance ledger.
+- **Existing databases.** `npm run db:migrate`, or the next process start, creates the five new tables (`CREATE TABLE IF NOT EXISTS`). No hand-written SQL. SSO is unchanged.

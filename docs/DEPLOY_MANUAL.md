@@ -143,10 +143,12 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `TURSO_CLI` | Path or name of the Turso binary. Default `turso`. | Optional. | No. | No. | |
 | `VERCEL_CLI` | Path or name of the Vercel binary. Default `vercel`. | Optional. | No. | No. | |
 | `PROCUREFLOW_LIBSQL_HTTP` | Read into an internal `preferHttp` flag. The database open path still uses HTTP whenever Turso is selected. It does not load a native addon. | Leave unset. | Do not set it on Vercel. | No. | |
+| `WEBHOOK_TARGET_URL` | HTTPS URL that receives signed webhooks for this customer. | Optional. Required only when you want delivery. `http` is allowed for localhost only. | Production and Preview. Not written by the CLIs. | Treat as sensitive if the URL contains a token. | You set it. The API returns the host only, never the URL. |
+| `WEBHOOK_SIGNING_SECRET` | HMAC-SHA256 key for `X-ProcureFlow-Signature`. | Optional. Required together with the URL. | Production and Preview. One value per customer. Not written by the CLIs. | Yes. Never stored in the database and never returned by the API. | 32-byte hex, same generator as `SESSION_SECRET`. |
 
 ### 3.1 SSO and login flags the CLIs do not write
 
-`onboard:customer` and `vercel:customer` write only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER` or any `IDENTITY_PROVIDER` / `OIDC_*` / `SAML_*` / `SSO_*` / `APP_BASE_URL` / `LOCAL_LOGIN` key. Set those yourself on **that** customer’s project (Production and Preview), then redeploy. Column-by-column notes are already in [DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer) and [SYSTEM_MANUAL.md §3](SYSTEM_MANUAL.md#sso-oidc-or-saml). This checklist is the operator decision, not a second copy of those tables.
+`onboard:customer` and `vercel:customer` write only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER`, any `IDENTITY_PROVIDER` / `OIDC_*` / `SAML_*` / `SSO_*` / `APP_BASE_URL` / `LOCAL_LOGIN` key, or `WEBHOOK_TARGET_URL` / `WEBHOOK_SIGNING_SECRET`. Set those yourself on **that** customer’s project (Production and Preview), then redeploy. Column-by-column notes are already in [DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer) and [SYSTEM_MANUAL.md §3](SYSTEM_MANUAL.md#sso-oidc-or-saml). Webhooks are [§8.8](#88-integrations). This checklist is the operator decision, not a second copy of those tables.
 
 | Decision | What to set |
 | --- | --- |
@@ -734,6 +736,48 @@ Requester, approver, and procurement receive **403**. No cookie is **401**. What
 
 Because the rows cannot be edited or deleted, a manual `DELETE FROM audit_logs` (or the other three tables) fails. Section 9 says what actually removes them.
 
+### 8.8 Integrations
+
+`npm run db:migrate`, or the next process start, creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox`. You do not run extra SQL. API keys are rows in this customer’s database. The webhook URL and signing secret are environment variables on this deployment. They are not in the database, and the CLIs do not set them.
+
+**Issue a key**
+
+1. Sign in as the customer admin (`pf_session`, role `admin`). Finance and everyone else get **403** on these routes.
+2. Open **Administration → Integrations**, or `POST /api/integrations/keys` with `{ "name": "SAP vendor sync", "scopes": ["vendors:write"], "rate_limit_per_minute": 60 }`. Optional `expires_at` is an ISO timestamp in the future.
+3. The response includes `key` (`pfk_…`) once. Copy it into the password manager. `GET /api/integrations/keys` returns the prefix, scopes, expiry, last used, and rate limit. It does not return the key or the hash.
+4. Revoke with **Revoke** or `POST /api/integrations/keys/:id/revoke`. Create and revoke append `API_KEY_CREATED` and `API_KEY_REVOKED` to `compliance_audit_events` under the admin’s name. The hash stays in `api_keys`. The row is not deleted.
+
+Scopes are `vendors:write`, `catalog:write`, and `export:read`. The default limit is 60 requests in a minute. Over the limit is **429**.
+
+**What the ERP calls**
+
+| Call | Scope |
+| --- | --- |
+| `POST /api/integrations/vendors` | `vendors:write` |
+| `POST /api/integrations/catalog` | `catalog:write` |
+| `GET /api/integrations/exports/invoices` | `export:read` |
+| `GET /api/integrations/exports/payment-runs` | `export:read` |
+
+Header: `Authorization: Bearer pfk_…`. A `pf_session` cookie does not authorize these four routes. The key does not authorize the rest of `/api` (those still require the cookie, and a missing cookie is **401**). The key’s name is the audit actor. Do not send `user_id` or `actor_name`. That body is **400**.
+
+Vendor and catalog bodies are keyed by `external_id`. Sending the same id again updates that row. `Idempotency-Key` replays the first success. Catalog `unit_price` is integer cents. Preferred vendor is `preferred_supplier_external_id` (upsert the vendor first).
+
+**Configure webhooks**
+
+On that customer’s Vercel project, Production and Preview:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Put the hex in `WEBHOOK_SIGNING_SECRET`. Put the receiver’s `https` URL in `WEBHOOK_TARGET_URL`. Redeploy. Do not commit either value. `GET /api/integrations/config` with the admin cookie returns `webhook_target_configured`, `webhook_signing_secret_configured`, and `webhook_target_host`. It does not return the secret or the URL.
+
+Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `payment_run.created`, `payment_run.paid`. The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id.
+
+Five attempts, then status `dead`. Backoff is 30 seconds, 2 minutes, 10 minutes, then 1 hour. If the URL or secret is unset, rows stay `pending` and attempts are not burned. A long-running `npm start` sweeps every 30 seconds. On Vercel, delivery is attempted when the event is written; further tries are **Deliver pending**, **Replay**, or the next business event. Replay is `POST /api/integrations/outbox/:id/replay` (admin cookie). It resets the attempt count.
+
+There is still no inbound supplier-invoice connector and no SAP/NetSuite-specific adapter.
+
 ---
 
 ## 9. Offboarding
@@ -927,6 +971,7 @@ What to do: compare the project env with section 3.1. `APP_BASE_URL` must be the
 - [ ] Business APIs require `pf_session`. You are not relying on a user id in the JSON body.
 - [ ] If SSO is off, `IDENTITY_PROVIDER` is unset or `local`. If it is on, the IdP secret (`OIDC_CLIENT_SECRET` or `SAML_IDP_CERT`) is only in this project’s env, Production and Preview, and `ssoReady` is true after redeploy. `OIDC_ALLOW_INSECURE` and `SAML_ALLOW_INSECURE` are unset.
 - [ ] Provisioning is still off unless this customer asked for just-in-time users. The default role is not taken from the IdP. The first admin was not created by SSO.
+- [ ] API keys, if any, were copied once into the password manager. `WEBHOOK_SIGNING_SECRET` is set only on this customer’s Production and Preview, not in git and not in the database.
 - [ ] `.env`, tokens, and `*.db` are not in git. `vercel.json` does not contain secrets.
 - [ ] Preview and Production both have the three database variables. You redeployed after the last env edit.
 - [ ] `BASE_URL=https://<this-customer>.vercel.app npm run smoke` exited 0 after that redeploy.

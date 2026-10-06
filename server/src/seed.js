@@ -21,6 +21,11 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'integration_idempotency',
+  'api_key_rate_windows',
+  'integration_entity_links',
+  'webhook_outbox',
+  'api_keys',
   'bulk_draws',
   'bulk_fills',
   'bulk_containers',

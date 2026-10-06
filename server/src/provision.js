@@ -19,6 +19,8 @@ export { TURSO_REQUIRED_MSG, TursoConfigError };
 
 /** Tables created by schema.sql (CREATE TABLE IF NOT EXISTS). Extra columns come from db.js migrations. */
 export const EXPECTED_TABLES = [
+  'api_key_rate_windows',
+  'api_keys',
   'approval_delegations',
   'approval_requests',
   'audit_logs',
@@ -36,6 +38,8 @@ export const EXPECTED_TABLES = [
   'departments',
   'goods_receipt_items',
   'goods_receipts',
+  'integration_entity_links',
+  'integration_idempotency',
   'invoice_duplicate_flags',
   'invoice_exception_dispositions',
   'invoice_items',
@@ -60,7 +64,8 @@ export const EXPECTED_TABLES = [
   'user_identities',
   'users',
   'utility_arrangements',
-  'utility_consumptions'
+  'utility_consumptions',
+  'webhook_outbox'
 ];
 
 export const PARTIAL_TURSO_MSG =
@@ -87,6 +92,7 @@ Isolation: one Turso database or SQLite file per customer. No org_id row tenancy
 Empty tenant: after migrate, optional npm run bootstrap-org (cost centers + FY
 budgets; not seed), then first admin (UI or npm run bootstrap-admin).
 Then: BASE_URL=http://127.0.0.1:5000 npm run smoke
+The same schema run creates Sprint 4 integration tables (api_keys, webhook_outbox).
 See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 

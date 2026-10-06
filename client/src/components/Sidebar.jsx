@@ -23,7 +23,8 @@ import {
   UserCheck,
   FileCheck,
   Users,
-  ScrollText
+  ScrollText,
+  KeyRound
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -205,6 +206,11 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
         label: 'Users',
         icon: Users,
         desc: 'Create, edit, and deactivate users'
+      }, {
+        id: 'integrations',
+        label: 'Integrations',
+        icon: KeyRound,
+        desc: 'API keys and webhook outbox'
       }]
     : [];
 

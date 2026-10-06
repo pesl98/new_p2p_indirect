@@ -96,6 +96,8 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `IDENTITY_PROVIDER` | No | `local` (default), `oidc`, or `saml`. See [§2.1](#21-sso-oidc-or-saml-per-customer). |
 | `APP_BASE_URL` | When SSO is on | This customer’s public origin. Post-login redirect is `{origin}/`. |
 | `LOCAL_LOGIN` | No | Default on. `0` disables password login for this deployment. |
+| `WEBHOOK_TARGET_URL` | When webhooks are on | HTTPS endpoint for this customer’s ERP/AP. Not stored in the database. See [§2.2](#22-integrations-api-keys-and-webhooks-per-customer). |
+| `WEBHOOK_SIGNING_SECRET` | When webhooks are on | HMAC key for `X-ProcureFlow-Signature`. Never committed, never returned by the API. |
 
 ### 2.1 SSO (OIDC or SAML) per customer
 
@@ -134,6 +136,34 @@ SP-initiated only. Point the IdP at `GET /api/auth/saml/metadata`. The ACS check
 
 Existing users match a stored IdP subject (`user_identities`) or a verified email. OIDC requires `email_verified`. Unknown users are rejected unless `SSO_PROVISIONING=1` or an admin calls `PUT /api/auth/sso-settings` with `{ "provisioning": true, "defaultRole": "requester" }`. `sso_provisioning` and `sso_default_role` are aliases for those body fields. A bad role or flag is rejected and does not change the row. The role is never taken from the IdP. `SSO_DEFAULT_ROLE` must be `requester`, `approver`, `procurement`, `finance`, or `admin` if set. `vercel:customer` does not set these keys; add them in the Vercel project for that customer (Production and Preview) and redeploy.
 
+### 2.2 Integrations (API keys and webhooks) per customer
+
+API keys live in **this** customer’s database. Webhook delivery settings live in **this** deployment’s environment. `onboard:customer` and `vercel:customer` do not set `WEBHOOK_TARGET_URL` or `WEBHOOK_SIGNING_SECRET`. Do not put either value in git.
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `WEBHOOK_TARGET_URL` | To deliver webhooks | `https` URL of the ERP/AP receiver. `http` is accepted only for `localhost` / `127.0.0.1`. |
+| `WEBHOOK_SIGNING_SECRET` | To deliver webhooks | HMAC-SHA256 key. Generate a 32-byte hex string the same way as `SESSION_SECRET`. One value per customer. |
+
+Apply the tables with the usual migrate (no extra SQL file):
+
+```bash
+npm run db:migrate
+```
+
+That creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox` (`CREATE TABLE IF NOT EXISTS`). The next process start does the same.
+
+Operator steps, after the first admin can sign in:
+
+1. Open **Administration → Integrations** (admin session only).
+2. Create a key: name (this is the audit actor), scopes (`vendors:write`, `catalog:write`, `export:read`), optional expiry, requests per minute (default 60).
+3. Copy the `pfk_…` value once into the password manager. The API list never returns it. The database stores SHA-256 only.
+4. The ERP calls `POST /api/integrations/vendors`, `POST /api/integrations/catalog`, and `GET /api/integrations/exports/invoices` or `…/payment-runs` with `Authorization: Bearer pfk_…`. A `pf_session` cookie is not a substitute. The key does not call the rest of `/api`.
+5. Set the two webhook variables on Production and Preview, then redeploy. `GET /api/integrations/config` (admin cookie) reports whether each is set and the target host. It does not return the URL or the secret.
+6. When a delivery is dead, use **Replay** on that screen (or `POST /api/integrations/outbox/:id/replay`). **Deliver pending** runs the outbox now.
+
+Signature and retry behavior: [SYSTEM_MANUAL.md §5.14](SYSTEM_MANUAL.md#514-integrations) and [DEPLOY_MANUAL.md §8.8](DEPLOY_MANUAL.md#88-integrations).
+
 ---
 
 ## 3. Apply schema (`applySchema`) — no demo data
@@ -145,7 +175,7 @@ npm run db:migrate
 npm run db:status
 ```
 
-`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). The same run creates `compliance_audit_events` and the append-only triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger (`CREATE TRIGGER IF NOT EXISTS`). An existing customer database gets them on the next `db:migrate` or process start. No separate SQL file. It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
+`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). The same run creates `compliance_audit_events` and the append-only triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger (`CREATE TRIGGER IF NOT EXISTS`). It also creates the Sprint 4 integration tables: `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox`. An existing customer database gets them on the next `db:migrate` or process start. No separate SQL file. It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
 
 Empty schema still has **0 departments**. PR submit fails closed until cost centers + a FY 2026 budget exist — that is `npm run bootstrap-org` (next), not migrate.
 
@@ -353,6 +383,8 @@ Store these in Vercel env / a password manager. **Never commit** `.env`, tokens,
 | `PROCUREMENT_DB_PATH` | SQLite only | Filesystem path; protect the file (contains all P2P data). |
 | `OIDC_CLIENT_SECRET` | When `IDENTITY_PROVIDER=oidc` | IdP client secret for this customer only. Not stored in the database. |
 | `SAML_IDP_CERT` | When `IDENTITY_PROVIDER=saml` | IdP signing certificate. Not a private key. |
+| `WEBHOOK_SIGNING_SECRET` | When webhooks are on | HMAC key for outbound webhooks. Not stored in the database. Not returned by the API. |
+| `WEBHOOK_TARGET_URL` | When webhooks are on | Receiver URL. Treat as sensitive if it contains a token. The API returns the host only. |
 
 Also confirm:
 

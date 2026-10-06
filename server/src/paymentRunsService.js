@@ -13,6 +13,11 @@ import { nextDocumentNumber } from './docNumbers.js';
 import { applyInvoicePaid } from './invoicesService.js';
 import { assertCanMarkPaid, invoicePayableCents } from './invoiceExceptionsService.js';
 import { assertDuplicateAllowsMarkPaid } from './invoiceDuplicatesService.js';
+import {
+  WEBHOOK_EVENTS,
+  enqueueWebhook,
+  kickWebhookDispatch
+} from './webhookOutbox.js';
 
 export const PAYMENT_RUN_STATUSES = Object.freeze(['draft', 'executed', 'cancelled']);
 export const OPEN_OR_EXECUTED = Object.freeze(['draft', 'executed']);
@@ -393,10 +398,26 @@ export async function createPaymentRun(db, { invoice_ids, actor_name, reason } =
       `Created payment run ${runNumber} with ${invoices.length} invoice(s) totaling payable $${formatCents(payableTotal)} (billed $${formatCents(billedTotal)}): ${numbers}`
     );
 
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.PAYMENT_RUN_CREATED,
+      entityType: 'payment_run',
+      entityId: runId,
+      data: {
+        payment_run_id: Number(runId),
+        run_number: runNumber,
+        status: 'draft',
+        billed_total_cents: billedTotal,
+        payable_total_cents: payableTotal,
+        invoice_count: invoices.length,
+        invoice_ids: invoices.map((line) => Number(line.invoice.id))
+      }
+    });
+
     return runId;
   });
 
   const runId = await createTx();
+  kickWebhookDispatch(db);
   return getPaymentRunDetail(db, runId);
 }
 
@@ -511,10 +532,28 @@ export async function executePaymentRun(db, id, {
       `Executed payment run ${run.run_number} on ${paymentDate} with ACH ${paymentRef}. ${paidLines.length} invoice(s) marked paid (payable $${formatCents(run.payable_total_cents)}): ${numbers}`
     );
 
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.PAYMENT_RUN_PAID,
+      entityType: 'payment_run',
+      entityId: runId,
+      data: {
+        payment_run_id: Number(runId),
+        run_number: run.run_number,
+        status: 'executed',
+        payment_date: paymentDate,
+        payment_reference: paymentRef,
+        billed_total_cents: Number(run.billed_total_cents),
+        payable_total_cents: Number(run.payable_total_cents),
+        invoice_count: paidLines.length,
+        invoice_ids: paidLines.map((line) => Number(line.invoice_id))
+      }
+    });
+
     return paidLines;
   });
 
   await executeTx();
+  kickWebhookDispatch(db);
   return getPaymentRunDetail(db, runId);
 }
 
