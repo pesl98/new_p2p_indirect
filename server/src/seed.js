@@ -61,6 +61,7 @@ const allTables = [
   'user_credentials',
   'users',
   'departments',
+  'compliance_audit_events',
   'audit_logs'
 ];
 
@@ -1298,18 +1299,31 @@ await db.transaction(async () => {
   `).run();
 
   // 12. Audit Logs
-  const insertAudit = db.prepare(`
+  const insertAuditRelative = db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
     VALUES (?, ?, ?, ?, ?, datetime('now', ?))
   `);
+  const insertAuditAbsolute = db.prepare(`
+    INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  // audit_logs rejects UPDATE, so absolute chronology is written on insert.
+  const insertAudit = {
+    run: (entityType, entityId, action, actorName, details, createdAt) => {
+      if (/^\d{4}-\d{2}-\d{2}/.test(String(createdAt || ''))) {
+        return insertAuditAbsolute.run(entityType, entityId, action, actorName, details, createdAt);
+      }
+      return insertAuditRelative.run(entityType, entityId, action, actorName, details, createdAt);
+    }
+  };
   await insertAudit.run('requisition', 1, 'CREATED', 'Alice Chen', 'Requisition created for 2 Herman Miller Chairs', '-7 days');
   await insertAudit.run('requisition', 1, 'SUBMITTED', 'Alice Chen', 'Submitted for manager approval', '-7 days');
   await insertAudit.run('requisition', 1, 'APPROVED', 'Bob Martinez', 'Approved PR-2026-001 for $2,590.00', '-6 days');
   await insertAudit.run('purchase_order', 1, 'ISSUED', 'Carol Zhang', 'PO-2026-001 issued to WorkSpace Ergonomics Depot', '-5 days');
   await insertAudit.run('goods_receipt', 1, 'RECEIVED', 'Carol Zhang', 'GRN-2026-001 confirmed 2 chairs received in good condition', '-2 days');
   await insertAudit.run('invoice', 1, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-2 days');
-  await insertAudit.run('invoice', 1, 'APPROVED_PAYMENT', 'David Miller', 'Approved invoice INV-WED-9042 for payment', '-1 days');
-  await insertAudit.run('invoice', 1, 'PAID', 'David Miller', 'Marked as paid with reference ACH-1017-WED9042', '0 days');
+  await insertAudit.run('invoice', 1, 'APPROVED_PAYMENT', 'David Miller', 'Approved invoice INV-WED-9042 for payment', '2026-09-03 10:00:00');
+  await insertAudit.run('invoice', 1, 'PAID', 'David Miller', 'Marked as paid with reference ACH-1017-WED9042', '2026-09-04 08:00:00');
   await insertAudit.run('invoice', 2, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged price variance (+ $50/unit) and quantity discrepancy', '0 days');
   await insertAudit.run('requisition', 5, 'CREATED', 'Alice Chen', 'Requisition created for SOC 2 Type II penetration test', '-10 days');
   await insertAudit.run('requisition', 5, 'APPROVED', 'David Miller', 'Final approval and ITE budget commit for PR-2026-005', '-9 days');
@@ -1318,7 +1332,7 @@ await db.transaction(async () => {
   await insertAudit.run('service_entry_sheet', 1, 'ACCEPTED', 'Carol Zhang', 'Accepted SES-2026-001 for PO-2026-003: service delivered (1 lump sum).', '-2 days');
   await insertAudit.run('invoice', 3, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-AAD-5501 SES-backed match passed (PO+SES+invoice)', '-1 days');
   await insertAudit.run('invoice', 4, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-7701 flagged price_variance (400¢ over PO)', '-1 days');
-  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '0 days');
+  await insertAudit.run('invoice', 4, 'EXCEPTION_ACCEPT_VARIANCE', 'David Miller', 'Accepted price_variance on billed total $298.00. Reason: Facilities restock surcharge approved against FY26 MRO contract. Pay billed $298.00.', '2026-09-06 09:30:00');
   await insertAudit.run('requisition', 6, 'CREATED', 'Alice Chen', 'Requisition created with TechSupply monitor and WorkSpace Aeron chair', '-2 days');
   await insertAudit.run('requisition', 6, 'APPROVED', 'Carol Zhang', 'Final approval and MKT budget commit for multi-supplier PR-2026-006', '-2 days');
   await insertAudit.run('requisition', 7, 'CREATED', 'Alice Chen', 'Requisition created for 3 Logitech MX Master 3S mice', '-4 days');
@@ -1327,7 +1341,7 @@ await db.transaction(async () => {
   await insertAudit.run('purchase_order', 6, 'ISSUED', 'Carol Zhang', 'PO-2026-006 issued to TechSupply Global', '-3 days');
   await insertAudit.run('goods_receipt', 4, 'RECEIVED', 'Carol Zhang', 'GRN-2026-004 confirmed 2 of 3 mice received; one on backorder', '-1 days');
   await insertAudit.run('invoice', 5, 'VARIANCE_DETECTED', 'System Engine', '3-Way Match flagged quantity variance (3 billed vs 2 received)', '-1 days');
-  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '0 days');
+  await insertAudit.run('invoice', 5, 'EXCEPTION_RETURN_TO_BUYER', 'David Miller', 'Disposition return_to_buyer for INV-TSG-22041 (billed $297.00, match quantity_variance). Reason: Only 2 of 3 mice received on GRN-2026-004. Confirm whether the third unit arrived off-system before AP accepts billed quantity.', '2026-09-08 09:15:00');
   await insertAudit.run(
     'approval_delegation',
     1,
@@ -1345,7 +1359,7 @@ await db.transaction(async () => {
     'CHANGE_ORDER_APPLIED',
     'Carol Zhang',
     'CO-2026-001 (rev 1) applied to PO-2026-007: $2,670.00 → $2,550.00 (delta -$120.00). Reason: Vendor confirmed volume discount after issue — unit price $890.00 → $850.00; quantity unchanged. Lines: Blueair Pro XL Commercial HEPA Air Purifier (unit $890.00→$850.00). Budget committed released by $120.00.',
-    '-4 days'
+    '2026-09-04 10:15:00'
   );
   await insertAudit.run('requisition', 9, 'CREATED', 'Sofia Berg', 'Requisition created for 2 cases of recycled copy paper', '-8 days');
   await insertAudit.run('requisition', 9, 'APPROVED', 'Sofia Berg', 'Approved PR-2026-009 for $116.00', '-8 days');
@@ -1360,12 +1374,12 @@ await db.transaction(async () => {
   await insertAudit.run('goods_receipt', 6, 'RECEIVED', 'Carol Zhang', 'GRN-2026-006 confirmed 2 cases of copy paper received', '-4 days');
   await insertAudit.run('goods_receipt', 7, 'RECEIVED', 'Carol Zhang', 'GRN-2026-007 confirmed CalDigit dock received', '-10 days');
   await insertAudit.run('invoice', 6, '3_WAY_MATCHED', 'System Engine', 'Invoice INV-FCJ-8810 flagged price_variance (1000¢ over PO)', '-17 days');
-  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', 'Short-pay INV-FCJ-8810: billed $220.00 → payable $210.00 (delta $10.00). Reason: Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.', '-15 days');
-  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-8810 for Billed $220.00 → Pay $210.00 payment', '-14 days');
+  await insertAudit.run('invoice', 6, 'EXCEPTION_SHORT_PAY', 'David Miller', 'Short-pay INV-FCJ-8810: billed $220.00 → payable $210.00 (delta $10.00). Reason: Pay PO price $210.00. Freight surcharge on INV-FCJ-8810 is not on the contract.', '2026-08-28 10:00:00');
+  await insertAudit.run('invoice', 6, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-FCJ-8810 for Billed $220.00 → Pay $210.00 payment', '2026-08-29 09:00:00');
   await insertAudit.run('invoice', 7, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-6 days');
-  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '-5 days');
+  await insertAudit.run('invoice', 7, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-WED-3308 for $116.00 payment', '2026-09-09 09:00:00');
   await insertAudit.run('invoice', 8, '3_WAY_MATCHED', 'System Engine', 'Automatic 3-way match passed with 0% variance', '-10 days');
-  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '-9 days');
+  await insertAudit.run('invoice', 8, 'APPROVED_FOR_PAYMENT', 'David Miller', 'Approved invoice INV-TSG-5508 for $399.00 payment', '2026-09-03 09:30:00');
   await insertAudit.run('purchase_order', 11, 'ISSUED', 'Carol Zhang', 'PO-2026-011 issued to TechSupply Global', '-6 days');
   await insertAudit.run('purchase_order', 12, 'ISSUED', 'Carol Zhang', 'PO-2026-012 issued to TechSupply Global', '-3 days');
   await insertAudit.run('goods_receipt', 8, 'RECEIVED', 'Carol Zhang', 'GRN-2026-008 confirmed spare MX Master received', '-5 days');
@@ -1413,10 +1427,6 @@ await db.transaction(async () => {
     UPDATE purchase_orders SET created_at = '2026-08-29 09:30:00' WHERE id = 1;
     UPDATE goods_receipts SET created_at = '2026-09-02 11:00:00' WHERE id = 1;
     UPDATE invoices SET created_at = '2026-09-02 15:00:00' WHERE id = 1;
-    UPDATE audit_logs SET created_at = '2026-09-03 10:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'APPROVED_PAYMENT';
-    UPDATE audit_logs SET created_at = '2026-09-04 08:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 1 AND action = 'PAID';
 
     UPDATE purchase_requisitions SET created_at = '2026-08-24 09:00:00' WHERE id = 5;
     UPDATE purchase_requisitions SET created_at = '2026-09-03 08:00:00' WHERE id = 6;
@@ -1427,21 +1437,15 @@ await db.transaction(async () => {
     UPDATE purchase_orders SET created_at = '2026-09-01 10:00:00' WHERE id = 5;
     UPDATE goods_receipts SET created_at = '2026-09-04 14:00:00' WHERE id = 3;
     UPDATE invoices SET created_at = '2026-09-05 11:00:00' WHERE id = 4;
-    UPDATE audit_logs SET created_at = '2026-09-06 09:30:00'
-      WHERE entity_type = 'invoice' AND entity_id = 4 AND action = 'EXCEPTION_ACCEPT_VARIANCE';
 
     UPDATE purchase_requisitions SET created_at = '2026-09-03 16:00:00' WHERE id = 7;
     UPDATE purchase_orders SET created_at = '2026-09-04 11:00:00' WHERE id = 6;
     UPDATE goods_receipts SET created_at = '2026-09-06 13:00:00' WHERE id = 4;
     UPDATE invoices SET created_at = '2026-09-07 10:30:00' WHERE id = 5;
-    UPDATE audit_logs SET created_at = '2026-09-08 09:15:00'
-      WHERE entity_type = 'invoice' AND entity_id = 5 AND action = 'EXCEPTION_RETURN_TO_BUYER';
 
     UPDATE purchase_requisitions SET created_at = '2026-09-01 09:00:00' WHERE id = 8;
     UPDATE purchase_orders SET created_at = '2026-09-03 11:00:00' WHERE id = 7;
     UPDATE po_change_orders SET created_at = '2026-09-04 10:15:00', applied_at = '2026-09-04 10:15:00' WHERE id = 1;
-    UPDATE audit_logs SET created_at = '2026-09-04 10:15:00'
-      WHERE entity_type = 'purchase_order' AND entity_id = 7 AND action = 'CHANGE_ORDER_APPLIED';
 
     UPDATE purchase_requisitions SET created_at = '2026-09-03 09:00:00' WHERE id = 9;
     UPDATE purchase_orders SET created_at = '2026-08-20 10:00:00' WHERE id = 8;
@@ -1453,14 +1457,6 @@ await db.transaction(async () => {
     UPDATE invoices SET created_at = '2026-08-26 16:00:00' WHERE id = 6;
     UPDATE invoices SET created_at = '2026-09-08 13:00:00' WHERE id = 7;
     UPDATE invoices SET created_at = '2026-09-02 16:30:00' WHERE id = 8;
-    UPDATE audit_logs SET created_at = '2026-08-28 10:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 6 AND action = 'EXCEPTION_SHORT_PAY';
-    UPDATE audit_logs SET created_at = '2026-08-29 09:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 6 AND action = 'APPROVED_FOR_PAYMENT';
-    UPDATE audit_logs SET created_at = '2026-09-09 09:00:00'
-      WHERE entity_type = 'invoice' AND entity_id = 7 AND action = 'APPROVED_FOR_PAYMENT';
-    UPDATE audit_logs SET created_at = '2026-09-03 09:30:00'
-      WHERE entity_type = 'invoice' AND entity_id = 8 AND action = 'APPROVED_FOR_PAYMENT';
 
     UPDATE purchase_orders SET created_at = '2026-09-01 10:00:00' WHERE id = 11;
     UPDATE purchase_orders SET created_at = '2026-09-04 10:00:00' WHERE id = 12;

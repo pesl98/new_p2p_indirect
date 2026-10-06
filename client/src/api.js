@@ -599,5 +599,42 @@ export const api = {
     });
     const r = await apiFetch(`${API_BASE}/document-trail?${search.toString()}`);
     return jsonOk(r, 'Document trail not found');
+  },
+
+  getComplianceReport: async (report, params = {}) => {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') search.append(key, value);
+    });
+    const qs = search.toString();
+    const r = await apiFetch(`${API_BASE}/compliance/${report}${qs ? `?${qs}` : ''}`);
+    return jsonOk(r, 'Failed to load compliance report');
+  },
+  exportComplianceCsv: async (report, params = {}) => {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') search.append(key, value);
+    });
+    search.set('format', 'csv');
+    const r = await apiFetch(`${API_BASE}/compliance/${report}?${search.toString()}`);
+    if (!r.ok) {
+      let message = 'Export failed';
+      try {
+        const data = await r.json();
+        message = data.error || message;
+      } catch {
+        // CSV error bodies are JSON from the API.
+      }
+      throw new Error(message);
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${report}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 };

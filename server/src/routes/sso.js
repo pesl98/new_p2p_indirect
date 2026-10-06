@@ -3,6 +3,7 @@ import { attachSessionCookie, requireAdmin } from '../auth.js';
 import { finishOidcLogin, startOidcLogin } from '../oidc.js';
 import { finishSamlLogin, samlMetadataXml, startSamlLogin } from '../saml.js';
 import { SsoError, classifyProviderError, getSsoPolicy, updateSsoSettings } from '../sso.js';
+import { recordSsoSettingsChange } from '../complianceAudit.js';
 import { UsersError } from '../usersService.js';
 
 const router = express.Router();
@@ -115,6 +116,7 @@ router.get('/sso-settings', requireAdmin, async (req, res) => {
 router.put('/sso-settings', requireAdmin, async (req, res) => {
   try {
     const saved = await updateSsoSettings(req.db, req.body || {});
+    await recordSsoSettingsChange(req.db, req.user, saved);
     const policy = await getSsoPolicy(req.db, ssoConfig(req));
     res.json({
       provisioning: Number(saved.sso_provisioning) === 1,

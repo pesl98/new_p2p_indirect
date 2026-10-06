@@ -145,7 +145,7 @@ npm run db:migrate
 npm run db:status
 ```
 
-`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
+`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). The same run creates `compliance_audit_events` and the append-only triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger (`CREATE TRIGGER IF NOT EXISTS`). An existing customer database gets them on the next `db:migrate` or process start. No separate SQL file. It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
 
 Empty schema still has **0 departments**. PR submit fails closed until cost centers + a FY 2026 budget exist — that is `npm run bootstrap-org` (next), not migrate.
 

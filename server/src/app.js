@@ -26,6 +26,7 @@ import departmentsRouter from './routes/departments.js';
 import delegationsRouter from './routes/delegations.js';
 import contractsRouter from './routes/contracts.js';
 import authRouter from './routes/auth.js';
+import complianceRouter from './routes/compliance.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
@@ -107,6 +108,7 @@ export function createApp(options = {}) {
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/document-trail', documentTrailRouter);
   app.use('/api/contracts', contractsRouter);
+  app.use('/api/compliance', complianceRouter);
 
   app.get('/api/health', (req, res) => {
     const db = req.db || peekCachedDb();

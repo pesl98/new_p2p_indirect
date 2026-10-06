@@ -22,7 +22,8 @@ import {
   UserCog,
   UserCheck,
   FileCheck,
-  Users
+  Users,
+  ScrollText
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
@@ -160,6 +161,11 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           badge: paymentRunDraftCount > 0 ? paymentRunDraftCount : null,
           badgeColor: 'bg-indigo-500 text-white',
           desc: 'Batch ACH payment proposals'
+        }, {
+          id: 'compliance',
+          label: 'Audit & Compliance',
+          icon: ScrollText,
+          desc: 'Trail, segregation of duties, and verification'
         }]
       : []),
     {

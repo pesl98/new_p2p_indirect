@@ -639,7 +639,7 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Payment runs ship as a **draft proposal + one-shot execute** (`PAY-YYYY-NNN`, shared ACH reference, same mark-paid write). Still out of scope: bank NACHA/ACH file export, early-pay discount calendar, supplier remittance portal, and multi-currency.
 - Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute.
 - Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR with `source_contract_id` proposed. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT). Carrying `source_contract_id` onto the PO at convert time is out of scope.
-- **SCIM is not implemented.** OIDC and SAML login are optional per customer and still end in email+password’s `pf_session` cookie (`SESSION_SECRET` signs it). Audit/compliance reporting is Sprint 3.
+- **SCIM is not implemented.** OIDC and SAML login are optional per customer and still end in email+password’s `pf_session` cookie (`SESSION_SECRET` signs it). Audit and compliance reports are Sprint 3: append-only triggers on `audit_logs` and the SSO evidence tables, a hash-chained `compliance_audit_events` ledger for local auth and admin changes, and read-only reports for admin and finance. See [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md) §5.13.
 
 ## Customer isolation = DB per tenant
 

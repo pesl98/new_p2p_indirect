@@ -24,6 +24,7 @@ import AdminDepartmentsView from './views/AdminDepartmentsView';
 import AdminUsersView from './views/AdminUsersView';
 import LoginView from './views/LoginView';
 import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
+import ComplianceView from './views/ComplianceView';
 import { api } from './api';
 import { DEMO_SEED_PASSWORD } from './demoAuth';
 
@@ -169,6 +170,9 @@ export default function App() {
       setActiveTab('dashboard');
     }
     if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'duplicate_suspects') {
+      setActiveTab('dashboard');
+    }
+    if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'compliance') {
       setActiveTab('dashboard');
     }
   };
@@ -408,6 +412,10 @@ export default function App() {
 
           {activeTab === 'user_admin' && (
             <AdminUsersView currentUser={currentUser} sessionUser={sessionUser} />
+          )}
+
+          {activeTab === 'compliance' && (
+            <ComplianceView currentUser={currentUser} />
           )}
         </main>
       </div>

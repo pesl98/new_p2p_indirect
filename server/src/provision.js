@@ -27,6 +27,7 @@ export const EXPECTED_TABLES = [
   'bulk_draws',
   'bulk_fills',
   'catalog_items',
+  'compliance_audit_events',
   'consignment_balances',
   'consignment_issues',
   'consignment_receipts',
