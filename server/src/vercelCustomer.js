@@ -116,7 +116,7 @@ Happy path:
      (--apply already waited for Production Ready, so smoke can follow immediately.
       GitHub auto-deploy is still a dashboard connection, not this command.)
 
-See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 function write(stream, text) {

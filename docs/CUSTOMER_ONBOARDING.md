@@ -22,6 +22,7 @@ npm run onboard:customer -- --slug acme --apply \
 
 | Next | Where |
 | --- | --- |
+| **Deploy and operations manual** (procedure, SSO, audit, offboard) | **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)** |
 | **System manual** (what the app can do + deploy overview) | **[SYSTEM_MANUAL.md](SYSTEM_MANUAL.md)** |
 | Technical reference (isolation, APIs, env table, rollback details) | [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Copy-paste operator checklist | [`scripts/provision-customer.md`](../scripts/provision-customer.md) |

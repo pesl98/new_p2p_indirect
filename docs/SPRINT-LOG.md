@@ -61,7 +61,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 2026-10-02 | Full authorization rewrite: session identity on the P2P API; no body persona spoofing; no SSO | [#46](https://github.com/pesl98/new_p2p_indirect/pull/46) | Sprint 1 — Full authorization rewrite | `e6bdf1ea7ba144c12a95da4cabeebd9430def42a` | merged |
 | 2 | 2026-10-05 | SSO / SAML / OIDC: a validated IdP callback mints the same `pf_session` cookie | [#47](https://github.com/pesl98/new_p2p_indirect/pull/47) | Sprint 2 — SSO / SAML / OIDC | `9bbd4fbf83ce5277a18435d2693d91aa58b755da` | merged |
-| 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | | done |
+| 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | `4472b2725a70f7743a978ecfb5cdd02488aca72e` | merged |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -155,9 +155,11 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 
 **Goal:** An auditable trail for auth, SSO, and the procurement decisions that move money, plus compliance reports an admin or finance user can query and export. Fail closed for everyone else.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/48 (#48). Merge SHA stays blank until merge.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/48 (#48).
 
-**Status:** done (awaiting Architect + Peter review; do not merge from this PR).
+**Merge SHA:** `4472b2725a70f7743a978ecfb5cdd02488aca72e` (squash-merged).
+
+**Status:** merged.
 
 ### Done when
 

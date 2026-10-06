@@ -665,6 +665,8 @@ There is **no cron**.
 
 ## 9. New customer deploy
 
+The operator procedure, including SSO env, the append-only audit trail, and offboard, is **[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md)**. This section is the short form.
+
 Preferred one-command (Turso + Vercel CLIs logged in; `vercel switch` first if you have more than one team):
 
 ```
@@ -863,6 +865,7 @@ Tests cover the control model listed in [ARCHITECTURE.md](ARCHITECTURE.md). This
 
 | Path | Why |
 | --- | --- |
+| [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) | Operator procedure: deploy, SSO, audit, update, offboard |
 | [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md) | Click-by-click customer install |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Isolation, env, Auth API, Vercel, rollback |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Match math, contract scoring, sequential approvals |

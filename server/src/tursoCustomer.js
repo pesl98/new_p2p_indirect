@@ -62,7 +62,7 @@ Happy path:
   6. BASE_URL=https://procureflow-<slug>.vercel.app npm run smoke
   GitHub auto-deploy is not connected by vercel project add.
 
-See docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md.
+See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
 
 function write(stream, text) {
