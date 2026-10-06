@@ -47,6 +47,33 @@ function sendError(res, error) {
   res.status(status).json({ error: error.message });
 }
 
+/**
+ * Build the CSV first. The export row is appended only after that string
+ * exists, so a failure inside the builder does not record an export that
+ * never left the server.
+ */
+export async function prepareComplianceCsv({
+  db,
+  user,
+  report,
+  columns,
+  rows,
+  filters,
+  buildCsv = toCsv
+}) {
+  const csv = buildCsv(columns, rows);
+  if (typeof csv !== 'string') {
+    const error = new Error('CSV export did not produce a string');
+    error.statusCode = 500;
+    throw error;
+  }
+  await recordComplianceExport(db, user, {
+    report,
+    filters: filters || undefined
+  });
+  return csv;
+}
+
 router.get('/:report', async (req, res) => {
   try {
     const spec = REPORTS[req.params.report];
@@ -55,15 +82,18 @@ router.get('/:report', async (req, res) => {
     }
     const filters = req.params.report === 'audit-trail' ? parseAuditFilters(req.query) : null;
     const report = await spec.load(req.db, filters);
-    const csv = req.query.format === 'csv';
-    if (csv) {
-      await recordComplianceExport(req.db, req.user, {
+    if (req.query.format === 'csv') {
+      const body = await prepareComplianceCsv({
+        db: req.db,
+        user: req.user,
         report: req.params.report,
-        filters: filters || undefined
+        columns: spec.columns,
+        rows: spec.rows(report),
+        filters
       });
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${req.params.report}.csv"`);
-      return res.send(toCsv(spec.columns, spec.rows(report)));
+      return res.send(body);
     }
     return res.json(report);
   } catch (error) {

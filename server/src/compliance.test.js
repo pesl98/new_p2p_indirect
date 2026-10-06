@@ -7,12 +7,14 @@ import { loadDbConfig } from './dbConfig.js';
 import { hashPassword } from './auth.js';
 import { withCookie } from './testSession.js';
 import { appendComplianceEvent } from './complianceAudit.js';
+import { prepareComplianceCsv } from './routes/compliance.js';
 import {
   queryApprovalCompliance,
   queryAuditTrail,
   queryPaymentSupport,
   queryVerification,
-  parseAuditFilters
+  parseAuditFilters,
+  toCsv
 } from './complianceReports.js';
 
 function withServer(app, fn) {
@@ -439,5 +441,50 @@ describe('compliance API access and CSV', () => {
     assert.equal(exportEvent.entity_type, 'compliance_report');
     assert.match(exportEvent.details, /audit-trail/);
     assert.match(exportEvent.details, /csv/);
+  });
+
+  test('a CSV build failure does not write COMPLIANCE_EXPORT', async () => {
+    const db = await baseDb();
+    const user = { id: 4, name: 'David Miller', role: 'finance' };
+    await assert.rejects(
+      () => prepareComplianceCsv({
+        db,
+        user,
+        report: 'audit-trail',
+        columns: ['action'],
+        rows: [{ action: 'PAID' }],
+        filters: { action: 'PAID' },
+        buildCsv() {
+          throw new Error('csv build failed');
+        }
+      }),
+      /csv build failed/
+    );
+    const afterThrow = await db.prepare(`
+      SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'COMPLIANCE_EXPORT'
+    `).get();
+    assert.equal(Number(afterThrow.n), 0);
+
+    let exportsDuringBuild = null;
+    const csv = await prepareComplianceCsv({
+      db,
+      user,
+      report: 'verification',
+      columns: ['code'],
+      rows: [{ code: 'ok' }],
+      buildCsv(columns, rows) {
+        const during = db.prepare(`
+          SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'COMPLIANCE_EXPORT'
+        `).get();
+        exportsDuringBuild = Number(during.n);
+        return toCsv(columns, rows);
+      }
+    });
+    assert.equal(exportsDuringBuild, 0);
+    assert.equal(csv, 'code\nok\n');
+    const afterOk = await db.prepare(`
+      SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'COMPLIANCE_EXPORT'
+    `).get();
+    assert.equal(Number(afterOk.n), 1);
   });
 });
