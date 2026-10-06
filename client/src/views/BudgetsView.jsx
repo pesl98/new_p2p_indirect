@@ -84,19 +84,19 @@ export default function BudgetsView() {
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
                   <div>
                     <span className="text-[11px] text-slate-400">Allocated Budget:</span>
-                    <div className="font-bold text-slate-900">${formatMoney(b.total_budget)}</div>
+                    <div className="font-bold text-slate-900">{formatMoney(b.total_budget)}</div>
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400">Available Funds:</span>
-                    <div className="font-bold text-emerald-700">${formatMoney(b.available_budget)}</div>
+                    <div className="font-bold text-emerald-700">{formatMoney(b.available_budget)}</div>
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400">Actual Spent:</span>
-                    <div className="font-semibold text-slate-800">${formatMoney(b.actual_spent)}</div>
+                    <div className="font-semibold text-slate-800">{formatMoney(b.actual_spent)}</div>
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400">Committed (PR approve):</span>
-                    <div className="font-semibold text-amber-700">${formatMoney(b.committed_amount)}</div>
+                    <div className="font-semibold text-amber-700">{formatMoney(b.committed_amount)}</div>
                   </div>
                 </div>
               </div>

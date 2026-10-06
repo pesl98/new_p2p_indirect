@@ -372,7 +372,7 @@ export default function VendorsCatalogView() {
                     <div>
                       <span className="text-[10px] text-slate-400 block">Negotiated Price</span>
                       <div className="text-base font-extrabold text-emerald-700">
-                        ${formatMoney(item.unit_price)}
+                        {formatMoney(item.unit_price)}
                         <span className="text-[10px] text-slate-400 font-normal"> / {item.unit}</span>
                       </div>
                     </div>
@@ -603,7 +603,7 @@ export default function VendorsCatalogView() {
 
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-slate-600 mb-1">Unit Price ($)</label>
+                  <label className="block text-slate-600 mb-1">Unit price</label>
                   <input
                     type="number"
                     placeholder="499.00"

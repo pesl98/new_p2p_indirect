@@ -378,7 +378,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       <span className="text-[10px] text-slate-400 ml-1">({pr.department_code})</span>
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                      ${formatMoney(pr.total_amount)}
+                      {formatMoney(pr.total_amount)}
                     </td>
                     <td className="py-3 px-4">
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
@@ -496,7 +496,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           <div className="text-xs font-bold text-slate-900">{item.name}</div>
                           <div className="text-[10px] text-slate-500 line-clamp-1">{item.description}</div>
                           <div className="text-[11px] font-bold text-emerald-700 mt-1">
-                            ${formatMoney(item.unit_price)} <span className="text-[10px] font-normal text-slate-400">/ {item.unit}</span>
+                            {formatMoney(item.unit_price)} <span className="text-[10px] font-normal text-slate-400">/ {item.unit}</span>
                           </div>
                         </div>
                         <button
@@ -572,8 +572,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       <input
                         type="number"
                         placeholder={customLineType === 'service'
-                          ? (customBasis === 'hours' ? 'Rate per hour ($)' : customBasis === 'days' ? 'Rate per day ($)' : 'Lump sum ($)')
-                          : 'Unit Price ($)'}
+                          ? (customBasis === 'hours' ? 'Rate per hour' : customBasis === 'days' ? 'Rate per day' : 'Lump sum')
+                          : 'Unit price'}
                         value={customPrice}
                         onChange={(e) => setCustomPrice(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
@@ -665,7 +665,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           Will propose {previewMatch.contract_number}
                         </div>
                         <div className="mt-0.5">
-                          {previewMatch.supplier_name} · {previewMatch.title} · ACV ${formatMoney(previewMatch.annual_value_cents)}
+                          {previewMatch.supplier_name} · {previewMatch.title} · ACV {formatMoney(previewMatch.annual_value_cents)}
                           {previewMatch.end_date ? ` · ends ${previewMatch.end_date}` : ''}
                         </div>
                         <div className="text-sky-700 mt-0.5">Approver will allow or refuse use of this contract.</div>
@@ -681,7 +681,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     <div className="flex justify-between items-center text-xs font-bold text-slate-800 mb-2">
                       <span>Line Items ({cartItems.length})</span>
                       <span className="text-emerald-700 font-extrabold text-sm">
-                        Total: ${formatMoney(calculateCartTotalCents())}
+                        Total: {formatMoney(calculateCartTotalCents())}
                       </span>
                     </div>
 
@@ -701,9 +701,9 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                                 </span>
                               </div>
                               <div className="text-[11px] text-slate-500">
-                                {formatLineQuantity(item)} × ${formatMoney(item.unit_price)}
+                                {formatLineQuantity(item)} × {formatMoney(item.unit_price)}
                                 {serviceRateLabel(item.service_basis) ? ` ${serviceRateLabel(item.service_basis)}` : ''}
-                                {' '}= ${formatMoney(item.quantity * item.unit_price)}
+                                {' '}= {formatMoney(item.quantity * item.unit_price)}
                               </div>
                             </div>
                             <button
@@ -784,7 +784,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 <div className="flex items-center space-x-4 mt-3 pt-3 border-t border-slate-200 text-slate-500">
                   <span>Priority: <strong className="text-slate-800">{selectedPR.priority}</strong></span>
                   <span>Needed by: <strong className="text-slate-800">{selectedPR.needed_by_date}</strong></span>
-                  <span>Total Cost: <strong className="text-emerald-700 text-sm font-bold">${formatMoney(selectedPR.total_amount)}</strong></span>
+                  <span>Total Cost: <strong className="text-emerald-700 text-sm font-bold">{formatMoney(selectedPR.total_amount)}</strong></span>
                 </div>
               </div>
 
@@ -798,7 +798,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                   <p className="text-slate-800 mt-0.5">{selectedPR.source_contract.title}</p>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-slate-600">
                     <span>Supplier: <strong className="text-slate-900">{selectedPR.source_contract.supplier_name}</strong></span>
-                    <span>ACV: <strong className="text-slate-900">${formatMoney(selectedPR.source_contract.annual_value_cents)}</strong></span>
+                    <span>ACV: <strong className="text-slate-900">{formatMoney(selectedPR.source_contract.annual_value_cents)}</strong></span>
                     <span>{selectedPR.source_contract.start_date} → {selectedPR.source_contract.end_date}</span>
                   </div>
                   {selectedPR.contract_use_status === 'proposed' && (
@@ -882,8 +882,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                             )}
                           </td>
                           <td className="py-2 px-3">{formatLineQuantity(item)}</td>
-                          <td className="py-2 px-3">${formatMoney(item.unit_price)}</td>
-                          <td className="py-2 px-3 text-right font-bold text-slate-900">${formatMoney(item.total_price)}</td>
+                          <td className="py-2 px-3">{formatMoney(item.unit_price)}</td>
+                          <td className="py-2 px-3 text-right font-bold text-slate-900">{formatMoney(item.total_price)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -903,7 +903,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         <div>
                           <div className="font-mono font-bold text-slate-900">{po.po_number}</div>
                           <div className="text-[11px] text-slate-500 mt-0.5">
-                            {po.supplier_name || 'Supplier'} · ${formatMoney(po.total_amount)} · {po.status}
+                            {po.supplier_name || 'Supplier'} · {formatMoney(po.total_amount)} · {po.status}
                           </div>
                         </div>
                         <button

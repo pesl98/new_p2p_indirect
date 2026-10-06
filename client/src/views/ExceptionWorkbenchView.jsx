@@ -103,7 +103,7 @@ function billedPayBadge(inv) {
   return (
     <span className="bg-amber-100 text-amber-900 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center">
       <Banknote className="w-3 h-3 mr-1" />
-      Billed ${formatMoney(inv.total_amount)} → Pay ${formatMoney(inv.payable_total_cents)}
+      Billed {formatMoney(inv.total_amount)} → Pay {formatMoney(inv.payable_total_cents)}
     </span>
   );
 }
@@ -164,11 +164,11 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
     if (disposition === 'short_pay') {
       const payableCents = toCents(payableDollars);
       if (!Number.isInteger(payableCents) || payableCents < 0 || payableCents >= selected.total_amount) {
-        alert('Payable must be ≥ $0.00 and strictly less than the billed total.');
+        alert(`Payable must be ≥ ${formatMoney(0)} and strictly less than the billed total.`);
         return;
       }
       if (!window.confirm(
-        `Short-pay billed $${formatMoney(selected.total_amount)} at payable $${formatMoney(payableCents)}? Billed total stays on the invoice.`
+        `Short-pay billed ${formatMoney(selected.total_amount)} at payable ${formatMoney(payableCents)}? Billed total stays on the invoice.`
       )) {
         return;
       }
@@ -247,10 +247,10 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                     <td className="py-3 px-4 font-medium text-slate-900">{inv.supplier_name}</td>
                     <td className="py-3 px-4 font-mono text-indigo-700 font-semibold">{inv.po_number}</td>
                     <td className="py-3 px-4 font-bold text-slate-900">
-                      <div>${formatMoney(inv.total_amount)}</div>
+                      <div>{formatMoney(inv.total_amount)}</div>
                       {inv.payable_total_cents != null && (
                         <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
-                          Pay ${formatMoney(inv.payable_total_cents)}
+                          Pay {formatMoney(inv.payable_total_cents)}
                         </div>
                       )}
                     </td>
@@ -321,13 +321,13 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-center bg-blue-50/30">
-                          {formatStoredQuantity(res.ordered_qty, res)} @ ${formatMoney(res.po_unit_price)}
+                          {formatStoredQuantity(res.ordered_qty, res)} @ {formatMoney(res.po_unit_price)}
                         </td>
                         <td className="py-2.5 px-3 text-center bg-amber-50/30 font-semibold">
                           {formatStoredQuantity(res.received_qty, res)} {receiptBasisLabel(res)}
                         </td>
                         <td className="py-2.5 px-3 text-center bg-purple-50/30 font-bold">
-                          {formatStoredQuantity(res.invoiced_qty, res)} @ ${formatMoney(res.invoice_unit_price)}
+                          {formatStoredQuantity(res.invoiced_qty, res)} @ {formatMoney(res.invoice_unit_price)}
                         </td>
                         <td className="py-2.5 px-3 text-center">
                           qty {isScaledQuantity(res) ? formatMeasured(res.qty_variance, res.unit_of_measure) : res.qty_variance} · {res.price_variance}¢
@@ -369,15 +369,15 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                 </div>
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">Amounts (integer cents)</div>
-                  <div className="text-[11px] text-slate-600">PO ${formatMoney(selected.po_total_amount)} · Billed ${formatMoney(selected.total_amount)}</div>
+                  <div className="text-[11px] text-slate-600">PO {formatMoney(selected.po_total_amount)} · Billed {formatMoney(selected.total_amount)}</div>
                   {selected.payable_total_cents != null && (
                     <div className="text-[11px] font-semibold text-amber-900 mt-1">
-                      Payable ${formatMoney(selected.payable_total_cents)} (billed total unchanged)
+                      Payable {formatMoney(selected.payable_total_cents)} (billed total unchanged)
                     </div>
                   )}
                   {selected.exception?.accepted_total_cents != null && (
                     <div className="text-[11px] text-slate-600 mt-1">
-                      Last {selected.exception.disposition === 'short_pay' ? 'payable' : 'accepted'} total ${formatMoney(selected.exception.accepted_total_cents)}
+                      Last {selected.exception.disposition === 'short_pay' ? 'payable' : 'accepted'} total {formatMoney(selected.exception.accepted_total_cents)}
                       {selected.exception.billed_total_cents != null
                         ? ` · billed ${formatMoney(selected.exception.billed_total_cents)}`
                         : ''}
@@ -414,10 +414,10 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                         <div className="text-slate-500 mt-1">
                           {row.actor_name}
                           {row.disposition === 'short_pay'
-                            ? ` · billed $${formatMoney(row.billed_total_cents ?? selected.total_amount)} → pay $${formatMoney(row.accepted_total_cents)}`
+                            ? ` · billed ${formatMoney(row.billed_total_cents ?? selected.total_amount)} → pay ${formatMoney(row.accepted_total_cents)}`
                             : row.disposition === 'buyer_response' || row.disposition === 'return_to_buyer'
                               ? ''
-                              : ` · accepted $${formatMoney(row.accepted_total_cents)}`}
+                              : ` · accepted ${formatMoney(row.accepted_total_cents)}`}
                         </div>
                       </div>
                     ))}
@@ -468,11 +468,11 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                   {disposition === 'short_pay' && (
                     <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
                       <div className="text-[11px] text-slate-600">
-                        Billed total <strong className="text-slate-900">${formatMoney(selected.total_amount)}</strong>
+                        Billed total <strong className="text-slate-900">{formatMoney(selected.total_amount)}</strong>
                         {' · '}Match {selected.match_status?.replace(/_/g, ' ')} (not rematched)
                       </div>
                       <label className="block text-slate-700 font-bold text-[11px]">
-                        Payable amount (dollars) — must be ≥ 0 and less than billed
+                        Payable amount — must be ≥ 0 and less than billed
                       </label>
                       <input
                         type="number"
@@ -480,12 +480,12 @@ export default function ExceptionWorkbenchView({ currentUser, onDataChanged, onN
                         step="0.01"
                         value={payableDollars}
                         onChange={(e) => setPayableDollars(e.target.value)}
-                        placeholder="e.g. 1498.00 for 2 × $749 PO/GRN"
+                        placeholder={`e.g. 1498.00 for 2 × ${formatMoney(74900)} PO/GRN`}
                         className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"
                       />
                       {payableDollars !== '' && (
                         <div className="text-[11px] text-amber-900 font-semibold">
-                          Billed ${formatMoney(selected.total_amount)} → Pay ${formatMoney(toCents(payableDollars))}
+                          Billed {formatMoney(selected.total_amount)} → Pay {formatMoney(toCents(payableDollars))}
                         </div>
                       )}
                     </div>

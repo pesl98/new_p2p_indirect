@@ -199,40 +199,40 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           <div 
             style={{ width: `${(kpi.totalSpent / (kpi.totalBudget || 1)) * 100}%` }}
             className="bg-emerald-600 h-full" 
-            title={`Actual Invoiced & Paid: $${formatMoney(kpi.totalSpent)}`}
+            title={`Actual Invoiced & Paid: ${formatMoney(kpi.totalSpent)}`}
           />
           <div 
             style={{ width: `${(kpi.totalCommitted / (kpi.totalBudget || 1)) * 100}%` }}
             className="bg-amber-400 h-full" 
-            title={`Committed at final PR approval: $${formatMoney(kpi.totalCommitted)}`}
+            title={`Committed at final PR approval: ${formatMoney(kpi.totalCommitted)}`}
           />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 pt-4 border-t border-slate-100">
           <div>
             <div className="text-xs text-slate-500 font-medium">Total Allocated Budget</div>
-            <div className="text-lg font-bold text-slate-900 mt-0.5">${formatMoney(kpi.totalBudget)}</div>
+            <div className="text-lg font-bold text-slate-900 mt-0.5">{formatMoney(kpi.totalBudget)}</div>
           </div>
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
               <span>Actual Paid Spend</span>
             </div>
-            <div className="text-lg font-bold text-emerald-700 mt-0.5">${formatMoney(kpi.totalSpent)}</div>
+            <div className="text-lg font-bold text-emerald-700 mt-0.5">{formatMoney(kpi.totalSpent)}</div>
           </div>
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
               <span>Committed (approved PRs)</span>
             </div>
-            <div className="text-lg font-bold text-amber-700 mt-0.5">${formatMoney(kpi.totalCommitted)}</div>
+            <div className="text-lg font-bold text-amber-700 mt-0.5">{formatMoney(kpi.totalCommitted)}</div>
           </div>
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
               <span>Remaining Available</span>
             </div>
-            <div className="text-lg font-bold text-slate-700 mt-0.5">${formatMoney(kpi.totalRemaining)}</div>
+            <div className="text-lg font-bold text-slate-700 mt-0.5">{formatMoney(kpi.totalRemaining)}</div>
           </div>
         </div>
       </div>
@@ -257,7 +257,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                   <div key={idx} className="space-y-1">
                     <div className="flex justify-between text-xs font-medium">
                       <span className="text-slate-800">{cat.category}</span>
-                      <span className="text-slate-900 font-bold">${formatMoney(cat.total_spend)}</span>
+                      <span className="text-slate-900 font-bold">{formatMoney(cat.total_spend)}</span>
                     </div>
                     <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                       <div 
@@ -309,8 +309,8 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                   </div>
 
                   <div className="flex justify-between text-[11px] text-slate-500 mt-1">
-                    <span>Budget: ${formatMoney(dept.total_budget)}</span>
-                    <span>Remaining: ${formatMoney(dept.available_budget)}</span>
+                    <span>Budget: {formatMoney(dept.total_budget)}</span>
+                    <span>Remaining: {formatMoney(dept.available_budget)}</span>
                   </div>
                 </div>
               );

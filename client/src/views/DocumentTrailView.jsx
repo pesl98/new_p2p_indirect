@@ -259,7 +259,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                     className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200 flex items-center justify-between"
                   >
                     <span className="font-mono font-bold text-slate-800">{pr.pr_number}</span>
-                    <span className="text-slate-500">{pr.requester_name} · ${formatMoney(pr.total_amount)}</span>
+                    <span className="text-slate-500">{pr.requester_name} · {formatMoney(pr.total_amount)}</span>
                   </button>
                 ))}
               </div>
@@ -275,7 +275,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                     className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200 flex items-center justify-between"
                   >
                     <span className="font-mono font-bold text-slate-800">{po.po_number}</span>
-                    <span className="text-slate-500">{po.supplier_name} · ${formatMoney(po.total_amount)}</span>
+                    <span className="text-slate-500">{po.supplier_name} · {formatMoney(po.total_amount)}</span>
                   </button>
                 ))}
               </div>
@@ -313,7 +313,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
               <div className="text-right">
                 {trail.requisition && (
                   <>
-                    <div className="text-xl font-extrabold text-slate-900">${formatMoney(trail.requisition.total_amount)}</div>
+                    <div className="text-xl font-extrabold text-slate-900">{formatMoney(trail.requisition.total_amount)}</div>
                     <div className="text-[11px] text-slate-500">
                       {trail.requisition.requester_name} · {trail.requisition.department_name}
                     </div>
@@ -369,7 +369,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                     <StatusPill status={po.status} />
                   </div>
                   <div className="mt-3 text-xs text-slate-600 space-y-1">
-                    <div>Amount: <span className="font-semibold">${formatMoney(po.total_amount)}</span></div>
+                    <div>Amount: <span className="font-semibold">{formatMoney(po.total_amount)}</span></div>
                     <div>
                       {po.receiving?.goods === 'consignment' ? (
                         <>Consignment: {po.consignment_issues?.[0]?.issue_number || 'issued'} <span className="text-slate-400">(no GRN)</span></>
@@ -436,10 +436,10 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                             )}
                             {event.amount_cents != null && (
                               <div className="text-xs font-bold text-slate-800 mt-1">
-                                ${formatMoney(event.amount_cents)}
+                                {formatMoney(event.amount_cents)}
                                 {event.payable_total_cents != null && event.kind === 'invoice' && (
                                   <span className="ml-1 text-[11px] font-semibold text-amber-800">
-                                    → Pay ${formatMoney(event.payable_total_cents)}
+                                    → Pay {formatMoney(event.payable_total_cents)}
                                   </span>
                                 )}
                               </div>

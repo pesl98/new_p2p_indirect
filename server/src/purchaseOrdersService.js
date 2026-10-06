@@ -1,5 +1,6 @@
 import { nextDocumentNumber } from './docNumbers.js';
-import { formatCents, asCents } from './money.js';
+import { formatMoney, asCents } from './money.js';
+import { withDeploymentCurrency } from './currencyConfig.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 import {
   WEBHOOK_EVENTS,
@@ -297,7 +298,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
         eventType: WEBHOOK_EVENTS.PO_ISSUED,
         entityType: 'purchase_order',
         entityId: poId,
-        data: {
+        data: withDeploymentCurrency({
           po_id: poId,
           po_number: poNumber,
           supplier_id: supplierId,
@@ -308,7 +309,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
           issue_date: issueDate,
           status: 'issued',
           requisition_id: Number(requisition_id)
-        }
+        })
       });
 
       created.push({
@@ -329,7 +330,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
     `).run(requisition_id);
 
     const poSummary = created
-      .map((po) => `${po.poNumber} (${po.supplier_name}, ${formatCents(po.total_amount)})`)
+      .map((po) => `${po.poNumber} (${po.supplier_name}, ${formatMoney(po.total_amount)})`)
       .join('; ');
     const convertAction = split ? 'SPLIT_CONVERTED_TO_PO' : 'CONVERTED_TO_PO';
     const convertSummary = split

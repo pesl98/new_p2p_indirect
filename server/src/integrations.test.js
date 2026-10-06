@@ -401,7 +401,7 @@ describe('exports', () => {
       const key = await issueKey(base, ['export:read'], { name: 'ERP Pull' });
       const invoices = await json(await fetch(`${base}/api/integrations/exports/invoices`, bearer(key.key)));
       assert.equal(invoices.status, 200);
-      assert.equal(invoices.body.currency, 'USD');
+      assert.equal(invoices.body.currency, 'EUR');
       assert.equal(invoices.body.count, 1);
       assert.deepEqual(invoices.body.invoices[0], {
         id: 1,
@@ -415,7 +415,7 @@ describe('exports', () => {
         invoice_date: '2026-09-02',
         due_date: '2026-10-02',
         status: 'approved_for_payment',
-        currency: 'USD',
+        currency: 'EUR',
         subtotal_cents: 1000,
         tax_cents: 0,
         billed_total_cents: 1000,
@@ -429,12 +429,15 @@ describe('exports', () => {
       assert.match(csv.headers.get('content-type'), /text\/csv/);
       assert.match(csvText.split('\n')[0], /invoice_number,supplier_id,supplier_code/);
       assert.match(csvText, /INV-100/);
+      assert.match(csvText, /EUR/);
 
       const runs = await json(await fetch(`${base}/api/integrations/exports/payment-runs`, bearer(key.key)));
       assert.equal(runs.status, 200);
       assert.equal(runs.body.count, 1);
       assert.equal(runs.body.payment_runs[0].run_number, 'PAY-2026-001');
       assert.equal(runs.body.payment_runs[0].status, 'executed');
+      assert.equal(runs.body.currency, 'EUR');
+      assert.equal(runs.body.payment_runs[0].currency, 'EUR');
       assert.equal(runs.body.payment_runs[0].payable_total_cents, 900);
       assert.deepEqual(runs.body.payment_runs[0].invoices, [{
         invoice_id: 1,
@@ -447,6 +450,8 @@ describe('exports', () => {
       const runCsvText = await runCsv.text();
       assert.match(runCsvText, /PAY-2026-001/);
       assert.match(runCsvText, /INV-100/);
+      assert.match(runCsvText.split('\n')[0], /currency/);
+      assert.match(runCsvText, /EUR/);
 
       const exportAudit = await db.prepare(`
         SELECT actor_name, actor_role, action FROM compliance_audit_events WHERE action = 'INTEGRATION_EXPORT'
@@ -590,14 +595,24 @@ describe('webhook outbox', () => {
       payment_reference: 'ACH-HOOK',
       actor_name: 'David Miller'
     });
-    const types = (await db.prepare(`SELECT event_type FROM webhook_outbox ORDER BY id ASC`).all())
-      .map((row) => row.event_type);
-    assert.deepEqual(types, [
+    const rows = await db.prepare(`SELECT event_type, payload FROM webhook_outbox ORDER BY id ASC`).all();
+    assert.deepEqual(rows.map((row) => row.event_type), [
       'po.issued',
       'receipt.posted',
       'invoice.approved',
       'payment_run.created',
       'payment_run.paid'
     ]);
+    for (const row of rows) {
+      const payload = JSON.parse(row.payload);
+      if (row.event_type === 'receipt.posted') {
+        assert.equal(payload.currency, undefined);
+        assert.equal(payload.units_received, 2);
+      } else {
+        assert.equal(payload.currency, 'EUR');
+      }
+    }
+    assert.equal(JSON.parse(rows[0].payload).total_amount_cents, 5000);
+    assert.equal(JSON.parse(rows[2].payload).payable_total_cents, 5000);
   });
 });

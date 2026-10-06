@@ -25,7 +25,7 @@ ProcureFlow is a **full-lifecycle indirect Procure-to-Pay (P2P)** app for non-pr
 - **API:** Node.js / Express (`server/src/app.js`).
 - **Local DB:** SQLite via `better-sqlite3` when both `TURSO_*` vars are omitted (`PROCUREMENT_DB_PATH`, gitignored under `server/data/`).
 - **Customer / Vercel DB:** Turso (classic libSQL) over **HTTP** (`POST /v2/pipeline`). No native libsql `.so`.
-- **Money:** integer **cents** everywhere in SQLite and the API. The client formats dollars at display/input edges.
+- **Money:** integer **cents** of the deployment currency everywhere in SQLite and the API (default EUR; `CURRENCY=USD` does not rescale). Display uses `formatMoney` (`nl-NL`). Numeric inputs stay dot-decimal major units.
 
 **Isolation:** **one database per customer** (one Turso DB or one SQLite file) **and** one Vercel project per customer. Schema and application code are shared; **data is not**. There is **no** shared-row `org_id` (or equivalent) multi-tenancy. Pointing two deploys at the same Turso URL **merges** those customers.
 
@@ -58,7 +58,7 @@ Do not promise these. They are **not** in the code:
 - SCIM (OIDC and SAML login are optional per customer; see [§3](#3-personas-and-authentication))
 - Shared-row multi-tenancy (`org_id` on every table)
 - OCR / PDF / email invoice capture
-- Bank NACHA / ACH file export, remittance portal, early-pay discount calendar, multi-currency
+- Bank NACHA / ACH file export, remittance portal, early-pay discount calendar, foreign exchange or an in-app currency picker (one `CURRENCY` per deployment, default EUR)
 - CLM, e-sign, vendor portal, successor `CNT-` rows, auto-extend of `end_date`
 - Create-department or create-budget UI
 - Full segregation of duties enforced on every API route (Sprint 3 reports violations; it does not block every write)
@@ -261,13 +261,13 @@ Matching (eligible contracts are computed `active` or `expiring_soon`): score su
 
 **Shipped — routing** (`server/src/approvalPolicy.js`)
 
-Thresholds (`APPROVAL_TIER2_CENTS` = $1,000 / `APPROVAL_TIER3_CENTS` = $10,000):
+Thresholds (`APPROVAL_TIER2_CENTS` = € 1.000,00 / `APPROVAL_TIER3_CENTS` = € 10.000,00):
 
 | PR total | Chain |
 | --- | --- |
-| ≤ $1,000 | Department head |
-| > $1,000 and ≤ $10,000 | Dept head, then `role=procurement` |
-| > $10,000 | Dept head, then procurement, then `role=finance` (or `role=admin` if no finance user) |
+| ≤ € 1.000,00 | Department head |
+| > € 1.000,00 and ≤ € 10.000,00 | Dept head, then `role=procurement` |
+| > € 10.000,00 | Dept head, then procurement, then `role=finance` (or `role=admin` if no finance user) |
 
 Step 1 = `departments.approver_user_id` if set (any role), else first `role=approver` in the PR’s department, else HTTP 400 (“assign a head in Org Admin”). Later steps resolve by **role**, not hardcoded user ids.
 
@@ -317,7 +317,7 @@ Steps are **sequential, not parallel**:
 **Shipped — change orders** (`POST /api/purchase-orders/:id/change-orders`)
 
 - Formal numbered revision `CO-YYYY-NNN` (MAX-suffix), apply-on-confirm (`status=applied`). Existing `po_item_id` only: qty and/or unit price (integer cents) and optional delivery notes.
-- Fail-closed: PO not in `issued` / `acknowledged` / `partially_received` / `received`; missing reason/`actor_name`; empty change set; new qty below received (goods), accepted (services), or invoiced; non-integer qty/cents; unknown line; net increase **above $1,000** without `confirm_increase: true`.
+- Fail-closed: PO not in `issued` / `acknowledged` / `partially_received` / `received`; missing reason/`actor_name`; empty change set; new qty below received (goods), accepted (services), or invoiced; non-integer qty/cents; unknown line; net increase **above € 1.000,00** without `confirm_increase: true`.
 - Recalculates line and PO totals. Linked-PR POs move `budgets.committed_amount` by the delta (increase commits more; decrease releases, floor 0). **`actual_spent` is never touched.** `purchase_orders.revision` / `change_order_count` bump. Audit `CHANGE_ORDER_APPLIED`.
 - Increase confirm is a **flag**, not a second approval chain. Change-order increases do **not** re-run the remaining-budget fail-closed check used on final PR approve.
 
@@ -406,7 +406,7 @@ Overall `match_status`: `perfect_match` | `tolerated_match` | `quantity_variance
 
 **Limits**
 
-- Hours and days are still whole quantities times a cent rate. There is no free-form dollar amount that ignores quantity.
+- Hours and days are still whole quantities times a cent rate. There is no free-form amount that ignores quantity.
 - `tolerated_match` invoices are already `matched` and are **not** hard-queued on the Exception Workbench.
 
 ### 5.6 Exception workbench + Buyer Inbox
@@ -490,7 +490,7 @@ Each row: invoice #, supplier, PO, dates, billed / nullable payable cents, statu
 
 **Limits**
 
-- No NACHA/ACH file, remittance portal, early-pay calendar, or multi-currency.
+- No NACHA/ACH file, remittance portal, early-pay calendar, or foreign exchange. The run’s currency is the deployment currency.
 - APIs demo-open. Sidebar for finance + admin.
 
 ### 5.9 Budgets
@@ -505,7 +505,7 @@ Each row: invoice #, supplier, PO, dates, billed / nullable payable cents, statu
 
 **Limits**
 
-- **No create/edit budget UI or POST `/api/budgets`.** Operator path: `npm run bootstrap-org` (default $100,000.00 = `10000000` cents per cost center). `--force-budget` rewrites `total_budget` only; never touches committed/actual.
+- **No create/edit budget UI or POST `/api/budgets`.** Operator path: `npm run bootstrap-org` (default € 100.000,00 = `10000000` cents per cost center). `--force-budget` rewrites `total_budget` only; never touches committed/actual.
 - Empty schema has 0 budget rows — PR submit fails closed until the org skeleton exists.
 
 ### 5.10 Document trail
@@ -615,6 +615,7 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 **Outbound**
 
 - Events, in the same transaction as the business write: `po.issued`, `receipt.posted` (goods receipt only), `invoice.approved`, `payment_run.created`, `payment_run.paid`.
+- Money-bearing payloads (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) include `currency` (the deployment code, default `EUR`) next to the existing cent fields. `receipt.posted` has no amount, so it has no `currency` field. Cent field names and values are unchanged.
 - `X-ProcureFlow-Signature: t=<unix seconds>,v1=<64 hex>`. `v1` is HMAC-SHA256 of the string `${t}.${rawBody}` with `WEBHOOK_SIGNING_SECRET`. Reject timestamps more than 300 seconds off. Dedupe on `id` (`evt_<outbox id>`). Retries get a new timestamp and the same id.
 - `webhook_outbox` status is `pending`, `delivered`, or `dead`. Five attempts. Backoff after failure: 30s, 120s, 600s, 3600s. Unset URL or secret does not increment attempts.
 - Admin list: `GET /api/integrations/outbox`. Replay: `POST /api/integrations/outbox/:id/replay` (resets attempts, audits `WEBHOOK_REPLAYED`). Deliver now: `POST /api/integrations/outbox/dispatch`.
@@ -624,7 +625,7 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 
 - `GET /api/integrations/exports/invoices` — default status `approved_for_payment` (`paid` allowed). JSON or `?format=csv`.
 - `GET /api/integrations/exports/payment-runs` — default status `executed` (`draft` or `all`). Nested invoices in JSON; one CSV row per invoice.
-- Amounts are cents. `currency` is `USD` until Sprint 5. Each response appends `INTEGRATION_EXPORT`.
+- Amounts are cents. JSON `currency` is the deployment code (default `EUR`, or `USD` when `CURRENCY=USD`). The invoice CSV already had a `currency` column; the payment-run CSV appends `currency` as the last column. Each response appends `INTEGRATION_EXPORT`.
 
 **Config**
 
@@ -634,23 +635,23 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 
 **Not in this sprint**
 
-Inbound supplier invoices (they would have to run through match and exceptions). ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. EUR. Dutch UI.
+Inbound supplier invoices (they would have to run through match and exceptions). ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. Foreign exchange and an in-app currency picker. Dutch UI (Sprint 6). The webhook dispatcher and its retry loop are unchanged.
 
 ---
 
 ## 6. Money model (integer cents)
 
-SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`, payment-run snapshots) store **integer USD cents**. The API returns cents. The client converts at edges (`client/src/money.js`, `server/src/money.js`).
+SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`, payment-run snapshots) store **integer cents** of the deployment currency. EUR and USD both have two decimal places, so switching `CURRENCY` does not migrate or rescale stored values. The API returns cents. Display and audit text use `formatMoney` (`shared/currency.js`, locale `nl-NL`) from `client/src/money.js` and `server/src/money.js`. `formatCents` stays a symbol-free dot-decimal string (`749.00`) for non-display use. Typed amounts stay dot-decimal major units (`toCents` / `fromCents`). Dutch comma input is Sprint 6.
 
-Do not mix float dollars with cents in the same field. Whole-unit line totals are `qty * unit_price_cents`. Discrete quantities (goods, services, consignment) are whole units. Utility and bulk quantities are integer milli-units (scale 1000); the line amount is `round(milli × unit_price_cents / 1000)`.
+Do not mix a float major-unit amount with cents in the same field. Whole-unit line totals are `qty * unit_price_cents`. Discrete quantities (goods, services, consignment) are whole units. Utility and bulk quantities are integer milli-units (scale 1000); the line amount is `round(milli × unit_price_cents / 1000)`.
 
-| Constant | Cents | Dollars |
+| Constant | Cents | Display (`nl-NL`, EUR) |
 | --- | --- | --- |
-| `APPROVAL_TIER2_CENTS` | 100000 | $1,000.00 |
-| `APPROVAL_TIER3_CENTS` | 1000000 | $10,000.00 |
-| `CHANGE_ORDER_INCREASE_CONFIRM_CENTS` | same as tier 2 | $1,000.00 net increase confirm flag |
+| `APPROVAL_TIER2_CENTS` | 100000 | € 1.000,00 |
+| `APPROVAL_TIER3_CENTS` | 1000000 | € 10.000,00 |
+| `CHANGE_ORDER_INCREASE_CONFIRM_CENTS` | same as tier 2 | € 1.000,00 net increase confirm flag |
 
-`bootstrap-org` default `total_budget` = `10000000` cents ($100,000.00).
+`bootstrap-org` default `total_budget` = `10000000` cents (€ 100.000,00).
 
 ---
 
@@ -704,6 +705,7 @@ Full env table: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Keys (no values): [`.env.exa
 | `BASE_URL` | Smoke only |
 | `WEBHOOK_TARGET_URL` | Optional. HTTPS receiver for this customer. Not stored in the database. |
 | `WEBHOOK_SIGNING_SECRET` | Optional. HMAC key. Never returned. Not written by `vercel:customer`. |
+| `CURRENCY` | Optional. `EUR` (default) or `USD`. Anything else refuses to boot. Display locale `nl-NL`. Not written by the CLIs. |
 
 There is **no platform cron**. `npm start` retries pending webhooks every 30 seconds. Vercel relies on the attempt at write time plus **Deliver pending** / replay. See [§5.14](#514-integrations).
 
@@ -810,10 +812,10 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 | Create-department / create-budget UI | Operator CLI `bootstrap-org` only. |
 | OCR / PDF / email invoice ingest | Manual invoice form. |
 | NACHA / bank file / remittance portal | Payment run stores a shared ACH **reference string** and marks paid. No file. |
-| Multi-currency / tax engine / 1099 | USD integer cents only. |
+| Foreign exchange / tax engine / 1099 | One currency per deployment (`CURRENCY`, default EUR). Amounts stay integer cents. No FX and no in-app picker. |
 | Parallel / AND approvals | Sequential pending/waiting only. |
 | Transitive OOO / calendar sync | Direct delegation window only. |
-| Change-order approval chain / new PO lines / supplier swap | Apply-on-confirm; existing lines; $1,000 confirm flag. |
+| Change-order approval chain / new PO lines / supplier swap | Apply-on-confirm; existing lines; € 1.000,00 confirm flag. |
 | Line-level short-pay / debit memo / supplier portal | Header `payable_total_cents` only. |
 | Fuzzy duplicate / OCR typos | Exact billed cents + ±7 UTC days or same PO + amount. |
 | Contract CLM / e-sign / auto-extend / PO `source_contract_id` | Renewal creates a standard PR; convert does not copy the FK. |

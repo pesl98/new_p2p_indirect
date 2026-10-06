@@ -1,4 +1,4 @@
-import { formatCents } from './money.js';
+import { formatMoney } from './money.js';
 import { resolveDecisionActor } from './delegationsService.js';
 import {
   CONTRACT_USE_ALLOWED,
@@ -266,8 +266,8 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     if (remaining < pr.total_amount && !allowBudgetOverride) {
       throw new ApprovalDecisionError(
         `Insufficient remaining budget to commit this requisition. ` +
-        `PR total $${formatCents(pr.total_amount)} exceeds remaining $${formatCents(remaining)} ` +
-        `(total $${formatCents(budget.total_budget)} − committed $${formatCents(budget.committed_amount)} − actual $${formatCents(budget.actual_spent)}).`
+        `PR total ${formatMoney(pr.total_amount)} exceeds remaining ${formatMoney(remaining)} ` +
+        `(total ${formatMoney(budget.total_budget)} − committed ${formatMoney(budget.committed_amount)} − actual ${formatMoney(budget.actual_spent)}).`
       );
     }
 
@@ -284,7 +284,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('requisition', ?, 'APPROVED', ?, ?)
-    `).run(pr.id, actor, `Fully approved for $${formatCents(pr.total_amount)}.${viaNote} Committed budget allocated.`);
+    `).run(pr.id, actor, `Fully approved for ${formatMoney(pr.total_amount)}.${viaNote} Committed budget allocated.`);
 
     if (remaining < pr.total_amount && allowBudgetOverride) {
       await db.prepare(`
@@ -293,7 +293,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       `).run(
         pr.id,
         actor,
-        `Final approval overrode insufficient remaining budget ($${formatCents(remaining)}) to commit $${formatCents(pr.total_amount)}.`
+        `Final approval overrode insufficient remaining budget (${formatMoney(remaining)}) to commit ${formatMoney(pr.total_amount)}.`
       );
     }
 

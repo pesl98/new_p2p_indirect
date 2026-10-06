@@ -17,6 +17,7 @@ import {
   uniqueConflictMessage
 } from './masterData.js';
 import { requireIntegerCents } from './money.js';
+import { deploymentCurrency } from './currencyConfig.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { invoicePayableCents } from './invoiceExceptionsService.js';
 
@@ -45,7 +46,10 @@ const FORBIDDEN_ACTOR_FIELDS = [
   'role'
 ];
 
-export const EXPORT_CURRENCY = 'USD';
+/** Deployment currency stamped on export JSON and CSV. Default EUR. */
+export function exportCurrency() {
+  return deploymentCurrency();
+}
 
 export function assertNoActorFields(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return;
@@ -582,7 +586,7 @@ export async function exportInvoices(db, key, req) {
     invoice_date: row.invoice_date,
     due_date: row.due_date,
     status: row.status,
-    currency: EXPORT_CURRENCY,
+    currency: exportCurrency(),
     subtotal_cents: Number(row.subtotal),
     tax_cents: Number(row.tax_amount || 0),
     billed_total_cents: Number(row.total_amount),
@@ -603,7 +607,7 @@ export async function exportInvoices(db, key, req) {
     format,
     body: {
       exported_at: new Date().toISOString(),
-      currency: EXPORT_CURRENCY,
+      currency: exportCurrency(),
       count: invoices.length,
       invoices
     }
@@ -624,7 +628,8 @@ const PAYMENT_RUN_CSV_COLUMNS = [
   'invoice_id',
   'invoice_number',
   'invoice_billed_total_cents',
-  'invoice_payable_total_cents'
+  'invoice_payable_total_cents',
+  'currency'
 ];
 
 export async function exportPaymentRuns(db, key, req) {
@@ -657,7 +662,7 @@ export async function exportPaymentRuns(db, key, req) {
       billed_total_cents: Number(run.billed_total_cents),
       payable_total_cents: Number(run.payable_total_cents),
       invoice_count: Number(run.invoice_count),
-      currency: EXPORT_CURRENCY,
+      currency: exportCurrency(),
       created_at: run.created_at,
       executed_at: run.executed_at || null,
       invoices: (items || []).map((item) => ({
@@ -698,7 +703,7 @@ export async function exportPaymentRuns(db, key, req) {
     format,
     body: {
       exported_at: new Date().toISOString(),
-      currency: EXPORT_CURRENCY,
+      currency: exportCurrency(),
       count: paymentRuns.length,
       payment_runs: paymentRuns
     }

@@ -264,7 +264,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                     <td className="py-3 px-4 text-slate-700">{ses.created_by_name}</td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-indigo-700">{ses.total_qty_accepted} accepted</div>
-                      <div className="text-[10px] text-slate-400">${formatMoney(ses.total_amount_cents)}</div>
+                      <div className="text-[10px] text-slate-400">{formatMoney(ses.total_amount_cents)}</div>
                     </td>
                     <td className="py-3 px-4">{getStatusBadge(ses.status)}</td>
                     <td className="py-3 px-4 text-right">
@@ -308,7 +308,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                   <option value="">-- Choose a Purchase Order --</option>
                   {activePOs.map((po) => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} (${formatMoney(po.total_amount)}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{po.status}]
                     </option>
                   ))}
                 </select>
@@ -369,7 +369,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                                 />
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                                ${formatMoney(Math.trunc(Number(item.quantity_accepted) || 0) * item.unit_price)}
+                                {formatMoney(Math.trunc(Number(item.quantity_accepted) || 0) * item.unit_price)}
                               </td>
                             </tr>
                           );
@@ -484,7 +484,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                         <td className="py-2 px-3 text-center font-bold text-indigo-700">
                           {formatLineQuantity({ quantity: item.quantity_accepted, service_basis: item.service_basis })}
                         </td>
-                        <td className="py-2 px-3 text-right font-bold">${formatMoney(item.amount_cents)}</td>
+                        <td className="py-2 px-3 text-right font-bold">{formatMoney(item.amount_cents)}</td>
                         <td className="py-2 px-3 text-slate-500">{item.comments || '-'}</td>
                       </tr>
                     ))}

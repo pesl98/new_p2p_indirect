@@ -1,4 +1,4 @@
-import { asCents, formatCents } from './money.js';
+import { asCents, formatMoney } from './money.js';
 
 /**
  * Duplicate invoice detection — AP control after (and independent of) dual match.
@@ -258,7 +258,7 @@ function summarizeSuspects(invoiceNumber, billedCents, invoiceDate, suspects) {
         : 'same billed amount + invoice date within ±7 UTC days';
     return `${row.invoice_number} (${row.status}, ${row.billed_total_cents}¢, ${row.invoice_date}, ${rule})`;
   });
-  return `Likely duplicate ${invoiceNumber}: billed ${billedCents}¢ ($${formatCents(billedCents)}) on ${invoiceDate}. Candidates: ${parts.join('; ')}`;
+  return `Likely duplicate ${invoiceNumber}: billed ${billedCents}¢ (${formatMoney(billedCents)}) on ${invoiceDate}. Candidates: ${parts.join('; ')}`;
 }
 
 /**
@@ -553,8 +553,8 @@ export async function resolveInvoiceDuplicate(db, id, payload = {}) {
     `).run(flagStatus, reason, actorName, id);
 
     const details = disposition === 'confirm_unique'
-      ? `Cleared duplicate hold on ${invoice.invoice_number} (billed ${billedTotalCents}¢ / $${formatCents(billedTotalCents)}). Confirm unique. Reason: ${reason}`
-      : `Confirmed duplicate ${invoice.invoice_number} (billed ${billedTotalCents}¢ / $${formatCents(billedTotalCents)}). Invoice rejected/voided. Reason: ${reason}`;
+      ? `Cleared duplicate hold on ${invoice.invoice_number} (billed ${billedTotalCents}¢ / ${formatMoney(billedTotalCents)}). Confirm unique. Reason: ${reason}`
+      : `Confirmed duplicate ${invoice.invoice_number} (billed ${billedTotalCents}¢ / ${formatMoney(billedTotalCents)}). Invoice rejected/voided. Reason: ${reason}`;
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)

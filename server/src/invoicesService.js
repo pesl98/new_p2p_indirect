@@ -1,4 +1,5 @@
-import { asCents, formatCents, lineTotalCents, toQty } from './money.js';
+import { asCents, formatMoney, lineTotalCents, toQty } from './money.js';
+import { withDeploymentCurrency } from './currencyConfig.js';
 import { MEASURED_SCALE, measuredAmountCents, parseMeasuredMilli } from './measuredQty.js';
 import { run3WayMatch } from './match.js';
 import { assertCanApprovePayment, assertCanMarkPaid, invoicePayableCents } from './invoiceExceptionsService.js';
@@ -104,7 +105,7 @@ export async function createVendorInvoice(db, payload) {
       VALUES ('invoice', ?, '3_WAY_MATCHED', 'System 3-Way Matcher', ?)
     `).run(
       invoiceId,
-      `Invoice ${invoice_number} processed for $${formatCents(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; consignment: PO+draw-down+invoice; utility/bulk: PO+measured consumption+invoice; services: PO+SES+invoice)`
+      `Invoice ${invoice_number} processed for ${formatMoney(totalAmount)}. Result: ${matchOutcome.overallMatchStatus} (goods: PO+GRN+invoice; consignment: PO+draw-down+invoice; utility/bulk: PO+measured consumption+invoice; services: PO+SES+invoice)`
     );
 
     // Soft-hold likely duplicates after the invoice exists (same transaction).
@@ -213,8 +214,8 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
     }
 
     const amountNote = isShortPay
-      ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
-      : `$${formatCents(payableCents)}`;
+      ? `Billed ${formatMoney(billedCents)} → Pay ${formatMoney(payableCents)}`
+      : `${formatMoney(payableCents)}`;
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
       VALUES ('invoice', ?, 'APPROVED_FOR_PAYMENT', ?, ?)
@@ -228,7 +229,7 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
       eventType: WEBHOOK_EVENTS.INVOICE_APPROVED,
       entityType: 'invoice',
       entityId: id,
-      data: {
+      data: withDeploymentCurrency({
         invoice_id: Number(id),
         invoice_number: invoice.invoice_number,
         supplier_id: Number(invoice.supplier_id),
@@ -237,7 +238,7 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
         status: 'approved_for_payment',
         billed_total_cents: billedCents,
         payable_total_cents: payableCents
-      }
+      })
     });
   });
 
@@ -245,7 +246,7 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
   kickWebhookDispatch(db);
   return {
     message: isShortPay
-      ? `Invoice approved for payment successfully. Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}.`
+      ? `Invoice approved for payment successfully. Billed ${formatMoney(billedCents)} → Pay ${formatMoney(payableCents)}.`
       : 'Invoice approved for payment successfully.',
     billed_total_cents: billedCents,
     payable_total_cents: payableCents
@@ -263,8 +264,8 @@ export async function applyInvoicePaid(db, invoice, { payment_reference, actor }
   const payableCents = invoicePayableCents(invoice);
   const isShortPay = invoice.payable_total_cents != null && invoice.payable_total_cents !== '';
   const amountNote = isShortPay
-    ? `Billed $${formatCents(billedCents)} → Pay $${formatCents(payableCents)}`
-    : `$${formatCents(payableCents)}`;
+    ? `Billed ${formatMoney(billedCents)} → Pay ${formatMoney(payableCents)}`
+    : `${formatMoney(payableCents)}`;
   const actorName = actor || 'Finance Lead';
 
   await db.prepare(`
@@ -307,7 +308,7 @@ export async function markInvoicePaid(db, id, { payment_reference, payer_name, a
   const paid = await payTransaction();
   return {
     message: paid.is_short_pay
-      ? `Invoice marked as paid. Billed $${formatCents(paid.billed_total_cents)} → Pay $${formatCents(paid.payable_total_cents)}.`
+      ? `Invoice marked as paid. Billed ${formatMoney(paid.billed_total_cents)} → Pay ${formatMoney(paid.payable_total_cents)}.`
       : 'Invoice marked as paid.',
     payment_reference: paid.payment_reference,
     billed_total_cents: paid.billed_total_cents,

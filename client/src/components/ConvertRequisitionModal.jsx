@@ -216,7 +216,7 @@ export default function ConvertRequisitionModal({
               >
                 <div className="flex justify-between items-center">
                   <span className="font-mono font-bold text-slate-900">{po.poNumber}</span>
-                  <span className="text-emerald-700 font-extrabold text-xs">${formatMoney(po.total_amount)}</span>
+                  <span className="text-emerald-700 font-extrabold text-xs">{formatMoney(po.total_amount)}</span>
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
                   {po.supplier_name} · {po.item_count} line{po.item_count === 1 ? '' : 's'}
@@ -247,7 +247,7 @@ export default function ConvertRequisitionModal({
                     >
                       <div className="flex justify-between items-center font-bold text-slate-900">
                         <span>{pr.pr_number} — {pr.department_name}</span>
-                        <span className="text-emerald-700 font-extrabold">${formatMoney(pr.total_amount)}</span>
+                        <span className="text-emerald-700 font-extrabold">{formatMoney(pr.total_amount)}</span>
                       </div>
                       <p className="text-slate-500 text-[11px] mt-1 line-clamp-1">{pr.justification}</p>
                     </button>
@@ -299,7 +299,7 @@ export default function ConvertRequisitionModal({
                             </td>
                             <td className="py-2 px-3 text-slate-600">{item.quantity}</td>
                             <td className="py-2 px-3 text-right font-semibold text-slate-900">
-                              ${formatMoney(item.total_price)}
+                              {formatMoney(item.total_price)}
                             </td>
                             <td className="py-2 px-3 text-slate-600">
                               {defaultSupplierName(item, suppliers) || (
@@ -337,7 +337,7 @@ export default function ConvertRequisitionModal({
                     <div key={group.supplier_id} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
                       <div className="flex justify-between font-semibold text-slate-900">
                         <span>{group.supplier_name}</span>
-                        <span className="text-emerald-700">${formatMoney(group.total)}</span>
+                        <span className="text-emerald-700">{formatMoney(group.total)}</span>
                       </div>
                       <div className="text-[11px] text-slate-500 mt-0.5">
                         {group.items.length} line{group.items.length === 1 ? '' : 's'} → one issued PO

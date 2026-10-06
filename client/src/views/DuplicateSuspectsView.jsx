@@ -80,7 +80,7 @@ function InvoiceCard({ title, invoice, highlight }) {
         <div>{invoice.supplier_name}</div>
         <div className="font-mono text-indigo-700 font-semibold">{invoice.po_number}</div>
         <div>Invoice date {invoice.invoice_date}</div>
-        <div className="font-bold text-slate-900 text-sm">${formatMoney(invoice.total_amount)}</div>
+        <div className="font-bold text-slate-900 text-sm">{formatMoney(invoice.total_amount)}</div>
         <div>{statusBadge(invoice.status)}</div>
       </div>
     </div>
@@ -230,7 +230,7 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                       <td className="py-3 px-4 font-mono text-indigo-700 font-semibold">{inv.po_number}</td>
                       <td className="py-3 px-4">
                         <div className="text-slate-500">{inv.invoice_date}</div>
-                        <div className="font-bold text-slate-900">${formatMoney(inv.total_amount)}</div>
+                        <div className="font-bold text-slate-900">{formatMoney(inv.total_amount)}</div>
                       </td>
                       <td className="py-3 px-4">
                         {candidate ? (
@@ -310,7 +310,7 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                   <div key={flag.id} className="border border-slate-200 rounded-xl p-3">
                     <div className="font-semibold text-slate-800">{matchRuleLabel(flag.match_rule)}</div>
                     <div className="text-slate-500 mt-0.5">
-                      {flag.invoice_date} · ${formatMoney(flag.billed_total_cents)} vs {flag.candidate_invoice_date} · ${formatMoney(flag.candidate_billed_total_cents)}
+                      {flag.invoice_date} · {formatMoney(flag.billed_total_cents)} vs {flag.candidate_invoice_date} · {formatMoney(flag.candidate_billed_total_cents)}
                       {' '}({flag.candidate_invoice_number})
                     </div>
                     {flag.reason && (

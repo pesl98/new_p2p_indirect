@@ -113,7 +113,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
                     <td className="py-3 px-4 text-slate-700">{row.supplier_name}</td>
                     <td className="py-3 px-4 text-slate-600">{row.location_label}</td>
                     <td className="py-3 px-4 text-right font-bold text-slate-900">{row.quantity_on_hand} {row.unit}</td>
-                    <td className="py-3 px-4 text-right">${formatMoney(row.unit_price)}</td>
+                    <td className="py-3 px-4 text-right">{formatMoney(row.unit_price)}</td>
                     <td className="py-3 px-4 text-right">
                       <button
                         type="button"
@@ -335,7 +335,7 @@ function ReceiveModal({ suppliers, catalog, currentUser, onClose, onSaved }) {
         <Field label="Quantity">
           <input type="number" min="1" step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Agreed unit price (USD)">
+        <Field label="Agreed unit price">
           <input type="number" min="0" step="0.01" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
         <Field label="Receipt date">
@@ -392,7 +392,7 @@ function IssueModal({ balance, currentUser, onClose, onSaved }) {
       onClose={onClose}
     >
       <p className="text-xs text-slate-600 mb-3">
-        This reduces supplier-owned on-hand and opens a consignment purchase order at ${formatMoney(balance.unit_price)} each.
+        This reduces supplier-owned on-hand and opens a consignment purchase order at {formatMoney(balance.unit_price)} each.
         Record the supplier invoice against that PO. A goods receipt is not created.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">

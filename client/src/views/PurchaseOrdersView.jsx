@@ -191,7 +191,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         {poOrigin(po)}
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-900 text-sm">
-                        ${formatMoney(po.total_amount)}
+                        {formatMoney(po.total_amount)}
                       </td>
                       <td className="py-3 px-4 min-w-[160px]">
                         <div className="mb-1">{getStatusBadge(po.status)}</div>
@@ -403,9 +403,9 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                             })} {service ? 'SES' : measured ? 'consumed' : consignment ? 'drawn' : 'GRN'}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-right">${formatMoney(item.unit_price)}</td>
+                        <td className="py-2.5 px-3 text-right">{formatMoney(item.unit_price)}</td>
                         <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                          ${formatMoney(item.total_price)}
+                          {formatMoney(item.total_price)}
                         </td>
                       </tr>
                       );
@@ -415,7 +415,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                     <tr>
                       <td colSpan="6" className="py-2.5 px-3 text-right text-slate-600">Total Purchase Order Value:</td>
                       <td className="py-2.5 px-3 text-right text-emerald-700 text-sm font-black">
-                        ${formatMoney(selectedPO.total_amount)}
+                        {formatMoney(selectedPO.total_amount)}
                       </td>
                     </tr>
                   </tfoot>
@@ -463,7 +463,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                       </div>
                       <div className="text-slate-600 mt-1">{co.reason}</div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
-                        ${formatMoney(co.before_total_cents)} → ${formatMoney(co.after_total_cents)}
+                        {formatMoney(co.before_total_cents)} → {formatMoney(co.after_total_cents)}
                         {co.actor_name ? ` · ${co.actor_name}` : ''}
                       </div>
                     </div>

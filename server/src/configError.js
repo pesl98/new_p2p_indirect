@@ -10,11 +10,32 @@ export function wantsJson(req) {
   return path.startsWith('/api') || accept.includes('application/json');
 }
 
-export function configErrorHtml(message) {
-  const detail = String(message)
+function escapeHtml(message) {
+  return String(message)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+export function configErrorHtml(message, { code } = {}) {
+  const detail = escapeHtml(message);
+  const steps = code === 'currency_misconfigured'
+    ? `<h2>Currency</h2>
+  <ol>
+    <li>Project → Settings → Environment Variables</li>
+    <li><code>CURRENCY</code> — <code>EUR</code> (default) or <code>USD</code>. Leave it unset for EUR.</li>
+    <li>An unknown value refuses to boot. It does not fall back, and it does not convert stored cents.</li>
+    <li>Enable <strong>Production</strong> and <strong>Preview</strong> (or All Environments)</li>
+    <li>Redeploy after saving — env changes do not apply to an old deploy</li>
+  </ol>`
+    : `<h2>Set these on Vercel</h2>
+  <ol>
+    <li>Project → Settings → Environment Variables</li>
+    <li><code>TURSO_DATABASE_URL</code> — from <code>turso db show … --url</code></li>
+    <li><code>TURSO_AUTH_TOKEN</code> — from <code>turso db tokens create …</code> (database token, not an org JWT)</li>
+    <li>Enable <strong>Production</strong> and <strong>Preview</strong> (or All Environments)</li>
+    <li>Redeploy this Preview after saving — env changes do not apply to an old deploy</li>
+  </ol>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -31,14 +52,7 @@ export function configErrorHtml(message) {
 <body>
   <h1>ProcureFlow</h1>
   <p>${detail}</p>
-  <h2>Set these on Vercel</h2>
-  <ol>
-    <li>Project → Settings → Environment Variables</li>
-    <li><code>TURSO_DATABASE_URL</code> — from <code>turso db show … --url</code></li>
-    <li><code>TURSO_AUTH_TOKEN</code> — from <code>turso db tokens create …</code> (database token, not an org JWT)</li>
-    <li>Enable <strong>Production</strong> and <strong>Preview</strong> (or All Environments)</li>
-    <li>Redeploy this Preview after saving — env changes do not apply to an old deploy</li>
-  </ol>
+  ${steps}
 </body>
 </html>`;
 }
@@ -52,12 +66,17 @@ export function sendConfigError(req, res, error, statusCode = 503) {
       detail: message
     });
   }
-  return res.status(status).type('html').send(configErrorHtml(message));
+  return res.status(status).type('html').send(configErrorHtml(message, { code: error?.code }));
 }
 
-export function mountConfigErrorApp(app, message, statusCode = 503) {
+export function mountConfigErrorApp(app, message, statusCode = 503, meta = {}) {
   const handler = (req, res) => {
-    sendConfigError(req, res, { message, name: 'TursoConfigError', statusCode }, statusCode);
+    sendConfigError(req, res, {
+      message,
+      name: meta.name || 'TursoConfigError',
+      code: meta.code,
+      statusCode
+    }, statusCode);
   };
   app.use(handler);
   return app;

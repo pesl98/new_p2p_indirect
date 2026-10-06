@@ -282,7 +282,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                   <option value="">-- Choose a Purchase Order --</option>
                   {activePOs.map(po => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} (${formatMoney(po.total_amount)}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{po.status}]
                     </option>
                   ))}
                 </select>

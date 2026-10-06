@@ -1,4 +1,4 @@
-import { asCents, formatCents, requireIntegerCents } from './money.js';
+import { asCents, formatMoney, requireIntegerCents } from './money.js';
 
 /**
  * Invoice exception workbench — AP control point after dual match.
@@ -340,7 +340,7 @@ export async function attachExceptionToInvoice(db, invoice) {
 function summarizeAcceptedVariances(matchResults, totalCents, matchStatus) {
   const fails = (matchResults || []).filter((row) => row.status === 'fail');
   const parts = [
-    `Accepted ${matchStatus} on billed total $${formatCents(totalCents)}`
+    `Accepted ${matchStatus} on billed total ${formatMoney(totalCents)}`
   ];
   for (const row of fails) {
     const qty = Number(row.qty_variance) || 0;
@@ -464,11 +464,11 @@ export async function resolveInvoiceException(db, id, payload = {}) {
     let details;
     if (disposition === 'short_pay') {
       const delta = billedTotalCents - payableTotalCents;
-      details = `Short pay ${invoice.invoice_number}: billed ${billedTotalCents}¢ ($${formatCents(billedTotalCents)}) → payable ${payableTotalCents}¢ ($${formatCents(payableTotalCents)}); delta ${delta}¢ ($${formatCents(delta)}). Match ${acceptedMatchStatus} unchanged. Reason: ${reason}`;
+      details = `Short pay ${invoice.invoice_number}: billed ${billedTotalCents}¢ (${formatMoney(billedTotalCents)}) → payable ${payableTotalCents}¢ (${formatMoney(payableTotalCents)}); delta ${delta}¢ (${formatMoney(delta)}). Match ${acceptedMatchStatus} unchanged. Reason: ${reason}`;
     } else if (disposition === 'accept_variance') {
       details = `${acceptedSummary}. Reason: ${reason}`;
     } else {
-      details = `Disposition ${disposition} for ${invoice.invoice_number} (billed $${formatCents(billedTotalCents)}, match ${acceptedMatchStatus}). Reason: ${reason}`;
+      details = `Disposition ${disposition} for ${invoice.invoice_number} (billed ${formatMoney(billedTotalCents)}, match ${acceptedMatchStatus}). Reason: ${reason}`;
     }
 
     await db.prepare(`
@@ -486,7 +486,7 @@ export async function resolveInvoiceException(db, id, payload = {}) {
     : disposition === 'reject_invoice'
       ? 'Invoice rejected. Approve and pay are permanently blocked.'
       : disposition === 'short_pay'
-        ? `Short pay recorded. Billed $${formatCents(outcome.billedTotalCents)} → Pay $${formatCents(outcome.payableTotalCents)}. Invoice may proceed to AP approve for the payable amount.`
+        ? `Short pay recorded. Billed ${formatMoney(outcome.billedTotalCents)} → Pay ${formatMoney(outcome.payableTotalCents)}. Invoice may proceed to AP approve for the payable amount.`
         : 'Invoice returned to buyer. It appears in the requester Buyer Inbox until they respond; the hard exception stays open.';
   return {
     message,
@@ -651,7 +651,7 @@ export async function respondBuyerInbox(db, id, payload = {}) {
       billedTotalCents
     );
 
-    const details = `Buyer response for ${invoice.invoice_number} (billed $${formatCents(billedTotalCents)}, match ${acceptedMatchStatus}). Ready for AP. Reason: ${reason}`;
+    const details = `Buyer response for ${invoice.invoice_number} (billed ${formatMoney(billedTotalCents)}, match ${acceptedMatchStatus}). Ready for AP. Reason: ${reason}`;
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)

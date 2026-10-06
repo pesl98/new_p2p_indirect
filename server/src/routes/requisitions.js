@@ -1,6 +1,6 @@
 import express from 'express';
 import { insertApprovalChain } from '../approvalPolicy.js';
-import { asCents, formatCents, lineTotalCents, toQty } from '../money.js';
+import { asCents, formatMoney, lineTotalCents, toQty } from '../money.js';
 import { nextDocumentNumber } from '../docNumbers.js';
 import { normalizeLineType, resolveServiceBasis } from '../lineType.js';
 import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
@@ -251,7 +251,7 @@ router.post('/', async (req, res) => {
       await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'CREATED', ?, ?)
-      `).run(prId, actor_name, `Requisition ${prNumber} created with ${items.length} item(s) for $${formatCents(calculatedTotal)}`);
+      `).run(prId, actor_name, `Requisition ${prNumber} created with ${items.length} item(s) for ${formatMoney(calculatedTotal)}`);
 
       const assignment = await assignContractToRequisition(db, prId, {
         source_contract_id,

@@ -10,6 +10,7 @@
  */
 
 import { buildApprovalSteps } from './approvalPolicy.js';
+import { deploymentCurrency } from './currencyConfig.js';
 import {
   GENESIS_HASH,
   canonicalCompliancePayload,
@@ -744,6 +745,7 @@ export async function queryVerification(db) {
   }
 
   return {
+    currency: deploymentCurrency(),
     findings,
     summary: summarize(findings),
     checks: VERIFICATION_CHECKS,

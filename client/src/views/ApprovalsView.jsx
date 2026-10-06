@@ -179,7 +179,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                         <div>{item.source_contract.title}</div>
                         <div className="text-[11px] text-sky-800 mt-1">
                           {item.source_contract.supplier_name}
-                          {' · ACV $'}{formatMoney(item.source_contract.annual_value_cents)}
+                          {' · ACV '}{formatMoney(item.source_contract.annual_value_cents)}
                           {item.source_contract.start_date ? ` · ${item.source_contract.start_date} → ${item.source_contract.end_date}` : ''}
                         </div>
                         {item.contract_use_status === 'proposed' && (
@@ -192,8 +192,8 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
 
                     {/* Budget Impact Indicator */}
                     <div className="flex items-center space-x-4 text-[11px] text-slate-500 pt-1">
-                      <span>Available Dept Budget: <strong className="text-slate-800">${formatMoney(item.available_budget)}</strong></span>
-                      <span>Total Cost: <strong className="text-emerald-700 text-xs font-bold">${formatMoney(item.total_amount)}</strong></span>
+                      <span>Available Dept Budget: <strong className="text-slate-800">{formatMoney(item.available_budget)}</strong></span>
+                      <span>Total Cost: <strong className="text-emerald-700 text-xs font-bold">{formatMoney(item.total_amount)}</strong></span>
                       {hasExceededBudget && (
                         <span className="text-rose-600 font-semibold flex items-center">
                           <AlertTriangle className="w-3.5 h-3.5 mr-1" />
@@ -254,7 +254,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
             </div>
             <p className="text-xs text-slate-500 mb-4">
               {decisionType === 'approved'
-                ? `Authorizing $${formatMoney(activeDecisionModal.total_amount)} from ${activeDecisionModal.department_name} budget.`
+                ? `Authorizing ${formatMoney(activeDecisionModal.total_amount)} from ${activeDecisionModal.department_name} budget.`
                 : 'Please document why this procurement request cannot be approved.'}
               {Number(activeDecisionModal.via_delegation) === 1 && activeDecisionModal.delegated_from_name
                 ? ` Acting as delegate for ${activeDecisionModal.delegated_from_name}.`
@@ -270,7 +270,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                     Contract use for {activeDecisionModal.source_contract.contract_number}
                   </div>
                   <p className="text-[11px] text-sky-800">
-                    {activeDecisionModal.source_contract.supplier_name} · ACV ${formatMoney(activeDecisionModal.source_contract.annual_value_cents)}
+                    {activeDecisionModal.source_contract.supplier_name} · ACV {formatMoney(activeDecisionModal.source_contract.annual_value_cents)}
                     {activeDecisionModal.source_contract.end_date ? ` · ends ${activeDecisionModal.source_contract.end_date}` : ''}
                   </p>
                   <label className="flex items-start gap-2 text-slate-800">

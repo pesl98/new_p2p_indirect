@@ -92,7 +92,7 @@ export default function ChangeOrderModal({ purchaseOrder, currentUser, onClose, 
     }
     if (needsIncreaseConfirm && !confirmIncrease) {
       setError(
-        `Net increase of $${formatMoney(preview.delta)} is over $1,000.00. Confirm the increase to apply.`
+        `Net increase of ${formatMoney(preview.delta)} is over ${formatMoney(100_000)}. Confirm the increase to apply.`
       );
       return;
     }
@@ -143,7 +143,7 @@ export default function ChangeOrderModal({ purchaseOrder, currentUser, onClose, 
                 <th className="py-2 px-3">Line</th>
                 <th className="py-2 px-3">Caps</th>
                 <th className="py-2 px-3 text-center">New qty</th>
-                <th className="py-2 px-3 text-right">New unit price ($)</th>
+                <th className="py-2 px-3 text-right">New unit price</th>
                 <th className="py-2 px-3 text-right">Line total</th>
               </tr>
             </thead>
@@ -153,7 +153,7 @@ export default function ChangeOrderModal({ purchaseOrder, currentUser, onClose, 
                   <td className="py-2.5 px-3">
                     <div className="font-semibold text-slate-900">{line.item_description}</div>
                     <div className="text-[10px] text-slate-400">
-                      {lineTypeLabel(line)} · current {line.quantity} @ ${formatMoney(line.unit_price)}
+                      {lineTypeLabel(line)} · current {line.quantity} @ {formatMoney(line.unit_price)}
                     </div>
                   </td>
                   <td className="py-2.5 px-3 text-[10px] text-slate-500">
@@ -180,7 +180,7 @@ export default function ChangeOrderModal({ purchaseOrder, currentUser, onClose, 
                     />
                   </td>
                   <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                    ${formatMoney(line.next_total)}
+                    {formatMoney(line.next_total)}
                   </td>
                 </tr>
               ))}
@@ -212,10 +212,10 @@ export default function ChangeOrderModal({ purchaseOrder, currentUser, onClose, 
             <div>
               <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Before → after</div>
               <div className="text-sm font-black text-slate-900">
-                ${formatMoney(preview.beforeTotal)} → ${formatMoney(preview.afterTotal)}
+                {formatMoney(preview.beforeTotal)} → {formatMoney(preview.afterTotal)}
               </div>
               <div className={`text-[11px] font-semibold ${preview.delta > 0 ? 'text-amber-700' : preview.delta < 0 ? 'text-emerald-700' : 'text-slate-500'}`}>
-                Delta {preview.delta >= 0 ? '+' : ''}${formatMoney(preview.delta)}
+                Delta {preview.delta >= 0 ? '+' : ''}{formatMoney(preview.delta)}
               </div>
             </div>
             {needsIncreaseConfirm && (
@@ -227,7 +227,7 @@ export default function ChangeOrderModal({ purchaseOrder, currentUser, onClose, 
                   className="mt-0.5"
                 />
                 <span>
-                  Confirm increase over $1,000.00 (CHANGE_ORDER_INCREASE_CONFIRM_CENTS / APPROVAL_TIER2_CENTS).
+                  Confirm increase over {formatMoney(100_000)} (CHANGE_ORDER_INCREASE_CONFIRM_CENTS / APPROVAL_TIER2_CENTS).
                   This is an explicit confirm flag, not a second approval chain.
                 </span>
               </label>

@@ -280,7 +280,7 @@ export default function PaymentRunsView({ currentUser, onDataChanged, onNavigate
                         {run.payment_reference ? ` · ${run.payment_reference}` : ''}
                       </div>
                     </td>
-                    <td className="py-3 px-4 font-bold text-slate-900">${formatMoney(run.payable_total_cents)}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900">{formatMoney(run.payable_total_cents)}</td>
                     <td className="py-3 px-4">{statusBadge(run.status)}</td>
                   </tr>
                 ))
@@ -314,8 +314,8 @@ export default function PaymentRunsView({ currentUser, onDataChanged, onNavigate
                 </div>
                 <div className="text-right">
                   <div className="text-[11px] text-slate-500">Payable</div>
-                  <div className="text-xl font-extrabold text-slate-900">${formatMoney(selected.payable_total_cents)}</div>
-                  <div className="text-[11px] text-slate-500">Billed ${formatMoney(selected.billed_total_cents)}</div>
+                  <div className="text-xl font-extrabold text-slate-900">{formatMoney(selected.payable_total_cents)}</div>
+                  <div className="text-[11px] text-slate-500">Billed {formatMoney(selected.billed_total_cents)}</div>
                 </div>
               </div>
 
@@ -351,10 +351,10 @@ export default function PaymentRunsView({ currentUser, onDataChanged, onNavigate
                         <div className="font-mono text-[10px] text-slate-500">{item.po_number}</div>
                       </td>
                       <td className="py-2 pr-2 font-bold">
-                        ${formatMoney(item.payable_total_cents)}
+                        {formatMoney(item.payable_total_cents)}
                         {item.has_short_pay && (
                           <div className="text-[10px] font-semibold text-amber-800">
-                            billed ${formatMoney(item.billed_total_cents)}
+                            billed {formatMoney(item.billed_total_cents)}
                           </div>
                         )}
                       </td>
@@ -436,11 +436,11 @@ export default function PaymentRunsView({ currentUser, onDataChanged, onNavigate
                         <div className="flex-1">
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-mono font-bold text-slate-900">{inv.invoice_number}</span>
-                            <span className="font-bold">${formatMoney(inv.effective_payable_cents)}</span>
+                            <span className="font-bold">{formatMoney(inv.effective_payable_cents)}</span>
                           </div>
                           <div className="text-slate-500 mt-0.5">
                             {inv.supplier_name} · {inv.po_number} · due {inv.due_date}
-                            {inv.has_short_pay ? ` · billed $${formatMoney(inv.billed_total_cents)}` : ''}
+                            {inv.has_short_pay ? ` · billed ${formatMoney(inv.billed_total_cents)}` : ''}
                           </div>
                         </div>
                       </label>
@@ -497,7 +497,7 @@ export default function PaymentRunsView({ currentUser, onDataChanged, onNavigate
               </p>
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                 <div className="text-slate-500">Payable total</div>
-                <div className="font-bold text-slate-900 text-sm">${formatMoney(selected.payable_total_cents)}</div>
+                <div className="font-bold text-slate-900 text-sm">{formatMoney(selected.payable_total_cents)}</div>
                 <div className="text-[11px] text-slate-500 mt-0.5">{selected.invoice_count} invoices</div>
               </div>
               <div>

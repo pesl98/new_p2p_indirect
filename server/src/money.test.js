@@ -32,7 +32,7 @@ describe('money helpers', () => {
     assert.throws(() => requireIntegerCents(true, 'payable_total_cents'), /integer number of cents/);
   });
 
-  test('change-order increase confirm threshold reuses the $1,000 tier-2 constant', () => {
+  test('change-order increase confirm threshold reuses the 1,000 tier-2 constant', () => {
     assert.equal(CHANGE_ORDER_INCREASE_CONFIRM_CENTS, APPROVAL_TIER2_CENTS);
     assert.equal(CHANGE_ORDER_INCREASE_CONFIRM_CENTS, 100_000);
   });

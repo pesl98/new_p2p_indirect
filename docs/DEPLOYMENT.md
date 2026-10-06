@@ -98,6 +98,7 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `LOCAL_LOGIN` | No | Default on. `0` disables password login for this deployment. |
 | `WEBHOOK_TARGET_URL` | When webhooks are on | HTTPS endpoint for this customer’s ERP/AP. Not stored in the database. See [§2.2](#22-integrations-api-keys-and-webhooks-per-customer). |
 | `WEBHOOK_SIGNING_SECRET` | When webhooks are on | HMAC key for `X-ProcureFlow-Signature`. Never committed, never returned by the API. |
+| `CURRENCY` | No | `EUR` (default) or `USD`. Display locale is `nl-NL` (`€ 1.295,00`, non-breaking space after the symbol). Invalid values refuse to boot. Stored amounts stay integer cents; this is not FX. |
 
 ### 2.1 SSO (OIDC or SAML) per customer
 

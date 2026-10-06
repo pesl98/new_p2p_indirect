@@ -1,4 +1,4 @@
-import { asCents, formatCents, toQty } from './money.js';
+import { asCents, formatMoney, toQty } from './money.js';
 import { isConsignmentLine, isMeasuredSettlement, isServiceLine, quantityPhrase } from './lineType.js';
 import { formatMeasured } from './measuredQty.js';
 
@@ -113,13 +113,13 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
         if (status !== 'fail') status = 'warning';
         hasToleratedPrice = true;
         messages.push(
-          `Minor price deviation within 1% tolerance: $${formatCents(invoicedPrice)} vs PO $${formatCents(poPrice)} (${pctLabel}%; ${absPriceDiff}¢ of ${tolerance}¢ allowed).`
+          `Minor price deviation within 1% tolerance: ${formatMoney(invoicedPrice)} vs PO ${formatMoney(poPrice)} (${pctLabel}%; ${absPriceDiff}¢ of ${tolerance}¢ allowed).`
         );
       } else {
         status = 'fail';
         hasPriceVariance = true;
         messages.push(
-          `Price discrepancy: Billed at $${formatCents(invoicedPrice)} vs authorized PO price $${formatCents(poPrice)} (${pctLabel}%).`
+          `Price discrepancy: Billed at ${formatMoney(invoicedPrice)} vs authorized PO price ${formatMoney(poPrice)} (${pctLabel}%).`
         );
       }
     }
@@ -130,12 +130,12 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
         : quantityPhrase(serviceLine ? poItem.service_basis : null, claimedQty);
       messages.push(
         serviceLine
-          ? `Exact SES-backed match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & accepted service entry sheet.`
+          ? `Exact SES-backed match: ${claimed} at ${formatMoney(invoicedPrice)} matches PO & accepted service entry sheet.`
           : measuredLine
-            ? `Exact measured match: ${claimed} at $${formatCents(invoicedPrice)} matches the ${poItem.settlement_kind === 'utility' ? 'utility consumption' : 'bulk draw-down'}. No GRN was posted.`
+            ? `Exact measured match: ${claimed} at ${formatMoney(invoicedPrice)} matches the ${poItem.settlement_kind === 'utility' ? 'utility consumption' : 'bulk draw-down'}. No GRN was posted.`
             : consignmentLine
-              ? `Exact consignment match: ${claimed} at $${formatCents(invoicedPrice)} matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.`
-              : `Exact match: ${claimed} at $${formatCents(invoicedPrice)} matches PO & physical receipts.`
+              ? `Exact consignment match: ${claimed} at ${formatMoney(invoicedPrice)} matches the draw-down PO. Supplier-owned stock was issued; no GRN was posted.`
+              : `Exact match: ${claimed} at ${formatMoney(invoicedPrice)} matches PO & physical receipts.`
       );
     }
 

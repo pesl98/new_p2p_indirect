@@ -63,14 +63,14 @@ Draft PR → Submit → Sequential approvals → (budget commit on final approve
 
 ## Money (integer cents)
 
-SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`) store **integer USD cents**. The API returns cents. The client formats dollars at display/input edges (`client/src/money.js`, `server/src/money.js`).
+SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`) store **integer cents** of the deployment currency. EUR and USD both use two decimal places, so the scale does not change when `CURRENCY` changes, and stored amounts are not converted. The API returns cents. Display uses `formatMoney` in `shared/currency.js` (locale `nl-NL`) from `client/src/money.js` and `server/src/money.js`. The default currency is EUR (`€ 1.295,00`).
 
-Do not mix float dollars with cents in the same field. Line totals are `qty * unit_price_cents` with integer arithmetic.
+Do not mix a float major-unit amount with cents in the same field. Line totals are `qty * unit_price_cents` with integer arithmetic.
 
 Approval thresholds (`server/src/money.js`):
 
-- `APPROVAL_TIER2_CENTS` = 100000 ($1,000)
-- `APPROVAL_TIER3_CENTS` = 1000000 ($10,000)
+- `APPROVAL_TIER2_CENTS` = 100000 (€ 1.000,00)
+- `APPROVAL_TIER3_CENTS` = 1000000 (€ 10.000,00)
 
 ## Sequential approvals
 
@@ -78,9 +78,9 @@ Policy lives in `server/src/approvalPolicy.js`. Step 1 is the **mapped departmen
 
 | PR total | Chain |
 | --- | --- |
-| ≤ $1,000 | Department head (`departments.approver_user_id`, else `role=approver` in the PR’s department) |
-| > $1,000 and ≤ $10,000 | Dept Head, then Strategic Sourcing (`role=procurement`) |
-| > $10,000 | Dept Head, then Procurement, then Finance (`role=finance`) or CFO (`role=admin`) if no finance user exists |
+| ≤ € 1.000,00 | Department head (`departments.approver_user_id`, else `role=approver` in the PR’s department) |
+| > € 1.000,00 and ≤ € 10.000,00 | Dept Head, then Strategic Sourcing (`role=procurement`) |
+| > € 10.000,00 | Dept Head, then Procurement, then Finance (`role=finance`) or CFO (`role=admin`) if no finance user exists |
 
 Steps are sequential, not parallel:
 
@@ -154,7 +154,7 @@ Audit (requisition `audit_logs`, persona name): `CONTRACT_PROPOSED`, `CONTRACT_U
 
 `insertApprovalChain` is unchanged. Integer cents (PR totals, contract ACV) are untouched.
 
-Demo: **PR-2026-010** (Alice, 1 × Figma seat $540.00, Marketing) is seeded `proposed` against **CNT-2026-001**. Bob (or Priya via the seeded OOO delegation) allows or refuses. Creating a new Figma catalog PR also auto-links. Existing walkthrough PRs stay `none` so short-pay, buyer inbox, AP aging, duplicates, delegation (**PR-2026-003**), CO, and 1-click renew stay intact. Open-renewal uniqueness still requires justification matching `/renewal/i` plus `CNT-` / `source_contract_id` — an ordinary auto-linked Figma seat does not block renew.
+Demo: **PR-2026-010** (Alice, 1 × Figma seat € 540,00, Marketing) is seeded `proposed` against **CNT-2026-001**. Bob (or Priya via the seeded OOO delegation) allows or refuses. Creating a new Figma catalog PR also auto-links. Existing walkthrough PRs stay `none` so short-pay, buyer inbox, AP aging, duplicates, delegation (**PR-2026-003**), CO, and 1-click renew stay intact. Open-renewal uniqueness still requires justification matching `/renewal/i` plus `CNT-` / `source_contract_id` — an ordinary auto-linked Figma seat does not block renew.
 
 ## Approval delegation (out-of-office)
 
@@ -239,7 +239,7 @@ World-class P2P does not silently edit an issued PO. ProcureFlow’s change orde
 | `reason` / `actor_name` | Required. Persona name; still client-only demo auth |
 | `lines` | Existing `po_item_id` only. Optional new `quantity` (whole units) and/or `unit_price` (integer cents). Omitted fields stay unchanged. Adding catalog lines is out of scope. |
 | `delivery_notes` | Optional. Replaces `purchase_orders.notes` when sent |
-| `confirm_increase` | Required (`true`) when the **net PO total increases by more than** `CHANGE_ORDER_INCREASE_CONFIRM_CENTS` (= `APPROVAL_TIER2_CENTS` = $1,000). This is an explicit confirm flag, not a second approval chain. |
+| `confirm_increase` | Required (`true`) when the **net PO total increases by more than** `CHANGE_ORDER_INCREASE_CONFIRM_CENTS` (= `APPROVAL_TIER2_CENTS` = € 1.000,00). This is an explicit confirm flag, not a second approval chain. |
 
 Fail-closed (HTTP 400):
 
@@ -249,15 +249,15 @@ Fail-closed (HTTP 400):
 - New qty below goods `quantity_received`, service `quantity_accepted`, or `quantity_invoiced`
 - Non-integer qty or non-integer-cent `unit_price`
 - Unknown `po_item_id` (cannot add new lines)
-- Net increase above the $1,000 confirm threshold without `confirm_increase: true`
+- Net increase above the € 1.000,00 confirm threshold without `confirm_increase: true`
 
 Apply (one transaction): rewrite listed `po_items` qty/price and line totals (`qty * unit_price` integer cents), recompute PO `total_amount`, refresh fulfillment status, move department `committed_amount` by the delta when `requisition_id` links a department, write `audit_logs` action `CHANGE_ORDER_APPLIED` on `entity_type=purchase_order`.
 
 `GET /api/purchase-orders/:id/change-orders` returns history. PO detail includes `change_orders`.
 
-UI: Purchase Orders detail **Change order** (Carol / procurement primary; any demo persona can submit). Modal shows received/accepted/invoiced floors, editable qty and dollar unit price (converted with `toCents`), required reason, before/after totals.
+UI: Purchase Orders detail **Change order** (Carol / procurement primary; any demo persona can submit). Modal shows received/accepted/invoiced floors, editable qty and unit price in major units (converted with `toCents`), required reason, before/after totals.
 
-Demo seed: **PR-2026-008 → PO-2026-007** has applied **CO-2026-001** (Blueair 3 × $890.00 → 3 × $850.00; FAC committed released $120.00). Live walkthrough: amend issued **PO-2026-004** (2 Figma seats, no SES/invoice). Do not amend PO-2026-001 / INV-WED-9042, PO-2026-002 / INV-TSG-11029, or PO-2026-006 / INV-TSG-22041.
+Demo seed: **PR-2026-008 → PO-2026-007** has applied **CO-2026-001** (Blueair 3 × € 890,00 → 3 × € 850,00; FAC committed released € 120,00). Live walkthrough: amend issued **PO-2026-004** (2 Figma seats, no SES/invoice). Do not amend PO-2026-001 / INV-WED-9042, PO-2026-002 / INV-TSG-11029, or PO-2026-006 / INV-TSG-22041.
 
 ## Line type (goods vs service)
 
@@ -323,7 +323,7 @@ Procurement and finance threshold steps are unchanged.
 
 Assignment changes write `audit_logs` (`entity_type=department`, `APPROVER_ASSIGNED` / `APPROVER_CLEARED`). Existing approval chains on submitted PRs are not rewritten.
 
-Seed maps every cost center: Marketing → Bob Martinez, IT → Priya Nair, Facilities → James Okonkwo, HR → Sofia Berg, Finance & Admin → Elena Rostova (David remains the finance threshold step so ADM PRs over $10k do not assign Elena twice).
+Seed maps every cost center: Marketing → Bob Martinez, IT → Priya Nair, Facilities → James Okonkwo, HR → Sofia Berg, Finance & Admin → Elena Rostova (David remains the finance threshold step so ADM PRs over € 10.000,00 do not assign Elena twice).
 
 ## Receiving (GRN) over-receipt
 
@@ -417,7 +417,7 @@ Structured dispositions (`POST /api/invoice-exceptions/:id/resolve`) require `re
 | Disposition | Invoice status | Approve / pay |
 | --- | --- | --- |
 | `accept_variance` | `matched` (block cleared). `match_status` stays the engine result. Records `accepted_total_cents` = billed invoice total and `accepted_match_status`. | Approve may proceed at the billed total. No second override path. |
-| `short_pay` | `matched` (block cleared). `match_status` stays the engine result (not a rematch). Requires `payable_total_cents` (integer ≥ 0 and **strictly less than** billed `total_amount`). Equal billed → use `accept_variance`; greater than billed is never allowed. Sets `invoices.payable_total_cents`; **does not** rewrite `invoices.total_amount`. Disposition stores `accepted_total_cents` = payable and `billed_total_cents` = billed. Audit `EXCEPTION_SHORT_PAY` records billed ¢, payable ¢, and delta (billed − payable). | Approve may proceed. Budget movement and mark-paid use **payable** cents. UI shows “Billed $X → Pay $Y”. |
+| `short_pay` | `matched` (block cleared). `match_status` stays the engine result (not a rematch). Requires `payable_total_cents` (integer ≥ 0 and **strictly less than** billed `total_amount`). Equal billed → use `accept_variance`; greater than billed is never allowed. Sets `invoices.payable_total_cents`; **does not** rewrite `invoices.total_amount`. Disposition stores `accepted_total_cents` = payable and `billed_total_cents` = billed. Audit `EXCEPTION_SHORT_PAY` records billed ¢, payable ¢, and delta (billed − payable). | Approve may proceed. Budget movement and mark-paid use **payable** cents. UI shows “Billed … → Pay …” with `formatMoney`. |
 | `reject_invoice` | `rejected` (terminal). | Approve and mark-paid refuse. |
 | `return_to_buyer` | Stays `variance_flagged`. Parks the invoice in the requester **Buyer Inbox**. Audit `EXCEPTION_RETURN_TO_BUYER`. | Still blocked. Buyer may respond; AP may later accept, short-pay, or reject. Not listed under `resolved`. |
 
@@ -441,11 +441,11 @@ Persona scoping is the same client-only demo pattern as approvals (`approver_id`
 
 The Exception Workbench detail shows the buyer note in disposition history (and a “ready for AP” banner when latest is `buyer_response`). Sidebar **Buyer Inbox** is visible for requester personas (Alice).
 
-Demo: **INV-TSG-22041** (`PO-2026-006` / **PR-2026-007**, Alice, quantity variance, billed $297.00) is seeded already returned to buyer. **INV-TSG-11029** stays the open short-pay practice invoice (no return). Walkthrough: Alice Buyer Inbox → respond on INV-TSG-22041 → David Exception Workbench sees the note and accept / short-pay / reject. To practice the AP return itself: David can Return to buyer on any other open hard exception (do not use INV-TSG-11029 if you still need it for short-pay).
+Demo: **INV-TSG-22041** (`PO-2026-006` / **PR-2026-007**, Alice, quantity variance, billed € 297,00) is seeded already returned to buyer. **INV-TSG-11029** stays the open short-pay practice invoice (no return). Walkthrough: Alice Buyer Inbox → respond on INV-TSG-22041 → David Exception Workbench sees the note and accept / short-pay / reject. To practice the AP return itself: David can Return to buyer on any other open hard exception (do not use INV-TSG-11029 if you still need it for short-pay).
 
 Detail (`GET /api/invoice-exceptions/:id` and `GET /api/invoices/:id`) includes `match_results`, GRN/SES receipt basis already used by match, prior dispositions (including `buyer_response`), and `payable_total_cents` when a short-pay was recorded (`NULL` means pay billed). Document trail timeline includes exception audit actions (`EXCEPTION_ACCEPT_VARIANCE`, `EXCEPTION_SHORT_PAY`, `EXCEPTION_REJECT_INVOICE`, `EXCEPTION_RETURN_TO_BUYER`, `EXCEPTION_BUYER_RESPONDED`) when present — it does not invent them.
 
-Demo: **INV-TSG-11029** (`PO-2026-002`, total variance) is open for David/Elena — short-pay practice at e.g. $1,498.00 (2 GRN × $749 PO). **INV-TSG-22041** is the buyer-inbox park. **INV-FCJ-7701** is an already-accepted price variance (`accepted_total_cents` = 29800). **INV-WED-9042** / PR-2026-001 remains the paid happy path.
+Demo: **INV-TSG-11029** (`PO-2026-002`, total variance) is open for David/Elena — short-pay practice at e.g. € 1.498,00 (2 GRN × € 749,00 PO). **INV-TSG-22041** is the buyer-inbox park. **INV-FCJ-7701** is an already-accepted price variance (`accepted_total_cents` = 29800). **INV-WED-9042** / PR-2026-001 remains the paid happy path.
 
 How to test short-pay: resolve INV-TSG-11029 (or a test invoice) with `short_pay` and `payable_total_cents` strictly below billed. Invoice `total_amount` stays the billed claim; `payable_total_cents` is set. Approve posts **payable** to `actual_spent` (and relieves committed by the same payable cents) when the invoice has a linked PR/department. Mark-paid uses the same payable amount.
 
@@ -479,7 +479,7 @@ Queue: `GET /api/invoice-duplicates?queue=open|resolved|all` (default `open` = `
 
 This is not OCR intake, not fuzzy invoice-number typo matching, and not a bank-file / remittance-portal engine.
 
-Demo: **INV-TSG-6610** (paid $99.00 on PO-2026-011) is the candidate. **INV-TSG-6611** (matched $99.00 on PO-2026-012, date within ±7 UTC days) is the open suspect. Do not reuse INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / INV-FCJ-8810 / INV-WED-3308 / INV-TSG-5508 / INV-WED-4419 / INV-FCJ-9920 for this walkthrough.
+Demo: **INV-TSG-6610** (paid € 99,00 on PO-2026-011) is the candidate. **INV-TSG-6611** (matched € 99,00 on PO-2026-012, date within ±7 UTC days) is the open suspect. Do not reuse INV-WED-9042 / INV-TSG-11029 / INV-TSG-22041 / INV-FCJ-8810 / INV-WED-3308 / INV-TSG-5508 / INV-WED-4419 / INV-FCJ-9920 for this walkthrough.
 
 ## AP payment aging / payables queue
 
@@ -507,9 +507,9 @@ UI: sidebar **AP Aging** for finance + admin (David / Elena). Chips for Overdue 
 
 Demo seed (due dates computed at seed time so buckets stay correct on re-seed):
 
-- **INV-FCJ-8810** (`PO-2026-008`) — overdue, short-paid $220.00 → $210.00, then approved. Mark-paid walkthrough target.
-- **INV-WED-3308** (`PO-2026-009` / **PR-2026-009**, Sofia Berg / HRP) — due soon, perfect match, approved $116.00.
-- **INV-TSG-5508** (`PO-2026-010`) — later, perfect match, approved $399.00.
+- **INV-FCJ-8810** (`PO-2026-008`) — overdue, short-paid € 220,00 → € 210,00, then approved. Mark-paid walkthrough target.
+- **INV-WED-3308** (`PO-2026-009` / **PR-2026-009**, Sofia Berg / HRP) — due soon, perfect match, approved € 116,00.
+- **INV-TSG-5508** (`PO-2026-010`) — later, perfect match, approved € 399,00.
 - Unchanged: **INV-WED-9042** paid happy path; **INV-TSG-11029** open short-pay; **INV-TSG-22041** buyer-inbox park; **INV-AAD-5501** / **INV-FCJ-7701** remain `matched` (ready-to-approve chip). **INV-WED-4419** / **INV-FCJ-9920** are on draft **PAY-2026-001**.
 
 ## AP payment run / payment proposal
@@ -531,7 +531,7 @@ Budget `actual_spent` already moved at Approve for Payment. Execute must **not**
 
 Eligible picker: `GET /api/payment-runs/eligible-invoices`. UI: sidebar **Payment Runs** for finance + admin (David / Elena). AP Aging can pass selected approved invoices into the create modal. Single mark-paid on Aging / Invoices is unchanged.
 
-Demo seed: draft **PAY-2026-001** = **INV-WED-4419** ($72.00 / PO-2026-013) + **INV-FCJ-9920** ($145.00 / PO-2026-014). Leave **INV-FCJ-8810** as the AP Aging single mark-paid walkthrough.
+Demo seed: draft **PAY-2026-001** = **INV-WED-4419** (€ 72,00 / PO-2026-013) + **INV-FCJ-9920** (€ 145,00 / PO-2026-014). Leave **INV-FCJ-8810** as the AP Aging single mark-paid walkthrough.
 
 ## Contract renewal hub
 
@@ -555,7 +555,7 @@ Non-production SaaS / vendor agreements live on `contracts` + `contract_items` (
 
 Numbered `CNT-YYYY-NNN` via the same MAX-suffix allocator. Existing Turso DBs get the tables from `schema.sql` `CREATE TABLE IF NOT EXISTS` plus `migrateContracts` in `applySchema` (no wipe).
 
-Seed: **CNT-2026-001** Figma (10 × $540.00) is the expiring-soon 1-click walkthrough. Do not use that generated PR to replace INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
+Seed: **CNT-2026-001** Figma (10 × € 540,00) is the expiring-soon 1-click walkthrough. Do not use that generated PR to replace INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
 
 ## Document numbers
 
@@ -634,9 +634,9 @@ Tests cover money/match, sequential approvals, approval delegation (create/revok
 - Fiscal year 2026 is fixed in queries.
 - Short-pay rewrites header payable cents only (no line-level debit memo or supplier portal credit). Buyer Inbox is the requester queue for `return_to_buyer`; it does not unlock Approve for Payment.
 - `tolerated_match` invoices are not hard-queued; AP can still approve them from Invoices & Matching without a workbench disposition.
-- Change orders amend **existing PO lines only** (no new catalog lines, no supplier swap, no blanket/contract PO). Apply-on-confirm — there is no second sequential approval chain. Increases above $1,000 require `confirm_increase: true` only. A change-order increase does not re-run the remaining-budget fail-closed check used on final PR approve.
+- Change orders amend **existing PO lines only** (no new catalog lines, no supplier swap, no blanket/contract PO). Apply-on-confirm — there is no second sequential approval chain. Increases above € 1.000,00 require `confirm_increase: true` only. A change-order increase does not re-run the remaining-budget fail-closed check used on final PR approve.
 - AP Aging is a **queue + due-date classification**. The due-soon window defaults to **7 UTC calendar days** (inclusive of today). Due dates are compared as UTC `YYYY-MM-DD` only. Single mark-paid remains available on the queue.
-- Payment runs ship as a **draft proposal + one-shot execute** (`PAY-YYYY-NNN`, shared ACH reference, same mark-paid write). Still out of scope: bank NACHA/ACH file export, early-pay discount calendar, supplier remittance portal, and multi-currency.
+- Payment runs ship as a **draft proposal + one-shot execute** (`PAY-YYYY-NNN`, shared ACH reference, same mark-paid write). Still out of scope: bank NACHA/ACH file export, early-pay discount calendar, supplier remittance portal, and foreign exchange. One deployment has one currency (`CURRENCY`, default EUR).
 - Duplicate detection is **exact billed cents + calendar dates / same PO**, not OCR invoice capture and not fuzzy invoice-number typo matching (e.g. `INV-100` vs `INV-l00`). Confirming a duplicate voids the **new** invoice only; there is no automatic credit memo or supplier-portal dispute.
 - Contract renewals do not auto-extend `end_date` or write a successor `CNT-` row. They create a standard PR with `source_contract_id` proposed. There is no CLM, e-sign, or vendor portal. APIs are demo-open (no JWT). Carrying `source_contract_id` onto the PO at convert time is out of scope.
 - **SCIM is not implemented.** OIDC and SAML login are optional per customer and still end in email+password’s `pf_session` cookie (`SESSION_SECRET` signs it). Audit and compliance reports are Sprint 3: append-only triggers on `audit_logs` and the SSO evidence tables, a hash-chained `compliance_audit_events` ledger for local auth and admin changes, and read-only reports for admin and finance. See [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md) §5.13.
