@@ -13,14 +13,15 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
+import { t, presentError, statusLabel } from '../i18n';
 
 const BUCKET_CHIPS = [
-  { id: 'all', label: 'Open payable' },
-  { id: 'overdue', label: 'Overdue' },
-  { id: 'due_soon', label: 'Due soon' },
-  { id: 'later', label: 'Later' },
-  { id: 'ready_to_approve', label: 'Ready to approve' },
-  { id: 'paid', label: 'Recently paid' }
+  { id: 'all', labelKey: 'payables.aging.bucketOpen' },
+  { id: 'overdue', labelKey: 'payables.aging.bucketOverdue' },
+  { id: 'due_soon', labelKey: 'payables.aging.bucketDueSoon' },
+  { id: 'later', labelKey: 'payables.aging.bucketLater' },
+  { id: 'ready_to_approve', labelKey: 'payables.aging.bucketReady' },
+  { id: 'paid', labelKey: 'payables.aging.bucketPaid' }
 ];
 
 function matchBadge(matchStatus) {
@@ -28,48 +29,48 @@ function matchBadge(matchStatus) {
     case 'perfect_match':
       return (
         <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold inline-flex items-center">
-          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />Exact Match
+          <CheckCircle2 className="w-3.5 h-3.5 mr-1" />{statusLabel('perfect_match')}
         </span>
       );
     case 'tolerated_match':
       return (
         <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-bold inline-flex items-center">
-          <AlertTriangle className="w-3.5 h-3.5 mr-1" />Tolerated Variance
+          <AlertTriangle className="w-3.5 h-3.5 mr-1" />{statusLabel('tolerated_match')}
         </span>
       );
     case 'price_variance':
       return (
         <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold inline-flex items-center">
-          Price variance
+          {statusLabel('price_variance')}
         </span>
       );
     case 'quantity_variance':
       return (
         <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold inline-flex items-center">
-          Quantity variance
+          {statusLabel('quantity_variance')}
         </span>
       );
     case 'total_variance':
       return (
         <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold inline-flex items-center">
-          <ShieldAlert className="w-3.5 h-3.5 mr-1" />Multiple Variances
+          <ShieldAlert className="w-3.5 h-3.5 mr-1" />{statusLabel('total_variance')}
         </span>
       );
     default:
-      return <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">{matchStatus}</span>;
+      return <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">{statusLabel(matchStatus)}</span>;
   }
 }
 
 function statusBadge(status) {
   switch (status) {
     case 'approved_for_payment':
-      return <span className="bg-indigo-100 text-indigo-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Approved for Payment</span>;
+      return <span className="bg-indigo-100 text-indigo-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('approved_for_payment')}</span>;
     case 'paid':
-      return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Paid</span>;
+      return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('paid')}</span>;
     case 'matched':
-      return <span className="bg-emerald-50 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Ready to approve</span>;
+      return <span className="bg-emerald-50 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{t('payables.aging.readyToApprove')}</span>;
     default:
-      return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{status}</span>;
+      return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel(status)}</span>;
   }
 }
 
@@ -77,21 +78,21 @@ function agingBadge(row) {
   if (row.aging_bucket === 'overdue') {
     return (
       <span className="bg-rose-100 text-rose-800 text-[11px] font-bold px-2 py-0.5 rounded-full">
-        {row.days_past_due}d overdue
+        {t('payables.aging.overdue', { n: row.days_past_due })}
       </span>
     );
   }
   if (row.aging_bucket === 'due_soon') {
     return (
       <span className="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded-full">
-        {row.days_until_due === 0 ? 'Due today' : `Due in ${row.days_until_due}d`}
+        {row.days_until_due === 0 ? t('payables.aging.dueToday') : t('payables.aging.dueIn', { n: row.days_until_due })}
       </span>
     );
   }
   if (row.aging_bucket === 'later') {
     return (
       <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">
-        Due in {row.days_until_due}d
+        {t('payables.aging.dueIn', { n: row.days_until_due })}
       </span>
     );
   }
@@ -155,7 +156,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
   const handleMarkPaid = async () => {
     if (!paying) return;
     if (!paymentReference.trim()) {
-      alert('A payment reference is required.');
+      alert(t('payables.aging.refRequired'));
       return;
     }
     setProcessing(true);
@@ -169,22 +170,24 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
       await loadQueue();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.invoicePaid'));
     } finally {
       setProcessing(false);
     }
   };
 
   const subtitle = useMemo(() => {
-    const asOf = payload?.as_of ? `As of ${payload.as_of} UTC` : 'UTC calendar date';
-    return `${asOf}. Due soon = due today through +${payload?.days ?? 7} days. Pay queue is approved-for-payment only.`;
+    const asOf = payload?.as_of
+      ? t('payables.aging.asOf', { date: payload.as_of })
+      : t('payables.aging.utcDate');
+    return t('payables.aging.subtitle', { asOf, days: payload?.days ?? 7 });
   }, [payload]);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">AP Aging / Payables</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('payables.aging.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5 max-w-3xl">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -194,12 +197,12 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1.5"
             >
               <Banknote className="w-3.5 h-3.5" />
-              <span>Create payment run ({selectedIds.length})</span>
+              <span>{t('payables.aging.createRun', { n: selectedIds.length })}</span>
             </button>
           )}
           <div className="text-[11px] font-semibold text-slate-500 bg-slate-100 rounded-lg px-3 py-1.5 inline-flex items-center space-x-1.5">
             <CalendarClock className="w-3.5 h-3.5" />
-            <span>{counts.open_payable || 0} open payable</span>
+            <span>{t('payables.aging.openPayable', { n: counts.open_payable || 0 })}</span>
           </div>
         </div>
       </div>
@@ -220,7 +223,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
               }`}
             >
-              {chip.label}
+              {t(chip.labelKey)}
               <span className={`ml-1.5 ${active ? 'text-slate-200' : 'text-slate-400'}`}>
                 {chipCount(chip.id)}
               </span>
@@ -235,29 +238,29 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
                 <th className="py-3 px-4 w-8"></th>
-                <th className="py-3 px-4">Invoice #</th>
-                <th className="py-3 px-4">Supplier</th>
-                <th className="py-3 px-4">PO / Requester</th>
-                <th className="py-3 px-4">Dates</th>
-                <th className="py-3 px-4">Billed / Payable</th>
-                <th className="py-3 px-4">Aging</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">{t('payables.invoices.colNumber')}</th>
+                <th className="py-3 px-4">{t('common.supplier')}</th>
+                <th className="py-3 px-4">{t('payables.aging.colPo')}</th>
+                <th className="py-3 px-4">{t('payables.aging.colDates')}</th>
+                <th className="py-3 px-4">{t('payables.aging.colBilled')}</th>
+                <th className="py-3 px-4">{t('payables.aging.colAging')}</th>
+                <th className="py-3 px-4">{t('common.status')}</th>
+                <th className="py-3 px-4 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="9" className="py-8 text-center text-slate-400">Loading payables queue...</td>
+                  <td colSpan="9" className="py-8 text-center text-slate-400">{t('common.loading')}</td>
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
                   <td colSpan="9" className="py-8 text-center text-slate-400">
                     {bucket === 'ready_to_approve'
-                      ? 'No matched invoices waiting to approve. Approve from Invoices & Matching.'
+                      ? t('payables.aging.emptyReady')
                       : bucket === 'paid'
-                        ? 'No paid invoices with due-date context.'
-                        : 'No approved invoices in this aging bucket.'}
+                        ? t('payables.aging.emptyPaid')
+                        : t('payables.aging.emptyBucket')}
                   </td>
                 </tr>
               ) : (
@@ -269,7 +272,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                           type="checkbox"
                           checked={selectedIds.includes(inv.id)}
                           onChange={() => toggleSelected(inv.id)}
-                          aria-label={`Select ${inv.invoice_number} for payment run`}
+                          aria-label={t('payables.aging.selectForRun', { invoice: inv.invoice_number })}
                         />
                       ) : null}
                     </td>
@@ -285,14 +288,14 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                       )}
                     </td>
                     <td className="py-3 px-4 text-slate-500">
-                      <div>Inv {inv.invoice_date}</div>
-                      <div className="font-semibold text-slate-700">Due {inv.due_date}</div>
+                      <div>{t('payables.aging.invDate', { date: inv.invoice_date })}</div>
+                      <div className="font-semibold text-slate-700">{t('payables.aging.dueDate', { date: inv.due_date })}</div>
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-900">
                       <div>{formatMoney(inv.total_amount)}</div>
                       {inv.payable_total_cents != null && (
                         <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
-                          Pay {formatMoney(inv.payable_total_cents)}
+                          {t('payables.shared.pay', { amount: formatMoney(inv.payable_total_cents) })}
                         </div>
                       )}
                     </td>
@@ -307,7 +310,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                         className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5" />
-                        <span>Invoice</span>
+                        <span>{t('common.invoice')}</span>
                       </button>
                       {(inv.pr_number || inv.po_number) && (
                         <button
@@ -315,7 +318,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                           className="px-2 py-1 border border-slate-300 text-slate-700 rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                         >
                           <GitBranch className="w-3.5 h-3.5" />
-                          <span>Trail</span>
+                          <span>{t('common.trail')}</span>
                         </button>
                       )}
                       {inv.status === 'matched' && (
@@ -323,7 +326,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                           onClick={() => onNavigate?.('invoices', { focusId: inv.id })}
                           className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-semibold text-[11px]"
                         >
-                          Approve
+                          {t('common.approve')}
                         </button>
                       )}
                       {inv.status === 'approved_for_payment' && (
@@ -332,7 +335,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                           className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                         >
                           <CreditCard className="w-3.5 h-3.5" />
-                          <span>Mark paid</span>
+                          <span>{t('payables.aging.markPaid')}</span>
                         </button>
                       )}
                     </td>
@@ -349,7 +352,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Mark paid</h3>
+                <h3 className="text-base font-bold text-slate-900">{t('payables.aging.markPaid')}</h3>
                 <p className="text-xs text-slate-500 mt-0.5 font-mono">{paying.invoice_number}</p>
               </div>
               <button onClick={() => setPaying(null)} className="text-slate-400 hover:text-slate-700">
@@ -358,20 +361,20 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
             </div>
             <div className="py-4 space-y-3 text-xs">
               <p className="text-slate-600">
-                Uses the same mark-paid API as Invoices & Matching. Invoice must already be
+                {t('payables.aging.markPaidHelp')}
                 <code className="mx-1 font-mono">approved_for_payment</code>.
               </p>
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-                <div className="text-slate-500">Billed</div>
+                <div className="text-slate-500">{t('payables.aging.billed')}</div>
                 <div className="font-bold text-slate-900 text-sm">{formatMoney(paying.total_amount)}</div>
                 {paying.payable_total_cents != null && (
                   <div className="text-amber-800 font-semibold mt-1">
-                    Pay {formatMoney(paying.payable_total_cents)} (short pay)
+                    {t('payables.invoices.shortPayOf', { amount: formatMoney(paying.payable_total_cents) })}
                   </div>
                 )}
               </div>
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Payment reference</label>
+                <label className="block text-slate-700 font-semibold mb-1">{t('payables.aging.paymentRef')}</label>
                 <input
                   type="text"
                   value={paymentReference}
@@ -385,7 +388,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                 onClick={() => setPaying(null)}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 disabled={processing}
@@ -393,7 +396,7 @@ export default function ApAgingView({ currentUser, onDataChanged, onNavigate, fo
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1.5"
               >
                 <Wallet className="w-4 h-4" />
-                <span>{processing ? 'Posting…' : 'Confirm payment'}</span>
+                <span>{processing ? t('payables.aging.posting') : t('payables.aging.confirmPayment')}</span>
               </button>
             </div>
           </div>

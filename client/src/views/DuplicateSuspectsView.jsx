@@ -10,28 +10,29 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
+import { t, presentError, statusLabel } from '../i18n';
 
 const DISPOSITIONS = [
   {
     id: 'confirm_unique',
-    label: 'Confirm unique',
-    hint: 'Clear the hold. Invoice may proceed to Approve for Payment if it is matched and any hard exception is resolved.'
+    labelKey: 'payables.duplicates.confirmUnique',
+    hintKey: 'payables.duplicates.confirmUniqueHint'
   },
   {
     id: 'confirm_duplicate',
-    label: 'Confirm duplicate',
-    hint: 'Void this invoice (status → rejected). The candidate original is unchanged. Approve and pay stay blocked.'
+    labelKey: 'payables.duplicates.confirmDuplicate',
+    hintKey: 'payables.duplicates.confirmDuplicateHint'
   }
 ];
 
 function matchRuleLabel(rule) {
   switch (rule) {
     case 'same_amount_near_date':
-      return 'Same billed amount + invoice date within ±7 UTC days';
+      return t('payables.duplicates.ruleAmountDate');
     case 'same_po_same_amount':
-      return 'Same PO + same billed amount';
+      return t('payables.duplicates.rulePoAmount');
     case 'both':
-      return 'Same amount + near date, and same PO + amount';
+      return t('payables.duplicates.ruleBoth');
     default:
       return rule;
   }
@@ -40,30 +41,30 @@ function matchRuleLabel(rule) {
 function duplicateBadge(status) {
   switch (status) {
     case 'suspect':
-      return <span className="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded-full">Duplicate suspect</span>;
+      return <span className="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded-full">{t('payables.duplicates.suspect')}</span>;
     case 'confirmed_unique':
-      return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Confirmed unique</span>;
+      return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{t('payables.duplicates.confirmedUnique')}</span>;
     case 'confirmed_duplicate':
-      return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">Confirmed duplicate</span>;
+      return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('confirmed_duplicate')}</span>;
     default:
-      return <span className="bg-slate-100 text-slate-600 text-[11px] font-semibold px-2 py-0.5 rounded-full">Clear</span>;
+      return <span className="bg-slate-100 text-slate-600 text-[11px] font-semibold px-2 py-0.5 rounded-full">{t('payables.duplicates.clear')}</span>;
   }
 }
 
 function statusBadge(status) {
   switch (status) {
     case 'approved_for_payment':
-      return <span className="bg-indigo-100 text-indigo-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Approved for Payment</span>;
+      return <span className="bg-indigo-100 text-indigo-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('approved_for_payment')}</span>;
     case 'paid':
-      return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Paid</span>;
+      return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('paid')}</span>;
     case 'matched':
-      return <span className="bg-emerald-50 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Matched</span>;
+      return <span className="bg-emerald-50 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('matched')}</span>;
     case 'rejected':
-      return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">Rejected</span>;
+      return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('rejected')}</span>;
     case 'variance_flagged':
-      return <span className="bg-rose-100 text-rose-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">Hard exception</span>;
+      return <span className="bg-rose-100 text-rose-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{t('payables.duplicates.hardException')}</span>;
     default:
-      return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{status}</span>;
+      return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel(status)}</span>;
   }
 }
 
@@ -79,7 +80,7 @@ function InvoiceCard({ title, invoice, highlight }) {
       <div className="text-[11px] text-slate-600 space-y-0.5">
         <div>{invoice.supplier_name}</div>
         <div className="font-mono text-indigo-700 font-semibold">{invoice.po_number}</div>
-        <div>Invoice date {invoice.invoice_date}</div>
+        <div>{t('payables.duplicates.invoiceDate', { date: invoice.invoice_date })}</div>
         <div className="font-bold text-slate-900 text-sm">{formatMoney(invoice.total_amount)}</div>
         <div>{statusBadge(invoice.status)}</div>
       </div>
@@ -119,7 +120,7 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
       setDisposition('confirm_unique');
       setReason('');
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.duplicate'));
     }
   };
 
@@ -130,11 +131,11 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
   const handleResolve = async () => {
     if (!selected) return;
     if (!reason.trim()) {
-      alert('A resolution reason is required.');
+      alert(t('payables.duplicates.reasonAlert'));
       return;
     }
     if (disposition === 'confirm_duplicate' && !window.confirm(
-      `Confirm ${selected.invoice_number} as a duplicate? This rejects/voids the invoice. The candidate original is unchanged.`
+      t('payables.duplicates.confirmVoid', { invoice: selected.invoice_number })
     )) {
       return;
     }
@@ -150,33 +151,38 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
       await loadQueue(queue);
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.duplicateResolve'));
     } finally {
       setProcessing(false);
     }
   };
 
+  const openSuspectCount = queue === 'open'
+    ? invoices.length
+    : invoices.filter((row) => row.duplicate_status === 'suspect').length;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Duplicate Suspects</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('payables.duplicates.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5 max-w-3xl">
-            AP soft-hold for likely duplicates (same supplier + billed cents + dates within ±7 UTC days, or same PO + billed cents).
-            Exact invoice-number reuse is still a hard uniqueness fail. Dual match is unchanged — this is a separate control.
+            {t('payables.duplicates.subtitle')}
           </p>
         </div>
         <div className="text-[11px] font-semibold text-slate-500 bg-amber-50 text-amber-900 border border-amber-200 rounded-lg px-3 py-1.5 inline-flex items-center space-x-1.5">
           <Copy className="w-3.5 h-3.5" />
-          <span>{queue === 'open' ? invoices.length : invoices.filter((row) => row.duplicate_status === 'suspect').length} open suspects</span>
+          <span>{openSuspectCount === 1
+            ? t('payables.duplicates.openOne')
+            : t('payables.duplicates.openMany', { n: openSuspectCount })}</span>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
         {[
-          { id: 'open', label: 'Open suspects' },
-          { id: 'resolved', label: 'Resolved' },
-          { id: 'all', label: 'All' }
+          { id: 'open', labelKey: 'payables.duplicates.chipOpen' },
+          { id: 'resolved', labelKey: 'status.resolved' },
+          { id: 'all', labelKey: 'common.all' }
         ].map((chip) => {
           const active = queue === chip.id;
           return (
@@ -189,7 +195,7 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
               }`}
             >
-              {chip.label}
+              {t(chip.labelKey)}
             </button>
           );
         })}
@@ -200,24 +206,24 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">Invoice #</th>
-                <th className="py-3 px-4">Supplier</th>
-                <th className="py-3 px-4">PO</th>
-                <th className="py-3 px-4">Date / Amount</th>
-                <th className="py-3 px-4">Candidate</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">{t('payables.invoices.colNumber')}</th>
+                <th className="py-3 px-4">{t('common.supplier')}</th>
+                <th className="py-3 px-4">{t('payables.exceptions.colPo')}</th>
+                <th className="py-3 px-4">{t('common.date')} / {t('common.amount')}</th>
+                <th className="py-3 px-4">{t('payables.duplicates.colCandidate')}</th>
+                <th className="py-3 px-4">{t('common.status')}</th>
+                <th className="py-3 px-4 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="py-8 text-center text-slate-400">Loading duplicate suspects...</td>
+                  <td colSpan="7" className="py-8 text-center text-slate-400">{t('common.loading')}</td>
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
                   <td colSpan="7" className="py-8 text-center text-slate-400">
-                    {queue === 'open' ? 'No open likely-duplicate holds.' : 'No resolved duplicate dispositions.'}
+                    {queue === 'open' ? t('payables.duplicates.emptyOpen') : t('payables.duplicates.emptyResolved')}
                   </td>
                 </tr>
               ) : (
@@ -251,14 +257,14 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                           onClick={() => openDetail(inv.id)}
                           className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px]"
                         >
-                          Review
+                          {t('payables.duplicates.review')}
                         </button>
                         <button
                           onClick={() => onNavigate?.('invoices', { focusId: inv.id })}
                           className="px-2 py-1 border border-slate-300 text-slate-700 rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                         >
                           <FileSpreadsheet className="w-3.5 h-3.5" />
-                          <span>Invoice</span>
+                          <span>{t('common.invoice')}</span>
                         </button>
                       </td>
                     </tr>
@@ -275,7 +281,7 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Likely duplicate review</h3>
+                <h3 className="text-base font-bold text-slate-900">{t('payables.duplicates.reviewTitle')}</h3>
                 <p className="text-xs text-slate-500 mt-0.5 font-mono">{selected.invoice_number}</p>
               </div>
               <button onClick={() => setSelected(null)} className="text-slate-400 hover:text-slate-700">
@@ -288,18 +294,17 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-amber-950 flex items-start space-x-2">
                   <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <p>
-                    Approve for Payment and mark-paid are blocked until AP confirms this invoice is unique
-                    or voids it as a duplicate. Dual match already ran — this hold is a separate AP control.
+                    {t('payables.duplicates.suspectBanner')}
                   </p>
                 </div>
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <InvoiceCard title="This invoice (new)" invoice={selected} highlight />
+                <InvoiceCard title={t('payables.duplicates.thisInvoice')} invoice={selected} highlight />
                 {selected.candidates?.map((candidate) => (
                   <InvoiceCard
                     key={candidate.id}
-                    title="Candidate (existing)"
+                    title={t('payables.duplicates.candidate')}
                     invoice={candidate}
                   />
                 ))}
@@ -335,21 +340,21 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                             : 'bg-white text-slate-600 border-slate-200'
                         }`}
                       >
-                        {item.label}
+                        {t(item.labelKey)}
                       </button>
                     ))}
                   </div>
                   <p className="text-slate-500">
-                    {DISPOSITIONS.find((item) => item.id === disposition)?.hint}
+                    {t(DISPOSITIONS.find((item) => item.id === disposition)?.hintKey)}
                   </p>
                   <div>
-                    <label className="block text-slate-700 font-semibold mb-1">Reason</label>
+                    <label className="block text-slate-700 font-semibold mb-1">{t('common.reason')}</label>
                     <textarea
                       value={reason}
                       onChange={(e) => setReason(e.target.value)}
                       rows={3}
                       className="w-full p-2.5 border border-slate-300 rounded-lg text-xs"
-                      placeholder="Why this is unique, or why it is a duplicate…"
+                      placeholder={t('payables.duplicates.reasonPlaceholder')}
                     />
                   </div>
                 </div>
@@ -362,14 +367,14 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                 className="px-3 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold inline-flex items-center space-x-1"
               >
                 <GitBranch className="w-3.5 h-3.5" />
-                <span>Trail</span>
+                <span>{t('common.trail')}</span>
               </button>
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => setSelected(null)}
                   className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
                 >
-                  Close
+                  {t('common.close')}
                 </button>
                 {selected.duplicate_status === 'suspect' && (
                   <button
@@ -382,7 +387,7 @@ export default function DuplicateSuspectsView({ currentUser, onDataChanged, onNa
                     }`}
                   >
                     {disposition === 'confirm_duplicate' ? <Ban className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-                    <span>{processing ? 'Saving…' : disposition === 'confirm_duplicate' ? 'Confirm duplicate' : 'Confirm unique'}</span>
+                    <span>{processing ? t('common.saving') : t(disposition === 'confirm_duplicate' ? 'payables.duplicates.confirmDuplicate' : 'payables.duplicates.confirmUnique')}</span>
                   </button>
                 )}
               </div>

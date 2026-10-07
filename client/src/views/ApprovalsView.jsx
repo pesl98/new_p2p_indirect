@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
+import { t, presentError, statusLabel, priorityLabel } from '../i18n';
 
 export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }) {
   const [approvals, setApprovals] = useState([]);
@@ -49,14 +50,14 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
   const handleOpenDecision = (item, type) => {
     setActiveDecisionModal(item);
     setDecisionType(type);
-    setDecisionComments(type === 'approved' ? 'Approved. Aligns with departmental budget & priorities.' : '');
+    setDecisionComments(type === 'approved' ? t('purchasing.approval.defaultComment') : '');
     setAllowContractUse('');
   };
 
   const handleExecuteDecision = async () => {
     if (!activeDecisionModal) return;
     if (decisionType === 'rejected' && !decisionComments.trim()) {
-      alert('Please provide a reason when rejecting a requisition.');
+      alert(t('purchasing.approval.needRejectReason'));
       return;
     }
 
@@ -64,7 +65,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       && activeDecisionModal.contract_use_status === 'proposed'
       && activeDecisionModal.source_contract_id;
     if (needsContractDecision && allowContractUse !== 'true' && allowContractUse !== 'false') {
-      alert('Choose whether to allow or refuse use of the proposed contract. Refusing does not reject the requisition.');
+      alert(t('purchasing.approval.needContractChoice'));
       return;
     }
 
@@ -86,7 +87,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       await loadApprovals();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.approval'));
     } finally {
       setProcessing(false);
     }
@@ -97,19 +98,20 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       {/* Header Banner */}
       <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Approvals Inbox</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('purchasing.approval.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Review purchasing requisitions pending authorization. Verify business justification and remaining budget.
-            Budget is committed only on the <strong>final</strong> approval step.
+            {t('purchasing.approval.subtitle')}{' '}
+            <strong>{t('purchasing.approval.final')}</strong>{' '}
+            {t('purchasing.approval.subtitleEnd')}
           </p>
         </div>
 
         <div className="flex items-center space-x-2 text-xs">
-          <span className="text-slate-500">Active Approver:</span>
+          <span className="text-slate-500">{t('purchasing.approval.active')}</span>
           <span className="font-bold text-slate-900">{currentUser?.name}</span>
           <span className="text-slate-400">•</span>
           <span className="text-emerald-700 font-semibold">
-            Signing Limit: ${currentUser?.approval_limit ? formatMoney(currentUser.approval_limit) : 'Unlimited'}
+            {t('purchasing.approval.signingLimit')} {currentUser?.approval_limit ? formatMoney(currentUser.approval_limit) : t('purchasing.approval.unlimited')}
           </span>
         </div>
       </div>
@@ -118,14 +120,14 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
       <div className="space-y-4">
         {loading ? (
           <div className="p-12 text-center text-slate-400 text-xs bg-white rounded-xl border border-slate-200">
-            Loading pending approvals...
+            {t('purchasing.approval.loading')}
           </div>
         ) : approvals.length === 0 ? (
           <div className="p-12 text-center bg-white rounded-xl border border-slate-200">
             <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2 opacity-80" />
-            <h3 className="text-sm font-bold text-slate-900">Your Approval Queue is Empty!</h3>
+            <h3 className="text-sm font-bold text-slate-900">{t('purchasing.approval.emptyTitle')}</h3>
             <p className="text-xs text-slate-500 mt-1">
-              There are currently no requisitions waiting for your signature.
+              {t('purchasing.approval.emptyBody')}
             </p>
           </div>
         ) : (
@@ -148,24 +150,24 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                           ? 'bg-rose-100 text-rose-700'
                           : 'bg-slate-100 text-slate-700'
                       }`}>
-                        {item.priority} Priority
+                        {t('priority.withWord', { priority: priorityLabel(item.priority) })}
                       </span>
-                      <span className="text-xs text-slate-400">Tier {item.step_order} Authorization</span>
+                      <span className="text-xs text-slate-400">{t('purchasing.approval.tier', { order: item.step_order })}</span>
                       {(item.via_delegation || item.delegated_from_name) && (
                         <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-violet-100 text-violet-800">
-                          Delegated from {item.delegated_from_name || 'mapped approver'}
+                          {t('purchasing.approval.delegatedFrom', { name: item.delegated_from_name || t('purchasing.approval.mappedApprover') })}
                         </span>
                       )}
                     </div>
 
                     <div className="text-xs text-slate-800">
-                      <strong className="text-slate-900">{item.requester_name}</strong> requested on behalf of{' '}
+                      <strong className="text-slate-900">{item.requester_name}</strong> {t('purchasing.approval.requestedOnBehalf')}{' '}
                       <span className="font-semibold text-slate-900">{item.department_name}</span> ({item.department_code})
                     </div>
 
                     {/* Justification quote box */}
                     <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-700 border-l-2 border-emerald-500">
-                      <span className="font-semibold text-slate-500 text-[10px] uppercase block mb-0.5">Business Justification</span>
+                      <span className="font-semibold text-slate-500 text-[10px] uppercase block mb-0.5">{t('purchasing.pr.justification')}</span>
                       "{item.justification}"
                     </div>
 
@@ -173,18 +175,18 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                       <div className="p-3 rounded-lg text-xs border border-sky-200 bg-sky-50 text-sky-950">
                         <span className="font-semibold text-sky-700 text-[10px] uppercase block mb-0.5 flex items-center gap-1">
                           <FileCheck className="w-3 h-3" />
-                          Linked contract · {item.contract_use_status === 'proposed' ? 'Awaiting allow / refuse' : item.contract_use_status}
+                          {t('purchasing.pr.linkedContract')} · {item.contract_use_status === 'proposed' ? t('purchasing.approval.awaitingContract') : statusLabel(item.contract_use_status)}
                         </span>
                         <div className="font-mono font-bold">{item.source_contract.contract_number}</div>
                         <div>{item.source_contract.title}</div>
                         <div className="text-[11px] text-sky-800 mt-1">
                           {item.source_contract.supplier_name}
-                          {' · ACV '}{formatMoney(item.source_contract.annual_value_cents)}
+                          {' · '}{t('purchasing.pr.acv')}{' '}{formatMoney(item.source_contract.annual_value_cents)}
                           {item.source_contract.start_date ? ` · ${item.source_contract.start_date} → ${item.source_contract.end_date}` : ''}
                         </div>
                         {item.contract_use_status === 'proposed' && (
                           <p className="text-[11px] mt-1.5 text-sky-800">
-                            Allowing uses this contract. Refusing keeps the PR as ad-hoc — it does not reject the requisition.
+                            {t('purchasing.approval.allowKeeps')}
                           </p>
                         )}
                       </div>
@@ -192,12 +194,12 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
 
                     {/* Budget Impact Indicator */}
                     <div className="flex items-center space-x-4 text-[11px] text-slate-500 pt-1">
-                      <span>Available Dept Budget: <strong className="text-slate-800">{formatMoney(item.available_budget)}</strong></span>
-                      <span>Total Cost: <strong className="text-emerald-700 text-xs font-bold">{formatMoney(item.total_amount)}</strong></span>
+                      <span>{t('purchasing.approval.availableBudget')}: <strong className="text-slate-800">{formatMoney(item.available_budget)}</strong></span>
+                      <span>{t('purchasing.pr.totalCost')}: <strong className="text-emerald-700 text-xs font-bold">{formatMoney(item.total_amount)}</strong></span>
                       {hasExceededBudget && (
                         <span className="text-rose-600 font-semibold flex items-center">
                           <AlertTriangle className="w-3.5 h-3.5 mr-1" />
-                          Exceeds remaining budget — final approval will be blocked
+                          {t('purchasing.approval.exceeds')}
                         </span>
                       )}
                     </div>
@@ -212,19 +214,19 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                           className="px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors"
                         >
                           <X className="w-3.5 h-3.5" />
-                          <span>Reject</span>
+                          <span>{t('common.reject')}</span>
                         </button>
                         <button
                           onClick={() => handleOpenDecision(item, 'approved')}
                           className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition-colors"
                         >
                           <Check className="w-3.5 h-3.5" />
-                          <span>Approve PR</span>
+                          <span>{t('purchasing.approval.approvePr')}</span>
                         </button>
                       </div>
                     ) : (
                       <span className="text-[11px] text-slate-500">
-                        Assigned to {item.assigned_approver_name || 'another approver'} — you cannot act on this step
+                        {t('purchasing.approval.assignedOther', { name: item.assigned_approver_name || t('purchasing.approval.anotherApprover') })}
                       </span>
                     )}
                   </div>
@@ -243,21 +245,24 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
               {decisionType === 'approved' ? (
                 <>
                   <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                  <span>Approve Requisition {activeDecisionModal.pr_number}</span>
+                  <span>{t('purchasing.approval.approveTitle', { number: activeDecisionModal.pr_number })}</span>
                 </>
               ) : (
                 <>
                   <XCircle className="w-5 h-5 text-rose-600" />
-                  <span>Reject Requisition {activeDecisionModal.pr_number}</span>
+                  <span>{t('purchasing.approval.rejectTitle', { number: activeDecisionModal.pr_number })}</span>
                 </>
               )}
             </div>
             <p className="text-xs text-slate-500 mb-4">
               {decisionType === 'approved'
-                ? `Authorizing ${formatMoney(activeDecisionModal.total_amount)} from ${activeDecisionModal.department_name} budget.`
-                : 'Please document why this procurement request cannot be approved.'}
+                ? t('purchasing.approval.authorizing', {
+                    amount: formatMoney(activeDecisionModal.total_amount),
+                    department: activeDecisionModal.department_name
+                  })
+                : t('purchasing.approval.rejectHelp')}
               {Number(activeDecisionModal.via_delegation) === 1 && activeDecisionModal.delegated_from_name
-                ? ` Acting as delegate for ${activeDecisionModal.delegated_from_name}.`
+                ? t('purchasing.approval.actingDelegate', { name: activeDecisionModal.delegated_from_name })
                 : ''}
             </p>
 
@@ -267,11 +272,11 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                 && activeDecisionModal.source_contract && (
                 <div className="p-3 rounded-lg border border-sky-200 bg-sky-50 space-y-2">
                   <div className="font-semibold text-sky-900">
-                    Contract use for {activeDecisionModal.source_contract.contract_number}
+                    {t('purchasing.approval.contractUseFor', { number: activeDecisionModal.source_contract.contract_number })}
                   </div>
                   <p className="text-[11px] text-sky-800">
-                    {activeDecisionModal.source_contract.supplier_name} · ACV {formatMoney(activeDecisionModal.source_contract.annual_value_cents)}
-                    {activeDecisionModal.source_contract.end_date ? ` · ends ${activeDecisionModal.source_contract.end_date}` : ''}
+                    {activeDecisionModal.source_contract.supplier_name} · {t('purchasing.pr.acv')} {formatMoney(activeDecisionModal.source_contract.annual_value_cents)}
+                    {activeDecisionModal.source_contract.end_date ? ` · ${t('purchasing.pr.ends', { date: activeDecisionModal.source_contract.end_date })}` : ''}
                   </p>
                   <label className="flex items-start gap-2 text-slate-800">
                     <input
@@ -282,7 +287,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                       onChange={() => setAllowContractUse('true')}
                       className="mt-0.5"
                     />
-                    <span><strong>Allow contract use</strong> — approve this PR against the linked contract.</span>
+                    <span><strong>{t('purchasing.approval.allowUse')}</strong> — {t('purchasing.approval.allowUseDetail')}</span>
                   </label>
                   <label className="flex items-start gap-2 text-slate-800">
                     <input
@@ -293,18 +298,18 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                       onChange={() => setAllowContractUse('false')}
                       className="mt-0.5"
                     />
-                    <span><strong>Refuse contract use</strong> — still approve the PR as ad-hoc (does not reject it).</span>
+                    <span><strong>{t('purchasing.approval.refuseUse')}</strong> — {t('purchasing.approval.refuseUseDetail')}</span>
                   </label>
                 </div>
               )}
               <label className="block text-slate-700 font-medium">
-                {decisionType === 'approved' ? 'Approver Notes / Comments (Optional)' : 'Rejection Reason (Required)'}
+                {decisionType === 'approved' ? t('purchasing.approval.notesOptional') : t('purchasing.approval.reasonRequired')}
               </label>
               <textarea
                 rows="3"
                 value={decisionComments}
                 onChange={(e) => setDecisionComments(e.target.value)}
-                placeholder={decisionType === 'approved' ? 'Add any notes for procurement or requester...' : 'Specify why this was rejected...'}
+                placeholder={decisionType === 'approved' ? t('purchasing.approval.notesPlaceholder') : t('purchasing.approval.rejectPlaceholder')}
                 className="w-full p-2.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -315,7 +320,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                 onClick={() => setActiveDecisionModal(null)}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -325,7 +330,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                   decisionType === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
                 }`}
               >
-                {processing ? 'Processing...' : `Confirm ${decisionType === 'approved' ? 'Approval' : 'Rejection'}`}
+                {processing ? t('common.processing') : (decisionType === 'approved' ? t('purchasing.approval.confirmApproval') : t('purchasing.approval.confirmRejection'))}
               </button>
             </div>
           </div>

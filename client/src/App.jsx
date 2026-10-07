@@ -29,6 +29,7 @@ import IntegrationsView from './views/IntegrationsView';
 import { api } from './api';
 import { DEMO_SEED_PASSWORD } from './demoAuth';
 import { setDisplayCurrency } from './money';
+import { t } from './i18n';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -212,7 +213,7 @@ export default function App() {
   if (!authConfig || (loading && !needsLogin && !bootstrapNeeded && !currentUser)) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-sm text-slate-500">
-        Loading ProcureFlow…
+        {t('app.loading')}
       </div>
     );
   }

@@ -2,6 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { api } from '../api';
 import { formatMoney } from '../money';
+import { t, presentError, statusLabel } from '../i18n';
+
+function lineCount(n) {
+  return n === 1 ? t('purchasing.convert.lineOne', { n }) : t('purchasing.convert.lineMany', { n });
+}
 
 function defaultSupplierId(item) {
   return item.resolved_supplier_id
@@ -70,7 +75,7 @@ export default function ConvertRequisitionModal({
       }
       setSupplierMappings(nextMappings);
     } catch (err) {
-      setError(err.message || 'Failed to load requisition lines.');
+      setError(presentError(err, 'errors.loadFailed'));
     } finally {
       setLoadingDetail(false);
     }
@@ -100,7 +105,7 @@ export default function ConvertRequisitionModal({
       if (!groups.has(sid)) {
         groups.set(sid, {
           supplier_id: sid,
-          supplier_name: suppliers.find((s) => Number(s.id) === Number(sid))?.name || `Supplier ${sid}`,
+          supplier_name: suppliers.find((s) => Number(s.id) === Number(sid))?.name || t('purchasing.convert.supplierFallback', { id: sid }),
           items: [],
           total: 0
         });
@@ -127,9 +132,12 @@ export default function ConvertRequisitionModal({
     if (!selectedPR) return;
     const unresolved = preview.unresolved;
     if (unresolved.length > 0) {
-      const labels = unresolved.map((item) => item.item_description || `line ${item.id}`).join(', ');
+      const labels = unresolved.map((item) => item.item_description || t('purchasing.convert.lineFallback', { id: item.id })).join(', ');
       setError(
-        `Cannot convert requisition: ${unresolved.length} line(s) have no resolvable supplier (${labels}). Assign a vendor on each line — convert does not invent a supplier.`
+        t(unresolved.length === 1 ? 'purchasing.convert.blockedUnresolvedOne' : 'purchasing.convert.blockedUnresolvedMany', {
+          n: unresolved.length,
+          labels
+        })
       );
       return;
     }
@@ -140,9 +148,12 @@ export default function ConvertRequisitionModal({
       return supplier && supplier.status && supplier.status !== 'active';
     });
     if (inactiveAssigned.length > 0) {
-      const labels = inactiveAssigned.map((item) => item.item_description || `line ${item.id}`).join(', ');
+      const labels = inactiveAssigned.map((item) => item.item_description || t('purchasing.convert.lineFallback', { id: item.id })).join(', ');
       setError(
-        `Cannot convert requisition: ${inactiveAssigned.length} line(s) are assigned to an inactive supplier (${labels}). Remap each line to an active supplier.`
+        t(inactiveAssigned.length === 1 ? 'purchasing.convert.blockedInactiveOne' : 'purchasing.convert.blockedInactiveMany', {
+          n: inactiveAssigned.length,
+          labels
+        })
       );
       return;
     }
@@ -168,7 +179,7 @@ export default function ConvertRequisitionModal({
       setResult(converted);
       onConverted?.(converted);
     } catch (err) {
-      setError(err.message || 'Failed to generate purchase order');
+      setError(presentError(err, 'errors.poCreate'));
     } finally {
       setSubmitting(false);
     }
@@ -183,13 +194,15 @@ export default function ConvertRequisitionModal({
           <div>
             <h3 className="text-base font-bold text-slate-900">
               {issued.length > 0
-                ? (issued.length > 1 ? 'Purchase orders issued' : 'Purchase order issued')
-                : 'Convert requisition to purchase order(s)'}
+                ? (issued.length > 1 ? t('purchasing.convert.issuedManyTitle') : t('purchasing.convert.issuedOneTitle'))
+                : t('purchasing.convert.title')}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               {issued.length > 0
-                ? result.message
-                : 'Confirm or remap the supplier on each line, then issue one PO per vendor.'}
+                ? (issued.length > 1
+                  ? t('purchasing.convert.issuedManySubtitle', { n: issued.length })
+                  : t('purchasing.convert.issuedOneSubtitle'))
+                : t('purchasing.convert.subtitle')}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700" type="button">
@@ -203,8 +216,8 @@ export default function ConvertRequisitionModal({
               <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
                 {issued.length > 1
-                  ? `${issued.length} purchase orders were issued from ${selectedPR?.pr_number}.`
-                  : `${issued[0].poNumber} was issued from ${selectedPR?.pr_number}.`}
+                  ? t('purchasing.convert.issuedManyBody', { n: issued.length, pr: selectedPR?.pr_number })
+                  : t('purchasing.convert.issuedOneBody', { po: issued[0].poNumber, pr: selectedPR?.pr_number })}
               </span>
             </div>
             {issued.map((po) => (
@@ -219,7 +232,7 @@ export default function ConvertRequisitionModal({
                   <span className="text-emerald-700 font-extrabold text-xs">{formatMoney(po.total_amount)}</span>
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
-                  {po.supplier_name} · {po.item_count} line{po.item_count === 1 ? '' : 's'}
+                  {po.supplier_name} · {lineCount(po.item_count)}
                 </div>
               </button>
             ))}
@@ -228,10 +241,10 @@ export default function ConvertRequisitionModal({
           <div className="p-5 overflow-y-auto space-y-4 text-xs">
             <div>
               <label className="block text-slate-700 font-semibold uppercase tracking-wider text-[11px] mb-2">
-                Approved requisition
+                {t('purchasing.convert.approved')}
               </label>
               {approvedPRs.length === 0 ? (
-                <p className="text-slate-400">No approved requisitions are waiting to convert.</p>
+                <p className="text-slate-400">{t('purchasing.convert.noneWaiting')}</p>
               ) : (
                 <div className="space-y-2 max-h-40 overflow-y-auto">
                   {approvedPRs.map((pr) => (
@@ -257,27 +270,28 @@ export default function ConvertRequisitionModal({
             </div>
 
             {loadingDetail && (
-              <p className="text-slate-400">Loading requisition lines…</p>
+              <p className="text-slate-400">{t('purchasing.convert.loadingLines')}</p>
             )}
 
             {detail && (
               <div className="space-y-3 pt-3 border-t border-slate-200">
                 <div className="font-semibold text-slate-700 uppercase tracking-wider text-[11px]">
-                  Line supplier assignment
+                  {t('purchasing.convert.assignment')}
                 </div>
                 <p className="text-slate-500">
-                  Defaults come from the line’s estimated supplier, then the catalog preferred vendor.
-                  Override a line to remap it before issue — the same <code className="font-mono">supplier_mappings</code> the convert API accepts.
+                  {t('purchasing.convert.assignmentHelpBefore')}
+                  <code className="font-mono">supplier_mappings</code>
+                  {t('purchasing.convert.assignmentHelpAfter')}
                 </p>
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-left">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
                       <tr>
-                        <th className="py-2 px-3">Line</th>
-                        <th className="py-2 px-3">Qty</th>
-                        <th className="py-2 px-3 text-right">Amount</th>
-                        <th className="py-2 px-3">Default supplier</th>
-                        <th className="py-2 px-3">Issue to</th>
+                        <th className="py-2 px-3">{t('common.line')}</th>
+                        <th className="py-2 px-3">{t('common.qty')}</th>
+                        <th className="py-2 px-3 text-right">{t('common.amount')}</th>
+                        <th className="py-2 px-3">{t('purchasing.convert.defaultSupplier')}</th>
+                        <th className="py-2 px-3">{t('purchasing.convert.issueTo')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -293,7 +307,7 @@ export default function ConvertRequisitionModal({
                               {item.item_description}
                               {remapped && (
                                 <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
-                                  Remapped
+                                  {t('purchasing.convert.remapped')}
                                 </span>
                               )}
                             </td>
@@ -303,7 +317,7 @@ export default function ConvertRequisitionModal({
                             </td>
                             <td className="py-2 px-3 text-slate-600">
                               {defaultSupplierName(item, suppliers) || (
-                                <span className="text-rose-600 font-medium">Unassigned</span>
+                                <span className="text-rose-600 font-medium">{t('common.unassigned')}</span>
                               )}
                             </td>
                             <td className="py-2 px-3">
@@ -314,10 +328,10 @@ export default function ConvertRequisitionModal({
                                   !selected || inactiveSelected ? 'border-rose-300 bg-rose-50' : 'border-slate-300'
                                 }`}
                               >
-                                <option value="">Select supplier…</option>
+                                <option value="">{t('purchasing.convert.selectSupplier')}</option>
                                 {pickerSuppliers(suppliers, supplierMappings[item.id]).map((supplier) => (
                                   <option key={supplier.id} value={supplier.id}>
-                                    {supplier.name}{supplier.status && supplier.status !== 'active' ? ` (${supplier.status})` : ''}
+                                    {supplier.name}{supplier.status && supplier.status !== 'active' ? ` (${statusLabel(supplier.status)})` : ''}
                                   </option>
                                 ))}
                               </select>
@@ -331,7 +345,7 @@ export default function ConvertRequisitionModal({
 
                 <div className="space-y-2">
                   <div className="font-semibold text-slate-700 uppercase tracking-wider text-[11px]">
-                    Supplier split preview
+                    {t('purchasing.convert.splitPreview')}
                   </div>
                   {preview.groups.map((group) => (
                     <div key={group.supplier_id} className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
@@ -340,7 +354,7 @@ export default function ConvertRequisitionModal({
                         <span className="text-emerald-700">{formatMoney(group.total)}</span>
                       </div>
                       <div className="text-[11px] text-slate-500 mt-0.5">
-                        {group.items.length} line{group.items.length === 1 ? '' : 's'} → one issued PO
+                        {t('purchasing.convert.toOnePo', { count: lineCount(group.items.length) })}
                       </div>
                     </div>
                   ))}
@@ -348,32 +362,35 @@ export default function ConvertRequisitionModal({
                     <div className="flex items-start space-x-2 text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2.5">
                       <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                       <p>
-                        {preview.unresolved.length} line(s) have no resolvable supplier
-                        ({preview.unresolved.map((item) => item.item_description).join(', ')}).
-                        Convert will fail closed — no vendor is invented.
+                        {t(preview.unresolved.length === 1 ? 'purchasing.convert.unresolvedOne' : 'purchasing.convert.unresolvedMany', {
+                          n: preview.unresolved.length,
+                          labels: preview.unresolved.map((item) => item.item_description).join(', ')
+                        })}
                       </p>
                     </div>
                   )}
                   {preview.groups.length > 1 && preview.unresolved.length === 0 && (
                     <p className="text-indigo-700 font-medium">
-                      This requisition will issue {preview.groups.length} purchase orders in one transaction.
+                      {t('purchasing.convert.willIssueMany', { n: preview.groups.length })}
                     </p>
                   )}
                   {preview.groups.length === 1 && preview.unresolved.length === 0 && remapCount === 0 && (
                     <p className="text-slate-500">
-                      Single-supplier convert: defaults are already assigned. Confirm to issue one PO.
+                      {t('purchasing.convert.singleConfirm')}
                     </p>
                   )}
                   {remapCount > 0 && preview.unresolved.length === 0 && (
                     <p className="text-indigo-700 font-medium">
-                      {remapCount} line{remapCount === 1 ? '' : 's'} remapped from the default supplier.
+                      {remapCount === 1
+                        ? t('purchasing.convert.remappedOne', { n: remapCount })
+                        : t('purchasing.convert.remappedMany', { n: remapCount })}
                     </p>
                   )}
                 </div>
 
                 <div className="space-y-3 pt-3 border-t border-slate-200">
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Delivery / Ship-To Address</label>
+                    <label className="block text-slate-600 font-medium mb-1">{t('purchasing.convert.shipTo')}</label>
                     <input
                       type="text"
                       value={shippingAddress}
@@ -383,7 +400,7 @@ export default function ConvertRequisitionModal({
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1">Payment terms</label>
+                      <label className="block text-slate-600 font-medium mb-1">{t('purchasing.convert.paymentTerms')}</label>
                       <input
                         type="text"
                         value={paymentTerms}
@@ -392,11 +409,11 @@ export default function ConvertRequisitionModal({
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1">PO notes / instructions</label>
+                      <label className="block text-slate-600 font-medium mb-1">{t('purchasing.convert.notes')}</label>
                       <input
                         type="text"
                         value={poNotes}
-                        placeholder="Optional instructions for the vendor…"
+                        placeholder={t('purchasing.convert.notesPlaceholder')}
                         onChange={(e) => setPoNotes(e.target.value)}
                         className="w-full p-2 border border-slate-300 rounded-lg"
                       />
@@ -421,7 +438,7 @@ export default function ConvertRequisitionModal({
             onClick={onClose}
             className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
           >
-            {issued.length > 0 ? 'Done' : 'Cancel'}
+            {issued.length > 0 ? t('purchasing.convert.done') : t('common.cancel')}
           </button>
           {issued.length === 0 && (
             <button
@@ -431,10 +448,10 @@ export default function ConvertRequisitionModal({
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
             >
               {submitting
-                ? 'Issuing…'
+                ? t('purchasing.convert.issuing')
                 : preview.groups.length > 1
-                  ? `Generate & Issue ${preview.groups.length} POs`
-                  : 'Generate & Issue PO'}
+                  ? t('purchasing.convert.issueMany', { n: preview.groups.length })
+                  : t('purchasing.convert.issueOne')}
             </button>
           )}
         </div>

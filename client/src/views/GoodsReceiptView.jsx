@@ -12,6 +12,7 @@ import {
   FileCheck
 } from 'lucide-react';
 import { api } from '../api';
+import { t, presentError, statusLabel } from '../i18n';
 import { formatMoney } from '../money';
 import { isServiceLine } from '../lineType';
 
@@ -119,7 +120,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
       }));
 
     if (itemsToSubmit.length === 0) {
-      alert('Please enter at least one received quantity greater than 0.');
+      alert(t('receiving.grn.needQuantity'));
       return;
     }
 
@@ -128,7 +129,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
         && Number(item.received_already) + Number(item.quantity_received) > Number(item.ordered_qty)
     );
     if (hasOverReceipt && !allowOverReceipt) {
-      alert('Received quantity exceeds ordered quantity. Check "Allow over-receipt" to record this as an audited exception.');
+      alert(t('receiving.grn.overReceipt'));
       return;
     }
 
@@ -155,7 +156,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
       await loadData();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.grn'));
     }
   };
 
@@ -173,9 +174,9 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Goods Receipts (GRN)</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('receiving.grn.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Log physical deliveries of company-owned goods. Service lines use Service Entry Sheets. Supplier-owned stock is recorded on Consignment, not here.
+            {t('receiving.grn.intro')}
           </p>
         </div>
 
@@ -185,7 +186,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-2"
           >
             <Plus className="w-4 h-4" />
-            <span>Receive Against PO</span>
+            <span>{t('receiving.grn.receiveAgainstPo')}</span>
           </button>
         </div>
       </div>
@@ -196,24 +197,24 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">Receipt (GRN #)</th>
-                <th className="py-3 px-4">PO Reference</th>
-                <th className="py-3 px-4">Supplier</th>
-                <th className="py-3 px-4">Receipt Date</th>
-                <th className="py-3 px-4">Received By</th>
-                <th className="py-3 px-4">Carrier / Slip #</th>
-                <th className="py-3 px-4">Units Received</th>
-                <th className="py-3 px-4 text-right">Action</th>
+                <th className="py-3 px-4">{t('receiving.grn.colReceipt')}</th>
+                <th className="py-3 px-4">{t('receiving.grn.colPo')}</th>
+                <th className="py-3 px-4">{t('common.supplier')}</th>
+                <th className="py-3 px-4">{t('receiving.grn.colDate')}</th>
+                <th className="py-3 px-4">{t('receiving.grn.colReceivedBy')}</th>
+                <th className="py-3 px-4">{t('receiving.grn.colCarrier')}</th>
+                <th className="py-3 px-4">{t('receiving.grn.colUnits')}</th>
+                <th className="py-3 px-4 text-right">{t('common.action')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading goods receipts...</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('receiving.grn.loading')}</td>
                 </tr>
               ) : receipts.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">No goods receipts recorded yet.</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('receiving.grn.empty')}</td>
                 </tr>
               ) : (
                 receipts.map((gr) => (
@@ -234,10 +235,10 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                       {gr.received_by_name}
                     </td>
                     <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">
-                      {gr.carrier_tracking || gr.delivery_note_number || 'Internal'}
+                      {gr.carrier_tracking || gr.delivery_note_number || t('receiving.grn.internal')}
                     </td>
                     <td className="py-3 px-4 font-bold text-emerald-700">
-                      {gr.total_qty_received} units
+                      {t('receiving.grn.units', { qty: gr.total_qty_received })}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
@@ -245,7 +246,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                         className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        <span>Inspect</span>
+                        <span>{t('receiving.grn.inspect')}</span>
                       </button>
                     </td>
                   </tr>
@@ -262,8 +263,8 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Receive Goods</h3>
-                <p className="text-xs text-slate-500">Document physical delivery against goods lines on an active Purchase Order</p>
+                <h3 className="text-base font-bold text-slate-900">{t('receiving.grn.modalTitle')}</h3>
+                <p className="text-xs text-slate-500">{t('receiving.grn.modalSubtitle')}</p>
               </div>
               <button onClick={() => setShowReceiveModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -273,16 +274,16 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
             <div className="py-4 space-y-4 text-xs overflow-y-auto flex-1">
               {/* PO Selection */}
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Select Active Purchase Order</label>
+                <label className="block text-slate-700 font-semibold mb-1">{t('receiving.grn.selectPo')}</label>
                 <select
                   value={selectedPOId}
                   onChange={(e) => handleSelectPO(e.target.value)}
                   className="w-full p-2.5 border border-slate-300 rounded-lg text-xs font-medium"
                 >
-                  <option value="">-- Choose a Purchase Order --</option>
+                  <option value="">{t('receiving.choosePo')}</option>
                   {activePOs.map(po => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{statusLabel(po.status)}]
                     </option>
                   ))}
                 </select>
@@ -290,7 +291,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
 
               {targetPOData && receivingItems.length === 0 && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
-                  This PO has no goods lines. Use Service Entry Sheets to accept services.
+                  {t('receiving.grn.noGoodsLines')}
                 </div>
               )}
 
@@ -299,7 +300,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                   {/* Delivery Slip & Carrier Info */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Receipt Date</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('receiving.grn.colDate')}</label>
                       <input
                         type="date"
                         value={receiptDate}
@@ -308,20 +309,20 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Carrier Tracking #</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('receiving.grn.carrier')}</label>
                       <input
                         type="text"
-                        placeholder="e.g. FEDEX-889123"
+                        placeholder={t('receiving.grn.carrierPlaceholder')}
                         value={carrierTracking}
                         onChange={(e) => setCarrierTracking(e.target.value)}
                         className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Supplier Delivery Slip #</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('receiving.grn.slip')}</label>
                       <input
                         type="text"
-                        placeholder="e.g. DN-9021"
+                        placeholder={t('receiving.grn.slipPlaceholder')}
                         value={deliveryNote}
                         onChange={(e) => setDeliveryNote(e.target.value)}
                         className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono"
@@ -332,17 +333,17 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                   {/* Line Items to Receive */}
                   <div>
                     <label className="block text-slate-700 font-bold uppercase tracking-wider text-[11px] mb-2">
-                      Inspect & Confirm Line Quantities
+                      {t('receiving.grn.inspectLines')}
                     </label>
                     <div className="border border-slate-200 rounded-xl overflow-hidden">
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-semibold">
                           <tr>
-                            <th className="py-2.5 px-3">Item Description</th>
-                            <th className="py-2.5 px-3 text-center">Ordered</th>
-                            <th className="py-2.5 px-3 text-center">Already Recv</th>
-                            <th className="py-2.5 px-3 text-center w-24">Receiving Now</th>
-                            <th className="py-2.5 px-3">Condition</th>
+                            <th className="py-2.5 px-3">{t('receiving.grn.itemDescription')}</th>
+                            <th className="py-2.5 px-3 text-center">{t('receiving.ordered')}</th>
+                            <th className="py-2.5 px-3 text-center">{t('receiving.grn.alreadyReceived')}</th>
+                            <th className="py-2.5 px-3 text-center w-24">{t('receiving.grn.receivingNow')}</th>
+                            <th className="py-2.5 px-3">{t('receiving.grn.condition')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -370,10 +371,10 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                                   onChange={(e) => handleUpdateItemCondition(idx, e.target.value)}
                                   className="p-1 border border-slate-300 rounded text-xs"
                                 >
-                                  <option value="good">Good Condition</option>
-                                  <option value="damaged">Damaged Box/Item</option>
-                                  <option value="partial">Partial Delivery</option>
-                                  <option value="incorrect_item">Incorrect Spec</option>
+                                  <option value="good">{statusLabel('good')}</option>
+                                  <option value="damaged">{statusLabel('damaged')}</option>
+                                  <option value="partial">{statusLabel('partial')}</option>
+                                  <option value="incorrect_item">{statusLabel('incorrect_item')}</option>
                                 </select>
                               </td>
                             </tr>
@@ -385,10 +386,10 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                   </div>
 
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Receiving Notes / Inspection Comments</label>
+                    <label className="block text-slate-600 font-medium mb-1">{t('receiving.grn.notes')}</label>
                     <textarea
                       rows="2"
-                      placeholder="e.g. Unboxed in receiving bay 2, tested power, verified serial numbers..."
+                      placeholder={t('receiving.grn.notesPlaceholder')}
                       value={receivingNotes}
                       onChange={(e) => setReceivingNotes(e.target.value)}
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -406,8 +407,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                         onChange={(e) => setAllowOverReceipt(e.target.checked)}
                       />
                       <span>
-                        <strong>Allow over-receipt (exception).</strong> Cumulative received exceeds ordered quantity.
-                        This is audited and should only be used for a deliberate overage.
+                        <strong>{t('receiving.grn.allowOver')}</strong> {t('receiving.grn.allowOverDetail')}
                       </span>
                     </label>
                   )}
@@ -420,7 +420,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                 onClick={() => setShowReceiveModal(false)}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 disabled={!targetPOData || receivingItems.length === 0}
@@ -428,7 +428,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
               >
                 <PackageCheck className="w-4 h-4" />
-                <span>Record Goods Receipt (GRN)</span>
+                <span>{t('receiving.grn.record')}</span>
               </button>
             </div>
           </div>
@@ -443,10 +443,10 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
               <div>
                 <div className="flex items-center space-x-2">
                   <h3 className="text-base font-mono font-bold text-slate-900">{selectedReceipt.grn_number}</h3>
-                  <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded">Verified Inward</span>
+                  <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded">{t('receiving.grn.verified')}</span>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Against PO {selectedReceipt.po_number} from {selectedReceipt.supplier_name}
+                  {t('receiving.againstPo', { po: selectedReceipt.po_number, supplier: selectedReceipt.supplier_name })}
                 </p>
               </div>
               <button onClick={() => setSelectedReceipt(null)} className="text-slate-400 hover:text-slate-700">
@@ -457,35 +457,35 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
             <div className="py-4 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                 <div>
-                  <span className="text-slate-500">Date Received:</span>
+                  <span className="text-slate-500">{t('receiving.grn.dateReceived')}</span>
                   <div className="font-semibold text-slate-900">{selectedReceipt.receipt_date}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Received By:</span>
+                  <span className="text-slate-500">{t('receiving.grn.receivedBy')}</span>
                   <div className="font-semibold text-slate-900">{selectedReceipt.received_by_name}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Carrier Tracking:</span>
-                  <div className="font-mono text-slate-900">{selectedReceipt.carrier_tracking || 'N/A'}</div>
+                  <span className="text-slate-500">{t('receiving.grn.carrierTracking')}</span>
+                  <div className="font-mono text-slate-900">{selectedReceipt.carrier_tracking || t('receiving.na')}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Delivery Slip #:</span>
-                  <div className="font-mono text-slate-900">{selectedReceipt.delivery_note_number || 'N/A'}</div>
+                  <span className="text-slate-500">{t('receiving.grn.slipNumber')}</span>
+                  <div className="font-mono text-slate-900">{selectedReceipt.delivery_note_number || t('receiving.na')}</div>
                 </div>
               </div>
 
               <div>
                 <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block mb-2">
-                  Received Items Detail
+                  {t('receiving.grn.itemsDetail')}
                 </span>
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-semibold">
                       <tr>
-                        <th className="py-2.5 px-3">Description</th>
-                        <th className="py-2.5 px-3 text-center">Qty Received</th>
-                        <th className="py-2.5 px-3">Condition</th>
-                        <th className="py-2.5 px-3">Comments</th>
+                        <th className="py-2.5 px-3">{t('common.description')}</th>
+                        <th className="py-2.5 px-3 text-center">{t('receiving.grn.qtyReceived')}</th>
+                        <th className="py-2.5 px-3">{t('receiving.grn.condition')}</th>
+                        <th className="py-2.5 px-3">{t('common.comments')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -495,7 +495,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                           <td className="py-2 px-3 text-center font-bold text-emerald-700">{item.quantity_received}</td>
                           <td className="py-2 px-3">
                             <span className="capitalize px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium">
-                              {item.condition}
+                              {statusLabel(item.condition)}
                             </span>
                           </td>
                           <td className="py-2 px-3 text-slate-500">{item.comments || '-'}</td>
@@ -508,7 +508,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
 
               {selectedReceipt.notes && (
                 <div className="p-3 bg-slate-50 rounded-lg text-slate-700 text-xs border border-slate-200">
-                  <strong className="block text-[11px] text-slate-500 uppercase">Receiving Inspection Log:</strong>
+                  <strong className="block text-[11px] text-slate-500 uppercase">{t('receiving.grn.inspectionLog')}</strong>
                   {selectedReceipt.notes}
                 </div>
               )}
@@ -519,7 +519,7 @@ export default function GoodsReceiptView({ currentUser, onDataChanged, focusId }
                 onClick={() => setSelectedReceipt(null)}
                 className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
               >
-                Close
+                {t('common.close')}
               </button>
             </div>
           </div>

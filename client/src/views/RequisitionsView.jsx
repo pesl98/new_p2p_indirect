@@ -18,8 +18,9 @@ import {
   FileCheck
 } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, toCents } from '../money';
-import { formatLineQuantity, lineTypeFromCategory, lineTypeWithBasisLabel, serviceRateLabel } from '../lineType';
+import { formatMoney, moneyInputProps, toCents } from '../money';
+import { t, presentError, statusLabel, categoryLabel, priorityLabel } from '../i18n';
+import { formatLineQuantity, lineTypeFromCategory, lineTypeLabel, lineTypeWithBasisLabel, serviceBasisLabel, serviceRateLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 
 export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
@@ -190,7 +191,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
 
   const handleSubmitRequisition = async (submitImmediately = false) => {
     if (cartItems.length === 0) {
-      alert('Please add at least one line item.');
+      alert(t('purchasing.pr.needLine'));
       return;
     }
     try {
@@ -216,7 +217,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
       setPreviewMatch(null);
       loadData();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.requisitionCreate'));
     }
   };
 
@@ -234,7 +235,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
         handleOpenDetail(prId);
       }
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.requisitionSubmit'));
     }
   };
 
@@ -248,24 +249,24 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
       handleOpenDetail(pr.id);
       loadData();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.contractLink'));
     }
   };
 
   const getStatusBadge = (status) => {
     switch (status) {
       case 'draft':
-        return <span className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-full font-medium">Draft</span>;
+        return <span className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('draft')}</span>;
       case 'pending_approval':
-        return <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-medium flex items-center space-x-1"><Clock className="w-3 h-3 mr-1 inline" />Pending Approval</span>;
+        return <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-medium flex items-center space-x-1"><Clock className="w-3 h-3 mr-1 inline" />{statusLabel('pending_approval')}</span>;
       case 'approved':
-        return <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-medium flex items-center space-x-1"><CheckCircle2 className="w-3 h-3 mr-1 inline" />Approved</span>;
+        return <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-medium flex items-center space-x-1"><CheckCircle2 className="w-3 h-3 mr-1 inline" />{statusLabel('approved')}</span>;
       case 'converted_to_po':
-        return <span className="bg-indigo-100 text-indigo-800 text-xs px-2.5 py-1 rounded-full font-medium">Converted to PO</span>;
+        return <span className="bg-indigo-100 text-indigo-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('converted_to_po')}</span>;
       case 'rejected':
-        return <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-medium">Rejected</span>;
+        return <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('rejected')}</span>;
       default:
-        return <span className="bg-slate-100 text-slate-800 text-xs px-2 py-0.5 rounded">{status}</span>;
+        return <span className="bg-slate-100 text-slate-800 text-xs px-2 py-0.5 rounded">{statusLabel(status)}</span>;
     }
   };
 
@@ -273,10 +274,10 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
 
   const contractUseLabel = (status) => {
     switch (status) {
-      case 'proposed': return 'Proposed';
-      case 'allowed': return 'Allowed';
-      case 'refused': return 'Refused';
-      case 'skipped': return 'Ad-hoc (opted out)';
+      case 'proposed': return statusLabel('proposed');
+      case 'allowed': return statusLabel('allowed');
+      case 'refused': return statusLabel('refused');
+      case 'skipped': return t('purchasing.pr.contractOptedOut');
       default: return null;
     }
   };
@@ -304,9 +305,9 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
       {/* Header with Title and Create Button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Purchase Requisitions (PR)</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('purchasing.pr.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Create, track, and route non-production purchasing requests through multi-tier authorization.
+            {t('purchasing.pr.subtitle')}
           </p>
         </div>
         <div className="flex items-center space-x-3">
@@ -315,7 +316,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-2"
           >
             <Plus className="w-4 h-4" />
-            <span>Create Requisition</span>
+            <span>{t('purchasing.pr.create')}</span>
           </button>
         </div>
       </div>
@@ -332,7 +333,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            {tab.replace(/_/g, ' ')}
+            {statusLabel(tab)}
           </button>
         ))}
       </div>
@@ -343,24 +344,24 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">PR #</th>
-                <th className="py-3 px-4">Requester</th>
-                <th className="py-3 px-4">Cost Center</th>
-                <th className="py-3 px-4">Total Amount</th>
-                <th className="py-3 px-4">Priority</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4">Date Needed</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">{t('purchasing.pr.number')}</th>
+                <th className="py-3 px-4">{t('role.requester')}</th>
+                <th className="py-3 px-4">{t('common.costCenter')}</th>
+                <th className="py-3 px-4">{t('purchasing.pr.totalAmount')}</th>
+                <th className="py-3 px-4">{t('purchasing.pr.priority')}</th>
+                <th className="py-3 px-4">{t('common.status')}</th>
+                <th className="py-3 px-4">{t('purchasing.pr.dateNeeded')}</th>
+                <th className="py-3 px-4 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading requisitions...</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('purchasing.pr.loading')}</td>
                 </tr>
               ) : requisitions.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">No requisitions found.</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('purchasing.pr.empty')}</td>
                 </tr>
               ) : (
                 requisitions.map((pr) => (
@@ -386,7 +387,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           ? 'bg-rose-100 text-rose-700'
                           : 'bg-slate-100 text-slate-600'
                       }`}>
-                        {pr.priority}
+                        {priorityLabel(pr.priority)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -399,7 +400,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       <button
                         onClick={() => handleOpenDetail(pr.id)}
                         className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded"
-                        title="View PR Details"
+                        title={t('purchasing.pr.viewDetails')}
                       >
                         <Eye className="w-4 h-4 inline" />
                       </button>
@@ -407,18 +408,18 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         <button
                           onClick={() => handleSubmitDraft(pr.id)}
                           className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-semibold"
-                          title="Submit for Approval"
+                          title={t('purchasing.pr.submitApproval')}
                         >
-                          Submit
+                          {t('common.submit')}
                         </button>
                       )}
                       {pr.status === 'approved' && (
                         <button
                           onClick={() => openConvert(pr.id)}
                           className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold"
-                          title="Convert to PO with per-line supplier assignment"
+                          title={t('purchasing.pr.convertTitle')}
                         >
-                          Convert to PO
+                          {t('purchasing.pr.convert')}
                         </button>
                       )}
                     </td>
@@ -437,8 +438,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
             {/* Modal Header */}
             <div className="p-5 border-b border-slate-200 flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-bold text-slate-900">New Purchase Requisition</h3>
-                <p className="text-xs text-slate-500">Indirect procurement for non-production goods and services</p>
+                <h3 className="text-lg font-bold text-slate-900">{t('purchasing.pr.newTitle')}</h3>
+                <p className="text-xs text-slate-500">{t('purchasing.pr.newSubtitle')}</p>
               </div>
               <button 
                 onClick={() => setShowNewModal(false)}
@@ -453,7 +454,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               {/* Left Column: Catalog Browser & Ad-hoc Creator */}
               <div className="p-5 border-r border-slate-200 overflow-y-auto space-y-4">
                 <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  Browse Indirect Catalog
+                  {t('purchasing.pr.browseCatalog')}
                 </div>
 
                 <div className="flex space-x-2">
@@ -461,7 +462,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
                     <input
                       type="text"
-                      placeholder="Search items, software, services..."
+                      placeholder={t('purchasing.pr.searchPlaceholder')}
                       value={catalogSearch}
                       onChange={(e) => setCatalogSearch(e.target.value)}
                       className="w-full text-xs pl-8 pr-3 py-2 border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500"
@@ -472,12 +473,12 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     onChange={(e) => setCatalogCategory(e.target.value)}
                     className="text-xs border border-slate-200 rounded-lg px-2 py-2"
                   >
-                    <option value="All">All Categories</option>
-                    <option value="IT Hardware">IT Hardware</option>
-                    <option value="Software & Cloud">Software & Cloud</option>
-                    <option value="Office Supplies">Office Supplies</option>
-                    <option value="Facilities & MRO">Facilities & MRO</option>
-                    <option value="Consulting & Professional Services">Consulting</option>
+                    <option value="All">{categoryLabel('All')}</option>
+                    <option value="IT Hardware">{categoryLabel('IT Hardware')}</option>
+                    <option value="Software & Cloud">{categoryLabel('Software & Cloud')}</option>
+                    <option value="Office Supplies">{categoryLabel('Office Supplies')}</option>
+                    <option value="Facilities & MRO">{categoryLabel('Facilities & MRO')}</option>
+                    <option value="Consulting & Professional Services">{categoryLabel('Consulting & Professional Services')}</option>
                   </select>
                 </div>
 
@@ -504,7 +505,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           onClick={() => handleAddToCart(item)}
                           className="px-2.5 py-1 bg-slate-900 hover:bg-emerald-600 text-white text-[11px] font-semibold rounded-md shadow-sm transition-colors"
                         >
-                          + Add
+                          {t('purchasing.pr.add')}
                         </button>
                       </div>
                     ))}
@@ -513,12 +514,12 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 {/* Ad-Hoc / Custom Service or Non-Catalog Item Section */}
                 <div className="pt-4 border-t border-slate-200">
                   <div className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">
-                    Or Enter Non-Catalog Item / Service
+                    {t('purchasing.pr.nonCatalog')}
                   </div>
                   <div className="space-y-2 text-xs">
                     <input
                       type="text"
-                      placeholder="Item or service description (e.g. Q4 Security Audit)"
+                      placeholder={t('purchasing.pr.descPlaceholder')}
                       value={customDesc}
                       onChange={(e) => setCustomDesc(e.target.value)}
                       className="w-full p-2 border border-slate-200 rounded-lg text-xs"
@@ -529,11 +530,11 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         onChange={(e) => handleCustomCategory(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
                       >
-                        <option value="IT Hardware">IT Hardware</option>
-                        <option value="Software & Cloud">Software & Cloud</option>
-                        <option value="Office Supplies">Office Supplies</option>
-                        <option value="Facilities & MRO">Facilities & MRO</option>
-                        <option value="Consulting & Professional Services">Consulting/Services</option>
+                        <option value="IT Hardware">{categoryLabel('IT Hardware')}</option>
+                        <option value="Software & Cloud">{categoryLabel('Software & Cloud')}</option>
+                        <option value="Office Supplies">{categoryLabel('Office Supplies')}</option>
+                        <option value="Facilities & MRO">{categoryLabel('Facilities & MRO')}</option>
+                        <option value="Consulting & Professional Services">{categoryLabel('Consulting & Professional Services')}</option>
                       </select>
                       <select
                         value={customSupplierId}
@@ -551,8 +552,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         onChange={(e) => handleCustomLineType(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
                       >
-                        <option value="goods">Goods</option>
-                        <option value="service">Service</option>
+                        <option value="goods">{lineTypeLabel('goods')}</option>
+                        <option value="service">{lineTypeLabel('service')}</option>
                       </select>
                       {customLineType === 'service' ? (
                         <select
@@ -560,20 +561,20 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           onChange={(e) => setCustomBasis(e.target.value)}
                           className="p-2 border border-slate-200 rounded-lg text-xs"
                         >
-                          <option value="lump_sum">Lump sum</option>
-                          <option value="hours">Hours</option>
-                          <option value="days">Days</option>
+                          <option value="lump_sum">{serviceBasisLabel('lump_sum')}</option>
+                          <option value="hours">{serviceBasisLabel('hours')}</option>
+                          <option value="days">{serviceBasisLabel('days')}</option>
                         </select>
                       ) : (
-                        <div className="p-2 text-[11px] text-slate-500 flex items-center">Received on a GRN</div>
+                        <div className="p-2 text-[11px] text-slate-500 flex items-center">{t('line.receivedOnGrn')}</div>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <input
-                        type="number"
+                        {...moneyInputProps}
                         placeholder={customLineType === 'service'
-                          ? (customBasis === 'hours' ? 'Rate per hour' : customBasis === 'days' ? 'Rate per day' : 'Lump sum')
-                          : 'Unit price'}
+                          ? `${customBasis === 'hours' ? t('purchasing.pr.rateHour') : customBasis === 'days' ? t('purchasing.pr.rateDay') : t('line.lumpSum')} (${t('money.example')})`
+                          : `${t('common.unitPrice')} (${t('money.example')})`}
                         value={customPrice}
                         onChange={(e) => setCustomPrice(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
@@ -581,20 +582,21 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       <input
                         type="number"
                         placeholder={customLineType === 'service'
-                          ? (customBasis === 'hours' ? 'Hours' : customBasis === 'days' ? 'Days' : 'Occurrences')
-                          : 'Quantity'}
+                          ? (customBasis === 'hours' ? t('line.hours') : customBasis === 'days' ? t('line.days') : t('purchasing.pr.occurrences'))
+                          : t('common.quantity')}
                         value={customQty}
                         min="1"
                         onChange={(e) => setCustomQty(e.target.value)}
                         className="p-2 border border-slate-200 rounded-lg text-xs"
                       />
                     </div>
+                    <p className="text-[10px] text-slate-400">{t('money.hint')}</p>
                     <button
                       type="button"
                       onClick={handleAddCustomItem}
                       className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-lg text-xs transition-colors"
                     >
-                      + Add Custom Item
+                      {t('purchasing.pr.addCustom')}
                     </button>
                   </div>
                 </div>
@@ -604,12 +606,12 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               <div className="p-5 overflow-y-auto flex flex-col justify-between space-y-4">
                 <div className="space-y-3">
                   <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                    Requisition Parameters
+                    {t('purchasing.pr.parameters')}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div>
-                      <label className="block text-slate-500 mb-1">Cost Center / Dept</label>
+                      <label className="block text-slate-500 mb-1">{t('purchasing.pr.costCenterDept')}</label>
                       <select
                         value={departmentId}
                         onChange={(e) => setDepartmentId(Number(e.target.value))}
@@ -622,7 +624,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     </div>
 
                     <div>
-                      <label className="block text-slate-500 mb-1">Date Needed</label>
+                      <label className="block text-slate-500 mb-1">{t('purchasing.pr.dateNeeded')}</label>
                       <input
                         type="date"
                         value={neededByDate}
@@ -633,10 +635,10 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                   </div>
 
                   <div>
-                    <label className="block text-slate-500 text-xs mb-1">Business Justification</label>
+                    <label className="block text-slate-500 text-xs mb-1">{t('purchasing.pr.justification')}</label>
                     <textarea
                       rows="2"
-                      placeholder="Explain business need (e.g. Necessary for new team member onboarding)..."
+                      placeholder={t('purchasing.pr.justificationPlaceholder')}
                       value={justification}
                       onChange={(e) => setJustification(e.target.value)}
                       className="w-full p-2 text-xs border border-slate-200 rounded-lg"
@@ -644,14 +646,14 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                   </div>
 
                   <div>
-                    <label className="block text-slate-500 text-xs mb-1">Linked contract</label>
+                    <label className="block text-slate-500 text-xs mb-1">{t('purchasing.pr.linkedContract')}</label>
                     <select
                       value={contractChoice}
                       onChange={(e) => setContractChoice(e.target.value)}
                       className="w-full p-2 border border-slate-200 rounded-lg font-medium text-xs"
                     >
-                      <option value="auto">Auto-match when a contract is available</option>
-                      <option value="none">None — ad-hoc (no contract)</option>
+                      <option value="auto">{t('purchasing.pr.contractAuto')}</option>
+                      <option value="none">{t('purchasing.pr.contractNone')}</option>
                       {assignableContracts.map((c) => (
                         <option key={c.id} value={String(c.id)}>
                           {c.contract_number} · {c.title} ({c.supplier_name})
@@ -662,32 +664,32 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                       <div className="mt-2 p-2.5 rounded-lg border border-sky-200 bg-sky-50 text-[11px] text-sky-900">
                         <div className="font-bold flex items-center gap-1">
                           <FileCheck className="w-3.5 h-3.5" />
-                          Will propose {previewMatch.contract_number}
+                          {t('purchasing.pr.willPropose', { number: previewMatch.contract_number })}
                         </div>
                         <div className="mt-0.5">
-                          {previewMatch.supplier_name} · {previewMatch.title} · ACV {formatMoney(previewMatch.annual_value_cents)}
-                          {previewMatch.end_date ? ` · ends ${previewMatch.end_date}` : ''}
+                          {previewMatch.supplier_name} · {previewMatch.title} · {t('purchasing.pr.acv')} {formatMoney(previewMatch.annual_value_cents)}
+                          {previewMatch.end_date ? ` · ${t('purchasing.pr.ends', { date: previewMatch.end_date })}` : ''}
                         </div>
-                        <div className="text-sky-700 mt-0.5">Approver will allow or refuse use of this contract.</div>
+                        <div className="text-sky-700 mt-0.5">{t('purchasing.pr.approverContract')}</div>
                       </div>
                     )}
                     {contractChoice === 'auto' && cartItems.length > 0 && !previewMatch && (
-                      <p className="text-[11px] text-slate-500 mt-1">No confident contract match yet — this PR will stay ad-hoc.</p>
+                      <p className="text-[11px] text-slate-500 mt-1">{t('purchasing.pr.noMatch')}</p>
                     )}
                   </div>
 
                   {/* Selected Cart Items */}
                   <div className="pt-2">
                     <div className="flex justify-between items-center text-xs font-bold text-slate-800 mb-2">
-                      <span>Line Items ({cartItems.length})</span>
+                      <span>{t('purchasing.pr.lineItems', { n: cartItems.length })}</span>
                       <span className="text-emerald-700 font-extrabold text-sm">
-                        Total: {formatMoney(calculateCartTotalCents())}
+                        {t('common.total')}: {formatMoney(calculateCartTotalCents())}
                       </span>
                     </div>
 
                     {cartItems.length === 0 ? (
                       <div className="border border-dashed border-slate-200 rounded-xl p-6 text-center text-slate-400 text-xs">
-                        No items added yet. Select items from the catalog on the left.
+                        {t('purchasing.pr.cartEmpty')}
                       </div>
                     ) : (
                       <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -727,14 +729,14 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     onClick={() => setShowNewModal(false)}
                     className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-50"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSubmitRequisition(false)}
                     className="px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-semibold hover:bg-slate-700"
                   >
-                    Save as Draft
+                    {t('purchasing.pr.saveDraft')}
                   </button>
                   <button
                     type="button"
@@ -742,7 +744,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                     className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-500 flex items-center space-x-1.5 shadow-sm"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>Submit for Approval</span>
+                    <span>{t('purchasing.pr.submitApproval')}</span>
                   </button>
                 </div>
               </div>
@@ -763,7 +765,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                   <ContractBadge pr={selectedPR} />
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Requested by {selectedPR.requester_name} ({selectedPR.department_name})
+                  {t('purchasing.pr.requestedBy', { name: selectedPR.requester_name, department: selectedPR.department_name })}
                 </p>
               </div>
               <button 
@@ -778,13 +780,13 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               {/* Business Justification */}
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
                 <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">
-                  Business Justification
+                  {t('purchasing.pr.justification')}
                 </div>
                 <p className="text-slate-800 leading-relaxed">{selectedPR.justification}</p>
                 <div className="flex items-center space-x-4 mt-3 pt-3 border-t border-slate-200 text-slate-500">
-                  <span>Priority: <strong className="text-slate-800">{selectedPR.priority}</strong></span>
-                  <span>Needed by: <strong className="text-slate-800">{selectedPR.needed_by_date}</strong></span>
-                  <span>Total Cost: <strong className="text-emerald-700 text-sm font-bold">{formatMoney(selectedPR.total_amount)}</strong></span>
+                  <span>{t('purchasing.pr.priority')}: <strong className="text-slate-800">{priorityLabel(selectedPR.priority)}</strong></span>
+                  <span>{t('purchasing.pr.neededBy')}: <strong className="text-slate-800">{selectedPR.needed_by_date}</strong></span>
+                  <span>{t('purchasing.pr.totalCost')}: <strong className="text-emerald-700 text-sm font-bold">{formatMoney(selectedPR.total_amount)}</strong></span>
                 </div>
               </div>
 
@@ -792,29 +794,29 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                 <div className="rounded-xl p-4 border border-sky-200 bg-sky-50/60">
                   <div className="font-bold text-sky-900 uppercase tracking-wider text-[11px] mb-1 flex items-center gap-1">
                     <FileCheck className="w-3.5 h-3.5" />
-                    Linked contract · {contractUseLabel(selectedPR.contract_use_status)}
+                    {t('purchasing.pr.linkedContract')} · {contractUseLabel(selectedPR.contract_use_status)}
                   </div>
                   <div className="font-mono font-bold text-slate-900">{selectedPR.source_contract.contract_number}</div>
                   <p className="text-slate-800 mt-0.5">{selectedPR.source_contract.title}</p>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-slate-600">
-                    <span>Supplier: <strong className="text-slate-900">{selectedPR.source_contract.supplier_name}</strong></span>
-                    <span>ACV: <strong className="text-slate-900">{formatMoney(selectedPR.source_contract.annual_value_cents)}</strong></span>
+                    <span>{t('common.supplier')}: <strong className="text-slate-900">{selectedPR.source_contract.supplier_name}</strong></span>
+                    <span>{t('purchasing.pr.acv')}: <strong className="text-slate-900">{formatMoney(selectedPR.source_contract.annual_value_cents)}</strong></span>
                     <span>{selectedPR.source_contract.start_date} → {selectedPR.source_contract.end_date}</span>
                   </div>
                   {selectedPR.contract_use_status === 'proposed' && (
                     <p className="text-[11px] text-sky-800 mt-2">
-                      Approver must <strong>allow</strong> or <strong>refuse</strong> contract use. Refusing keeps this PR as ad-hoc.
+                      {t('purchasing.pr.contractDecision')}
                     </p>
                   )}
                   {selectedPR.status === 'draft' && (
                     <div className="mt-3">
-                      <label className="block text-slate-500 text-[11px] mb-1">Override before submit</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('purchasing.pr.overrideBeforeSubmit')}</label>
                       <select
                         value={selectedPR.source_contract_id ? String(selectedPR.source_contract_id) : 'none'}
                         onChange={(e) => handleDraftContractChange(selectedPR, e.target.value)}
                         className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white"
                       >
-                        <option value="none">None — ad-hoc</option>
+                        <option value="none">{t('purchasing.pr.contractNoneShort')}</option>
                         {assignableContracts.map((c) => (
                           <option key={c.id} value={String(c.id)}>
                             {c.contract_number} · {c.title}
@@ -828,18 +830,18 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
 
               {selectedPR.status === 'draft' && (!selectedPR.source_contract || isAdHocContractStatus(selectedPR.contract_use_status)) && (
                 <div className="rounded-xl p-4 border border-slate-200 bg-slate-50">
-                  <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">Linked contract</div>
+                  <div className="font-bold text-slate-700 uppercase tracking-wider text-[11px] mb-1">{t('purchasing.pr.linkedContract')}</div>
                   <p className="text-slate-500 mb-2">
                     {selectedPR.contract_use_status === 'skipped'
-                      ? 'You opted out of auto-match. Submit will not re-propose a contract unless you pick one here.'
-                      : 'No contract assigned. Optionally pick one before submit.'}
+                      ? t('purchasing.pr.optedOut')
+                      : t('purchasing.pr.noContractYet')}
                   </p>
                   <select
                     value="none"
                     onChange={(e) => handleDraftContractChange(selectedPR, e.target.value)}
                     className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-white"
                   >
-                    <option value="none">None — ad-hoc</option>
+                    <option value="none">{t('purchasing.pr.contractNoneShort')}</option>
                     {assignableContracts.map((c) => (
                       <option key={c.id} value={String(c.id)}>
                         {c.contract_number} · {c.title}
@@ -852,18 +854,18 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               {/* Line items */}
               <div>
                 <div className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2">
-                  Requested Line Items ({selectedPR.items?.length || 0})
+                  {t('purchasing.pr.requestedLines', { n: selectedPR.items?.length || 0 })}
                 </div>
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-semibold">
                       <tr>
-                        <th className="py-2.5 px-3">Description</th>
-                        <th className="py-2.5 px-3">Category</th>
-                        <th className="py-2.5 px-3">Supplier</th>
-                        <th className="py-2.5 px-3">Qty</th>
-                        <th className="py-2.5 px-3">Unit Price</th>
-                        <th className="py-2.5 px-3 text-right">Total</th>
+                        <th className="py-2.5 px-3">{t('common.description')}</th>
+                        <th className="py-2.5 px-3">{t('common.category')}</th>
+                        <th className="py-2.5 px-3">{t('common.supplier')}</th>
+                        <th className="py-2.5 px-3">{t('common.qty')}</th>
+                        <th className="py-2.5 px-3">{t('common.unitPrice')}</th>
+                        <th className="py-2.5 px-3 text-right">{t('common.total')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -875,10 +877,10 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                               {lineTypeWithBasisLabel(item)}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-slate-500">{item.category}</td>
+                          <td className="py-2 px-3 text-slate-500">{categoryLabel(item.category)}</td>
                           <td className="py-2 px-3 text-slate-600">
                             {item.resolved_supplier_name || item.estimated_supplier_name || item.catalog_preferred_supplier_name || (
-                              <span className="text-rose-600">Unassigned</span>
+                              <span className="text-rose-600">{t('common.unassigned')}</span>
                             )}
                           </td>
                           <td className="py-2 px-3">{formatLineQuantity(item)}</td>
@@ -894,8 +896,8 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               {(selectedPR.purchase_orders?.length > 0 || selectedPR.purchase_order) && (
                 <div>
                   <div className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2">
-                    Linked Purchase Orders
-                    {selectedPR.purchase_orders?.length > 1 ? ` (${selectedPR.purchase_orders.length} split)` : ''}
+                    {t('purchasing.pr.linkedPos')}
+                    {selectedPR.purchase_orders?.length > 1 ? ` ${t('purchasing.pr.split', { n: selectedPR.purchase_orders.length })}` : ''}
                   </div>
                   <div className="space-y-2">
                     {(selectedPR.purchase_orders?.length ? selectedPR.purchase_orders : [selectedPR.purchase_order]).map((po) => (
@@ -903,7 +905,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         <div>
                           <div className="font-mono font-bold text-slate-900">{po.po_number}</div>
                           <div className="text-[11px] text-slate-500 mt-0.5">
-                            {po.supplier_name || 'Supplier'} · {formatMoney(po.total_amount)} · {po.status}
+                            {po.supplier_name || t('common.supplier')} · {formatMoney(po.total_amount)} · {statusLabel(po.status)}
                           </div>
                         </div>
                         <button
@@ -913,7 +915,7 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                           }}
                           className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold"
                         >
-                          View POs
+                          {t('purchasing.pr.viewPos')}
                         </button>
                       </div>
                     ))}
@@ -924,17 +926,17 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               {/* Multi-Tier Approval Chain */}
               <div>
                 <div className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2">
-                  Multi-Tier Approval Routing Trail
+                  {t('purchasing.pr.approvalTrail')}
                 </div>
                 {selectedPR.approvals?.length === 0 ? (
-                  <p className="text-slate-400">No approval steps generated yet (Requisition is still draft).</p>
+                  <p className="text-slate-400">{t('purchasing.pr.noApprovals')}</p>
                 ) : (
                   <div className="space-y-2">
                     {selectedPR.approvals?.map(app => (
                       <div key={app.id} className="p-3 border border-slate-200 rounded-xl flex items-center justify-between">
                         <div>
                           <div className="font-semibold text-slate-900">
-                            Tier {app.step_order}: {app.approver_name} ({app.approver_title})
+                            {t('purchasing.pr.tierLine', { order: app.step_order, name: app.approver_name, title: app.approver_title })}
                           </div>
                           {app.comments && (
                             <div className="text-[11px] text-slate-500 italic mt-0.5">
@@ -945,27 +947,27 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                         <div>
                           {app.status === 'approved' && (
                             <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2.5 py-1 rounded-full">
-                              Approved
+                              {statusLabel('approved')}
                             </span>
                           )}
                           {app.status === 'pending' && (
                             <span className="bg-amber-100 text-amber-800 text-[11px] font-bold px-2.5 py-1 rounded-full">
-                              Pending Action
+                              {t('purchasing.pr.pendingAction')}
                             </span>
                           )}
                           {app.status === 'rejected' && (
                             <span className="bg-rose-100 text-rose-800 text-[11px] font-bold px-2.5 py-1 rounded-full">
-                              Rejected
+                              {statusLabel('rejected')}
                             </span>
                           )}
                           {app.status === 'waiting' && (
                             <span className="bg-slate-100 text-slate-600 text-[11px] font-bold px-2.5 py-1 rounded-full">
-                              Waiting (prior step)
+                              {t('purchasing.pr.waitingPrior')}
                             </span>
                           )}
                           {app.status === 'skipped' && (
                             <span className="bg-slate-100 text-slate-500 text-[11px] font-bold px-2.5 py-1 rounded-full">
-                              Skipped
+                              {statusLabel('skipped')}
                             </span>
                           )}
                         </div>
@@ -982,14 +984,14 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
                   onClick={() => openConvert(selectedPR.id)}
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold"
                 >
-                  Convert to PO
+                  {t('purchasing.pr.convert')}
                 </button>
               )}
               <button
                 onClick={() => setSelectedPR(null)}
                 className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
               >
-                Close
+                {t('common.close')}
               </button>
             </div>
           </div>

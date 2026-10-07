@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatMoney } from '../money';
+import { t, formatDate, categoryLabel } from '../i18n';
 import { 
   DollarSign, 
   Clock, 
@@ -17,7 +18,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
   if (!analytics) {
     return (
       <div className="flex items-center justify-center h-64 text-slate-400">
-        Loading procurement metrics...
+        {t('shell.loadingMetrics')}
       </div>
     );
   }
@@ -31,16 +32,15 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2 text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-1">
-              <span>Indirect Procurement Control Center</span>
+              <span>{t('shell.controlCenter')}</span>
               <span>•</span>
-              <span>FY 2026</span>
+              <span>{t('shell.fy2026')}</span>
             </div>
             <h2 className="text-2xl font-bold tracking-tight">
-              Welcome back, {currentUser?.name || 'User'}
+              {t('shell.welcome', { name: currentUser?.name || t('common.user') })}
             </h2>
             <p className="text-slate-300 text-sm mt-1 max-w-2xl">
-              Complete non-production purchasing lifecycle. Monitor requisitions, sequential approvals,
-              purchase orders, goods receipts, service entry sheets, and dual invoice matching.
+              {t('shell.welcomeBody')}
             </p>
           </div>
           <div className="flex items-center space-x-3">
@@ -48,7 +48,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
               onClick={() => onNavigate('requisitions')}
               className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl shadow-md transition-all flex items-center space-x-2"
             >
-              <span>+ New Requisition</span>
+              <span>{t('shell.newRequisition')}</span>
             </button>
             {(currentUser?.role === 'finance' || currentUser?.role === 'admin') && (
               <>
@@ -56,19 +56,19 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                   onClick={() => onNavigate('exception_workbench')}
                   className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
                 >
-                  <span>Exception Workbench</span>
+                  <span>{t('shell.nav.exceptions')}</span>
                 </button>
                 <button
                   onClick={() => onNavigate('ap_aging')}
                   className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
                 >
-                  <span>AP Aging</span>
+                  <span>{t('shell.nav.apAging')}</span>
                 </button>
                 <button
                   onClick={() => onNavigate('payment_runs')}
                   className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
                 >
-                  <span>Payment Runs</span>
+                  <span>{t('shell.nav.paymentRuns')}</span>
                 </button>
               </>
             )}
@@ -77,7 +77,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                 onClick={() => onNavigate('buyer_inbox')}
                 className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
               >
-                <span>Buyer Inbox</span>
+                <span>{t('shell.nav.buyerInbox')}</span>
               </button>
             )}
             {currentUser?.role === 'admin' && (
@@ -85,7 +85,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                 onClick={() => onNavigate('org_admin')}
                 className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all"
               >
-                <span>Department Approvers</span>
+                <span>{t('shell.nav.deptApprovers')}</span>
               </button>
             )}
           </div>
@@ -100,17 +100,17 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           className="bg-white rounded-xl p-5 border border-slate-200/80 shadow-sm hover:shadow-md transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Open Requisitions</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('shell.openRequisitions')}</span>
             <div className="p-2 rounded-lg bg-sky-50 text-sky-600 group-hover:bg-sky-600 group-hover:text-white transition-colors">
               <Clock className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
             <span className="text-3xl font-extrabold text-slate-900">{kpi.openPRs}</span>
-            <span className="text-xs text-slate-500">draft & submitted</span>
+            <span className="text-xs text-slate-500">{t('shell.draftSubmitted')}</span>
           </div>
           <div className="mt-2 text-xs text-sky-600 font-medium flex items-center">
-            <span>View requisition pipeline</span>
+            <span>{t('shell.viewPipeline')}</span>
             <ArrowUpRight className="w-3.5 h-3.5 ml-0.5" />
           </div>
         </div>
@@ -121,17 +121,17 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           className="bg-white rounded-xl p-5 border border-slate-200/80 shadow-sm hover:shadow-md transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Approvals</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('shell.pendingApprovals')}</span>
             <div className="p-2 rounded-lg bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-colors">
               <ShieldCheck className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
             <span className="text-3xl font-extrabold text-amber-600">{kpi.pendingApprovals}</span>
-            <span className="text-xs text-slate-500">awaiting decision</span>
+            <span className="text-xs text-slate-500">{t('shell.awaitingDecision')}</span>
           </div>
           <div className="mt-2 text-xs text-amber-600 font-medium flex items-center">
-            <span>Review approval queue</span>
+            <span>{t('shell.reviewQueue')}</span>
             <ArrowUpRight className="w-3.5 h-3.5 ml-0.5" />
           </div>
         </div>
@@ -142,17 +142,17 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           className="bg-white rounded-xl p-5 border border-slate-200/80 shadow-sm hover:shadow-md transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active POs</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('shell.activePos')}</span>
             <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
               <ShoppingCart className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
             <span className="text-3xl font-extrabold text-slate-900">{kpi.activePOs}</span>
-            <span className="text-xs text-slate-500">in delivery / partial</span>
+            <span className="text-xs text-slate-500">{t('shell.inDelivery')}</span>
           </div>
           <div className="mt-2 text-xs text-indigo-600 font-medium flex items-center">
-            <span>Track supplier deliveries</span>
+            <span>{t('shell.trackDeliveries')}</span>
             <ArrowUpRight className="w-3.5 h-3.5 ml-0.5" />
           </div>
         </div>
@@ -163,7 +163,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           className="bg-white rounded-xl p-5 border border-slate-200/80 shadow-sm hover:shadow-md transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Invoice Alerts</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('shell.invoiceAlerts')}</span>
             <div className={`p-2 rounded-lg ${kpi.invoiceVariances > 0 ? 'bg-rose-50 text-rose-600 group-hover:bg-rose-600 group-hover:text-white' : 'bg-emerald-50 text-emerald-600'}`}>
               <AlertTriangle className="w-5 h-5" />
             </div>
@@ -172,10 +172,10 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
             <span className={`text-3xl font-extrabold ${kpi.invoiceVariances > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
               {kpi.invoiceVariances}
             </span>
-            <span className="text-xs text-slate-500">3-way discrepancies</span>
+            <span className="text-xs text-slate-500">{t('shell.threeWayDiscrepancies')}</span>
           </div>
           <div className="mt-2 text-xs text-rose-600 font-medium flex items-center">
-            <span>Reconcile invoice variances</span>
+            <span>{t('shell.reconcileVariances')}</span>
             <ArrowUpRight className="w-3.5 h-3.5 ml-0.5" />
           </div>
         </div>
@@ -185,11 +185,11 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
       <div className="bg-white rounded-xl p-6 border border-slate-200/80 shadow-sm">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-base font-bold text-slate-900">Total Indirect Budget & Spend Position</h3>
-            <p className="text-xs text-slate-500">Across all non-production departments (FY 2026)</p>
+            <h3 className="text-base font-bold text-slate-900">{t('shell.budgetPosition')}</h3>
+            <p className="text-xs text-slate-500">{t('shell.budgetScope')}</p>
           </div>
           <div className="text-right">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Overall Utilization</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase">{t('shell.overallUtilization')}</span>
             <div className="text-lg font-bold text-slate-900">{kpi.overallUtilizationPct}%</div>
           </div>
         </div>
@@ -199,38 +199,38 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
           <div 
             style={{ width: `${(kpi.totalSpent / (kpi.totalBudget || 1)) * 100}%` }}
             className="bg-emerald-600 h-full" 
-            title={`Actual Invoiced & Paid: ${formatMoney(kpi.totalSpent)}`}
+            title={t('shell.actualInvoicedTitle', { amount: formatMoney(kpi.totalSpent) })}
           />
           <div 
             style={{ width: `${(kpi.totalCommitted / (kpi.totalBudget || 1)) * 100}%` }}
             className="bg-amber-400 h-full" 
-            title={`Committed at final PR approval: ${formatMoney(kpi.totalCommitted)}`}
+            title={t('shell.committedPrTitle', { amount: formatMoney(kpi.totalCommitted) })}
           />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 pt-4 border-t border-slate-100">
           <div>
-            <div className="text-xs text-slate-500 font-medium">Total Allocated Budget</div>
+            <div className="text-xs text-slate-500 font-medium">{t('shell.totalAllocated')}</div>
             <div className="text-lg font-bold text-slate-900 mt-0.5">{formatMoney(kpi.totalBudget)}</div>
           </div>
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
-              <span>Actual Paid Spend</span>
+              <span>{t('shell.actualPaidSpend')}</span>
             </div>
             <div className="text-lg font-bold text-emerald-700 mt-0.5">{formatMoney(kpi.totalSpent)}</div>
           </div>
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-              <span>Committed (approved PRs)</span>
+              <span>{t('shell.committedApproved')}</span>
             </div>
             <div className="text-lg font-bold text-amber-700 mt-0.5">{formatMoney(kpi.totalCommitted)}</div>
           </div>
           <div>
             <div className="text-xs text-slate-500 font-medium flex items-center space-x-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
-              <span>Remaining Available</span>
+              <span>{t('shell.remainingAvailable')}</span>
             </div>
             <div className="text-lg font-bold text-slate-700 mt-0.5">{formatMoney(kpi.totalRemaining)}</div>
           </div>
@@ -242,13 +242,13 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
         {/* Spend by Category */}
         <div className="bg-white rounded-xl p-6 border border-slate-200/80 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Spend by Category</h3>
-            <span className="text-xs text-slate-500">Non-production classifications</span>
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">{t('shell.spendByCategory')}</h3>
+            <span className="text-xs text-slate-500">{t('shell.categoryScope')}</span>
           </div>
 
           <div className="space-y-4">
             {spendByCategory.length === 0 ? (
-              <p className="text-xs text-slate-400 py-4 text-center">No category spend recorded yet.</p>
+              <p className="text-xs text-slate-400 py-4 text-center">{t('shell.noCategorySpend')}</p>
             ) : (
               spendByCategory.map((cat, idx) => {
                 const maxSpend = Math.max(...spendByCategory.map(c => c.total_spend)) || 1;
@@ -256,7 +256,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                 return (
                   <div key={idx} className="space-y-1">
                     <div className="flex justify-between text-xs font-medium">
-                      <span className="text-slate-800">{cat.category}</span>
+                      <span className="text-slate-800">{categoryLabel(cat.category)}</span>
                       <span className="text-slate-900 font-bold">{formatMoney(cat.total_spend)}</span>
                     </div>
                     <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
@@ -265,7 +265,9 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                         style={{ width: `${pct}%` }}
                       />
                     </div>
-                    <div className="text-[10px] text-slate-400">{cat.item_count} purchased line items</div>
+                    <div className="text-[10px] text-slate-400">
+                      {t(Number(cat.item_count) === 1 ? 'shell.purchasedLine' : 'shell.purchasedLines', { count: cat.item_count })}
+                    </div>
                   </div>
                 );
               })
@@ -276,12 +278,12 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
         {/* Department Budget Status */}
         <div className="bg-white rounded-xl p-6 border border-slate-200/80 shadow-sm">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Department Cost Centers</h3>
+            <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">{t('shell.deptCostCenters')}</h3>
             <button 
               onClick={() => onNavigate('budgets')}
               className="text-xs font-semibold text-emerald-600 hover:text-emerald-700"
             >
-              View Full Budgets →
+              {t('shell.viewFullBudgets')}
             </button>
           </div>
 
@@ -297,7 +299,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                       <span className="text-[10px] text-slate-500 font-mono">[{dept.department_code}]</span>
                     </div>
                     <span className={`font-bold ${isHigh ? 'text-rose-600' : 'text-slate-700'}`}>
-                      {util}% utilized
+                      {t('shell.utilizedPct', { pct: util })}
                     </span>
                   </div>
 
@@ -309,8 +311,8 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                   </div>
 
                   <div className="flex justify-between text-[11px] text-slate-500 mt-1">
-                    <span>Budget: {formatMoney(dept.total_budget)}</span>
-                    <span>Remaining: {formatMoney(dept.available_budget)}</span>
+                    <span>{t('shell.budgetAmount', { amount: formatMoney(dept.total_budget) })}</span>
+                    <span>{t('shell.remainingAmount', { amount: formatMoney(dept.available_budget) })}</span>
                   </div>
                 </div>
               );
@@ -322,7 +324,7 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
       {/* Recent System Activity / Audit Feed */}
       <div className="bg-white rounded-xl p-6 border border-slate-200/80 shadow-sm">
         <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">
-          Audit Trail & Activity Log
+          {t('shell.activityLog')}
         </h3>
         <div className="divide-y divide-slate-100">
           {recentActivity.map((log) => (
@@ -334,9 +336,9 @@ export default function DashboardView({ analytics, onNavigate, currentUser }) {
                 <span className="text-slate-800 font-medium">{log.details}</span>
               </div>
               <div className="flex items-center space-x-3 text-slate-400 text-[11px]">
-                <span>by <strong className="text-slate-600">{log.actor_name}</strong></span>
+                <span>{t('common.by')} <strong className="text-slate-600">{log.actor_name}</strong></span>
                 <span>•</span>
-                <span>{new Date(log.created_at).toLocaleDateString()}</span>
+                <span>{formatDate(log.created_at)}</span>
               </div>
             </div>
           ))}

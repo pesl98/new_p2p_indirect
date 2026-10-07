@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Warehouse, Plus, ArrowDownToLine, X, Building2 } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, fromCents, toCents } from '../money';
+import { t, presentError, presentNotice } from '../i18n';
+import { formatMoney, formatMajorInput, moneyInputProps, toCents } from '../money';
 
 const EMPTY_OVERVIEW = { balances: [], receipts: [], issues: [], owned_stock: [] };
 
@@ -29,7 +30,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
       );
     } catch (err) {
       console.error(err);
-      setBanner({ tone: 'error', text: err.message || 'Failed to load consignment stock.' });
+      setBanner({ tone: 'error', text: presentError(err, 'errors.consignment') });
     } finally {
       setLoading(false);
     }
@@ -45,10 +46,9 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Consignment Stock</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('receiving.consignment.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
-            Supplier-owned inventory held at your site. Receiving it does not post a goods receipt or book company-owned stock.
-            Issuing it into use creates a payable purchase order so AP can match the supplier invoice to what was drawn.
+            {t('receiving.consignment.intro')}
           </p>
         </div>
         <button
@@ -57,7 +57,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
           className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm"
         >
           <Plus className="w-4 h-4" />
-          Record consignment
+          {t('receiving.consignment.record')}
         </button>
       </div>
 
@@ -75,7 +75,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
               onClick={() => onNavigate?.('purchase_orders', { focusId: banner.poId })}
               className="mt-2 text-xs font-semibold underline"
             >
-              Open {banner.poNumber}
+              {t('receiving.openPo', { number: banner.poNumber })}
             </button>
           )}
         </div>
@@ -85,25 +85,25 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
         <section className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
             <Warehouse className="w-4 h-4 text-emerald-700" />
-            <h3 className="text-sm font-bold text-slate-900">Supplier-owned on hand</h3>
+            <h3 className="text-sm font-bold text-slate-900">{t('receiving.consignment.onHandTitle')}</h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="py-2.5 px-4">Item</th>
-                  <th className="py-2.5 px-4">Supplier</th>
-                  <th className="py-2.5 px-4">Location</th>
-                  <th className="py-2.5 px-4 text-right">On hand</th>
-                  <th className="py-2.5 px-4 text-right">Draw price</th>
+                  <th className="py-2.5 px-4">{t('common.item')}</th>
+                  <th className="py-2.5 px-4">{t('common.supplier')}</th>
+                  <th className="py-2.5 px-4">{t('common.location')}</th>
+                  <th className="py-2.5 px-4 text-right">{t('receiving.consignment.onHand')}</th>
+                  <th className="py-2.5 px-4 text-right">{t('receiving.consignment.drawPrice')}</th>
                   <th className="py-2.5 px-4" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan="6" className="py-8 text-center text-slate-400">Loading consignment…</td></tr>
+                  <tr><td colSpan="6" className="py-8 text-center text-slate-400">{t('receiving.consignment.loading')}</td></tr>
                 ) : overview.balances.length === 0 ? (
-                  <tr><td colSpan="6" className="py-8 text-center text-slate-400">No consignment balances yet.</td></tr>
+                  <tr><td colSpan="6" className="py-8 text-center text-slate-400">{t('receiving.consignment.emptyBalances')}</td></tr>
                 ) : overview.balances.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50/80">
                     <td className="py-3 px-4">
@@ -122,7 +122,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
                         className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded font-semibold text-[11px] inline-flex items-center gap-1"
                       >
                         <ArrowDownToLine className="w-3.5 h-3.5" />
-                        Issue
+                        {t('receiving.consignment.issue')}
                       </button>
                     </td>
                   </tr>
@@ -136,23 +136,23 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
           <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
             <Building2 className="w-4 h-4 text-slate-600" />
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Company-owned receipts (GRN)</h3>
-              <p className="text-[11px] text-slate-500">Units booked to the company on a goods receipt. Not consignment on-hand.</p>
+              <h3 className="text-sm font-bold text-slate-900">{t('receiving.consignment.ownedTitle')}</h3>
+              <p className="text-[11px] text-slate-500">{t('receiving.consignment.ownedHint')}</p>
             </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="py-2.5 px-4">Item</th>
-                  <th className="py-2.5 px-4 text-right">Received on GRN</th>
+                  <th className="py-2.5 px-4">{t('common.item')}</th>
+                  <th className="py-2.5 px-4 text-right">{t('line.receivedOnGrn')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr><td colSpan="2" className="py-8 text-center text-slate-400">Loading owned receipts…</td></tr>
+                  <tr><td colSpan="2" className="py-8 text-center text-slate-400">{t('receiving.consignment.loadingOwned')}</td></tr>
                 ) : overview.owned_stock.length === 0 ? (
-                  <tr><td colSpan="2" className="py-8 text-center text-slate-400">No goods receipts yet.</td></tr>
+                  <tr><td colSpan="2" className="py-8 text-center text-slate-400">{t('receiving.consignment.emptyOwned')}</td></tr>
                 ) : overview.owned_stock.map((row) => (
                   <tr key={`${row.sku || row.item_name}`} className="hover:bg-slate-50/80">
                     <td className="py-3 px-4">
@@ -170,14 +170,14 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <MovementTable
-          title="Consignment receipts"
-          empty="No consignment receipts yet."
+          title={t('receiving.consignment.receiptsTitle')}
+          empty={t('receiving.consignment.receiptsEmpty')}
           rows={overview.receipts}
           loading={loading}
         />
         <MovementTable
-          title="Issues into company use"
-          empty="No consignment issues yet."
+          title={t('receiving.consignment.issuesTitle')}
+          empty={t('receiving.consignment.issuesEmpty')}
           rows={overview.issues}
           loading={loading}
           onOpenPo={(row) => onNavigate?.('purchase_orders', { focusId: row.po_id })}
@@ -192,7 +192,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
           onClose={() => setShowReceive(false)}
           onSaved={async (result) => {
             setShowReceive(false);
-            setBanner({ tone: 'ok', text: result.message });
+            setBanner({ tone: 'ok', text: presentNotice(result.message) });
             await load();
             onDataChanged?.();
           }}
@@ -208,7 +208,7 @@ export default function ConsignmentView({ currentUser, onDataChanged, onNavigate
             setIssueBalance(null);
             setBanner({
               tone: 'ok',
-              text: result.message,
+              text: presentNotice(result.message),
               poId: result.poId,
               poNumber: result.poNumber
             });
@@ -231,17 +231,17 @@ function MovementTable({ title, empty, rows, loading, onOpenPo }) {
         <table className="w-full text-left text-xs">
           <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
             <tr>
-              <th className="py-2.5 px-4">Number</th>
-              <th className="py-2.5 px-4">Item</th>
-              <th className="py-2.5 px-4">Supplier</th>
-              <th className="py-2.5 px-4 text-right">Qty</th>
-              <th className="py-2.5 px-4">Date</th>
-              {onOpenPo && <th className="py-2.5 px-4">Payable</th>}
+              <th className="py-2.5 px-4">{t('common.number')}</th>
+              <th className="py-2.5 px-4">{t('common.item')}</th>
+              <th className="py-2.5 px-4">{t('common.supplier')}</th>
+              <th className="py-2.5 px-4 text-right">{t('common.qty')}</th>
+              <th className="py-2.5 px-4">{t('common.date')}</th>
+              {onOpenPo && <th className="py-2.5 px-4">{t('common.payable')}</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading ? (
-              <tr><td colSpan={onOpenPo ? 6 : 5} className="py-6 text-center text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={onOpenPo ? 6 : 5} className="py-6 text-center text-slate-400">{t('common.loading')}</td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={onOpenPo ? 6 : 5} className="py-6 text-center text-slate-400">{empty}</td></tr>
             ) : rows.map((row) => (
@@ -280,13 +280,13 @@ function ReceiveModal({ suppliers, catalog, currentUser, onClose, onSaved }) {
 
   useEffect(() => {
     const item = catalog.find((row) => String(row.id) === String(catalogItemId));
-    if (item) setUnitPrice(fromCents(item.unit_price).toFixed(2));
+    if (item) setUnitPrice(formatMajorInput(item.unit_price));
   }, [catalogItemId, catalog]);
 
   const submit = async () => {
     setError('');
     if (!supplierId || !catalogItemId) {
-      setError('Choose a supplier and a goods catalog item.');
+      setError(t('receiving.consignment.chooseSupplierItem'));
       return;
     }
     setSaving(true);
@@ -304,54 +304,54 @@ function ReceiveModal({ suppliers, catalog, currentUser, onClose, onSaved }) {
       });
       await onSaved(result);
     } catch (err) {
-      setError(err.message || 'Failed to record consignment.');
+      setError(presentError(err, 'errors.consignmentReceipt'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal title="Record consignment receipt" subtitle="Adds supplier-owned on-hand. Does not create a GRN or a purchase order." onClose={onClose}>
+    <Modal title={t('receiving.consignment.receiveTitle')} subtitle={t('receiving.consignment.receiveSubtitle')} onClose={onClose}>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <Field label="Supplier">
+        <Field label={t('common.supplier')}>
           <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg">
-            <option value="">Select supplier</option>
+            <option value="">{t('receiving.selectSupplier')}</option>
             {suppliers.map((supplier) => (
               <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
             ))}
           </select>
         </Field>
-        <Field label="Catalog item (goods)">
+        <Field label={t('receiving.consignment.catalogItem')}>
           <select value={catalogItemId} onChange={(e) => setCatalogItemId(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg">
-            <option value="">Select item</option>
+            <option value="">{t('receiving.selectItem')}</option>
             {catalog.map((item) => (
               <option key={item.id} value={item.id}>{item.sku} — {item.name}</option>
             ))}
           </select>
         </Field>
-        <Field label="Location">
+        <Field label={t('common.location')}>
           <input value={locationLabel} onChange={(e) => setLocationLabel(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Quantity">
+        <Field label={t('common.quantity')}>
           <input type="number" min="1" step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Agreed unit price">
-          <input type="number" min="0" step="0.01" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
+        <Field label={t('receiving.consignment.agreedPrice')}>
+          <input {...moneyInputProps} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Receipt date">
+        <Field label={t('receiving.receiptDate')}>
           <input type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
         <div className="sm:col-span-2">
-          <Field label="Notes">
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder="Optional delivery note" />
+          <Field label={t('common.notes')}>
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder={t('receiving.consignment.notePlaceholder')} />
           </Field>
         </div>
       </div>
       {error && <p className="text-xs text-rose-700 mt-3">{error}</p>}
       <div className="flex justify-end gap-2 pt-4 mt-4 border-t border-slate-200">
-        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
+        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">{t('common.cancel')}</button>
         <button type="button" disabled={saving} onClick={submit} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold">
-          {saving ? 'Saving…' : 'Record supplier-owned stock'}
+          {saving ? t('common.saving') : t('receiving.consignment.recordStock')}
         </button>
       </div>
     </Modal>
@@ -379,7 +379,7 @@ function IssueModal({ balance, currentUser, onClose, onSaved }) {
       });
       await onSaved(result);
     } catch (err) {
-      setError(err.message || 'Failed to issue consignment.');
+      setError(presentError(err, 'errors.consignmentIssue'));
     } finally {
       setSaving(false);
     }
@@ -387,32 +387,36 @@ function IssueModal({ balance, currentUser, onClose, onSaved }) {
 
   return (
     <Modal
-      title="Issue into company use"
-      subtitle={`${balance.item_name} · ${balance.supplier_name} · ${balance.quantity_on_hand} on hand at ${balance.location_label}`}
+      title={t('receiving.consignment.issueTitle')}
+      subtitle={t('receiving.consignment.issueSubtitle', {
+        item: balance.item_name,
+        supplier: balance.supplier_name,
+        qty: balance.quantity_on_hand,
+        location: balance.location_label
+      })}
       onClose={onClose}
     >
       <p className="text-xs text-slate-600 mb-3">
-        This reduces supplier-owned on-hand and opens a consignment purchase order at {formatMoney(balance.unit_price)} each.
-        Record the supplier invoice against that PO. A goods receipt is not created.
+        {t('receiving.consignment.issueExplain', { price: formatMoney(balance.unit_price) })}
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <Field label="Quantity to issue">
+        <Field label={t('receiving.consignment.qtyToIssue')}>
           <input type="number" min="1" max={balance.quantity_on_hand} step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Issue date">
+        <Field label={t('receiving.consignment.issueDate')}>
           <input type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
         <div className="sm:col-span-2">
-          <Field label="Notes">
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder="Where the stock was put into use" />
+          <Field label={t('common.notes')}>
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder={t('receiving.consignment.issueNotePlaceholder')} />
           </Field>
         </div>
       </div>
       {error && <p className="text-xs text-rose-700 mt-3">{error}</p>}
       <div className="flex justify-end gap-2 pt-4 mt-4 border-t border-slate-200">
-        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
+        <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">{t('common.cancel')}</button>
         <button type="button" disabled={saving} onClick={submit} className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold">
-          {saving ? 'Issuing…' : 'Issue and create payable PO'}
+          {saving ? t('receiving.consignment.issuing') : t('receiving.consignment.issuePayable')}
         </button>
       </div>
     </Modal>

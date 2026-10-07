@@ -8,6 +8,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { api } from '../api';
+import { t, presentError, statusLabel } from '../i18n';
 import { formatMoney } from '../money';
 import { formatLineQuantity, isServiceLine, serviceBasisLabel } from '../lineType';
 
@@ -116,7 +117,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
       }));
 
     if (itemsToSubmit.length === 0) {
-      alert('Please enter at least one accepted quantity greater than 0.');
+      alert(t('receiving.ses.needQuantity'));
       return;
     }
 
@@ -136,7 +137,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
       if (onDataChanged) onDataChanged();
       handleOpenDetail(created.sesId);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.sesCreate'));
     }
   };
 
@@ -158,7 +159,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
       if (onDataChanged) onDataChanged();
       handleOpenDetail(id);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.sesSubmit'));
     }
   };
 
@@ -174,7 +175,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
       if (onDataChanged) onDataChanged();
       handleOpenDetail(id);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.sesAccept'));
     }
   };
 
@@ -189,22 +190,23 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
       if (onDataChanged) onDataChanged();
       handleOpenDetail(id);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.sesReject'));
     }
   };
 
   const getStatusBadge = (status) => {
+    const label = statusLabel(status);
     switch (status) {
       case 'draft':
-        return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">Draft</span>;
+        return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{label}</span>;
       case 'submitted':
-        return <span className="bg-amber-100 text-amber-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Submitted</span>;
+        return <span className="bg-amber-100 text-amber-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{label}</span>;
       case 'accepted':
-        return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Accepted</span>;
+        return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{label}</span>;
       case 'rejected':
-        return <span className="bg-rose-100 text-rose-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Rejected</span>;
+        return <span className="bg-rose-100 text-rose-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{label}</span>;
       default:
-        return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{status}</span>;
+        return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{label}</span>;
     }
   };
 
@@ -212,9 +214,9 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Service Entry Sheets (SES)</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('receiving.ses.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Accept consulting, SaaS, and professional-service PO lines. Accepted qty is the receipt basis for SES-backed invoice match — no physical GRN.
+            {t('receiving.ses.intro')}
           </p>
         </div>
         <button
@@ -222,7 +224,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
           className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-2"
         >
           <Plus className="w-4 h-4" />
-          <span>Create Service Entry Sheet</span>
+          <span>{t('receiving.ses.create')}</span>
         </button>
       </div>
 
@@ -231,24 +233,24 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">SES Number</th>
-                <th className="py-3 px-4">PO Reference</th>
-                <th className="py-3 px-4">Supplier</th>
-                <th className="py-3 px-4">Period</th>
-                <th className="py-3 px-4">Created By</th>
-                <th className="py-3 px-4">Accepted Qty / Amount</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Action</th>
+                <th className="py-3 px-4">{t('receiving.ses.colNumber')}</th>
+                <th className="py-3 px-4">{t('receiving.grn.colPo')}</th>
+                <th className="py-3 px-4">{t('common.supplier')}</th>
+                <th className="py-3 px-4">{t('common.period')}</th>
+                <th className="py-3 px-4">{t('receiving.ses.colCreatedBy')}</th>
+                <th className="py-3 px-4">{t('receiving.ses.colAccepted')}</th>
+                <th className="py-3 px-4">{t('common.status')}</th>
+                <th className="py-3 px-4 text-right">{t('common.action')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading service entry sheets...</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('receiving.ses.loading')}</td>
                 </tr>
               ) : sheets.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">No service entry sheets recorded yet.</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('receiving.ses.empty')}</td>
                 </tr>
               ) : (
                 sheets.map((ses) => (
@@ -263,7 +265,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                     </td>
                     <td className="py-3 px-4 text-slate-700">{ses.created_by_name}</td>
                     <td className="py-3 px-4">
-                      <div className="font-bold text-indigo-700">{ses.total_qty_accepted} accepted</div>
+                      <div className="font-bold text-indigo-700">{t('receiving.ses.acceptedQty', { qty: ses.total_qty_accepted })}</div>
                       <div className="text-[10px] text-slate-400">{formatMoney(ses.total_amount_cents)}</div>
                     </td>
                     <td className="py-3 px-4">{getStatusBadge(ses.status)}</td>
@@ -273,7 +275,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                         className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        <span>Review</span>
+                        <span>{t('receiving.ses.review')}</span>
                       </button>
                     </td>
                   </tr>
@@ -289,8 +291,8 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Create Service Entry Sheet</h3>
-                <p className="text-xs text-slate-500">Record accepted service qty against open service PO lines</p>
+                <h3 className="text-base font-bold text-slate-900">{t('receiving.ses.create')}</h3>
+                <p className="text-xs text-slate-500">{t('receiving.ses.modalSubtitle')}</p>
               </div>
               <button onClick={resetCreateForm} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -299,16 +301,16 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
 
             <div className="py-4 space-y-4 text-xs overflow-y-auto flex-1">
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Select Purchase Order (service lines)</label>
+                <label className="block text-slate-700 font-semibold mb-1">{t('receiving.ses.selectPo')}</label>
                 <select
                   value={selectedPOId}
                   onChange={(e) => handleSelectPO(e.target.value)}
                   className="w-full p-2.5 border border-slate-300 rounded-lg text-xs font-medium"
                 >
-                  <option value="">-- Choose a Purchase Order --</option>
+                  <option value="">{t('receiving.choosePo')}</option>
                   {activePOs.map((po) => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{statusLabel(po.status)}]
                     </option>
                   ))}
                 </select>
@@ -316,7 +318,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
 
               {targetPOData && sesItems.length === 0 && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
-                  This PO has no service lines. Use Goods Receipt (GRN) for physical items.
+                  {t('receiving.ses.noServiceLines')}
                 </div>
               )}
 
@@ -324,11 +326,11 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Service Period Start</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('receiving.ses.periodStart')}</label>
                       <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" />
                     </div>
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Service Period End</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('receiving.ses.periodEnd')}</label>
                       <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" />
                     </div>
                   </div>
@@ -337,11 +339,11 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-semibold">
                         <tr>
-                          <th className="py-2.5 px-3">Service Description</th>
-                          <th className="py-2.5 px-3 text-center">Ordered</th>
-                          <th className="py-2.5 px-3 text-center">Already Accepted</th>
-                          <th className="py-2.5 px-3 text-center w-24">Accepting Now</th>
-                          <th className="py-2.5 px-3 text-right">Amount</th>
+                          <th className="py-2.5 px-3">{t('receiving.ses.serviceDescription')}</th>
+                          <th className="py-2.5 px-3 text-center">{t('receiving.ordered')}</th>
+                          <th className="py-2.5 px-3 text-center">{t('receiving.ses.alreadyAccepted')}</th>
+                          <th className="py-2.5 px-3 text-center w-24">{t('receiving.ses.acceptingNow')}</th>
+                          <th className="py-2.5 px-3 text-right">{t('common.amount')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -380,7 +382,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
 
                   <textarea
                     rows="2"
-                    placeholder="Acceptance notes (deliverable, period, stakeholder sign-off)..."
+                    placeholder={t('receiving.ses.notesPlaceholder')}
                     value={sesNotes}
                     onChange={(e) => setSesNotes(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -388,21 +390,21 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
 
                   <label className="flex items-start gap-2 text-slate-700">
                     <input type="checkbox" className="mt-0.5" checked={submitImmediately} onChange={(e) => setSubmitImmediately(e.target.checked)} />
-                    <span>Submit immediately for procurement / finance acceptance</span>
+                    <span>{t('receiving.ses.submitNow')}</span>
                   </label>
                 </>
               )}
             </div>
 
             <div className="flex justify-end space-x-2 pt-4 border-t border-slate-200">
-              <button onClick={resetCreateForm} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
+              <button onClick={resetCreateForm} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">{t('common.cancel')}</button>
               <button
                 disabled={!targetPOData || sesItems.length === 0}
                 onClick={handleSubmitSES}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
               >
                 <ClipboardCheck className="w-4 h-4" />
-                <span>{submitImmediately ? 'Create & Submit SES' : 'Save Draft SES'}</span>
+                <span>{submitImmediately ? t('receiving.ses.createSubmit') : t('receiving.ses.saveDraft')}</span>
               </button>
             </div>
           </div>
@@ -419,7 +421,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                   {getStatusBadge(selectedSES.status)}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Against PO {selectedSES.po_number} from {selectedSES.supplier_name}
+                  {t('receiving.againstPo', { po: selectedSES.po_number, supplier: selectedSES.supplier_name })}
                 </p>
               </div>
               <button onClick={() => setSelectedSES(null)} className="text-slate-400 hover:text-slate-700">
@@ -430,33 +432,39 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
             <div className="py-4 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                 <div>
-                  <span className="text-slate-500">Created By:</span>
+                  <span className="text-slate-500">{t('receiving.ses.createdBy')}</span>
                   <div className="font-semibold text-slate-900">{selectedSES.created_by_name}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Accepted by:</span>
+                  <span className="text-slate-500">{t('receiving.ses.acceptedBy')}</span>
                   <div className="font-semibold text-slate-900">{selectedSES.decided_by_name || '—'}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Accepted at:</span>
+                  <span className="text-slate-500">{t('receiving.ses.acceptedAt')}</span>
                   <div className="font-semibold text-slate-900">{selectedSES.decided_at || '—'}</div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Service Period:</span>
+                  <span className="text-slate-500">{t('receiving.ses.servicePeriod')}</span>
                   <div className="font-semibold text-slate-900">
                     {selectedSES.service_period_start || '—'} → {selectedSES.service_period_end || '—'}
                   </div>
                 </div>
                 <div>
-                  <span className="text-slate-500">Decision:</span>
+                  <span className="text-slate-500">{t('receiving.ses.decision')}</span>
                   <div className="font-semibold text-slate-900">{selectedSES.decision_comments || '—'}</div>
                 </div>
               </div>
 
               {selectedSES.status === 'accepted' && (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-900">
-                  Service delivered. Accepted by {selectedSES.decided_by_name || 'the approver'}
-                  {selectedSES.decided_at ? ` on ${selectedSES.decided_at}` : ''}. No goods receipt is required.
+                  {selectedSES.decided_at
+                    ? t('receiving.ses.deliveredOn', {
+                        name: selectedSES.decided_by_name || t('receiving.ses.theApprover'),
+                        date: selectedSES.decided_at
+                      })
+                    : t('receiving.ses.delivered', {
+                        name: selectedSES.decided_by_name || t('receiving.ses.theApprover')
+                      })}
                 </div>
               )}
 
@@ -464,10 +472,10 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-semibold">
                     <tr>
-                      <th className="py-2.5 px-3">Description</th>
-                      <th className="py-2.5 px-3 text-center">Qty Accepted</th>
-                      <th className="py-2.5 px-3 text-right">Amount</th>
-                      <th className="py-2.5 px-3">Comments</th>
+                      <th className="py-2.5 px-3">{t('common.description')}</th>
+                      <th className="py-2.5 px-3 text-center">{t('receiving.ses.qtyAccepted')}</th>
+                      <th className="py-2.5 px-3 text-right">{t('common.amount')}</th>
+                      <th className="py-2.5 px-3">{t('common.comments')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -494,7 +502,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
 
               {selectedSES.notes && (
                 <div className="p-3 bg-slate-50 rounded-lg text-slate-700 border border-slate-200">
-                  <strong className="block text-[11px] text-slate-500 uppercase">Notes:</strong>
+                  <strong className="block text-[11px] text-slate-500 uppercase">{t('common.notes')}:</strong>
                   {selectedSES.notes}
                 </div>
               )}
@@ -504,7 +512,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                   onClick={() => handleSubmitDraft(selectedSES.id)}
                   className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold"
                 >
-                  Submit for Acceptance
+                  {t('receiving.ses.submitForAcceptance')}
                 </button>
               )}
 
@@ -514,13 +522,13 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                     type="text"
                     value={decisionComments}
                     onChange={(e) => setDecisionComments(e.target.value)}
-                    placeholder="Acceptance / rejection comments"
+                    placeholder={t('receiving.ses.decisionPlaceholder')}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   />
                   <label className="flex items-start gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
                     <input type="checkbox" className="mt-0.5" checked={allowOverAcceptance} onChange={(e) => setAllowOverAcceptance(e.target.checked)} />
                     <span>
-                      <strong>Allow over-acceptance (exception).</strong> Use only if cumulative accepted qty would exceed ordered qty. Audited.
+                      <strong>{t('receiving.ses.allowOver')}</strong> {t('receiving.ses.allowOverDetail')}
                     </span>
                   </label>
                   <div className="flex space-x-2">
@@ -529,14 +537,14 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1"
                     >
                       <CheckCircle className="w-4 h-4" />
-                      <span>Accept SES</span>
+                      <span>{t('receiving.ses.accept')}</span>
                     </button>
                     <button
                       onClick={() => handleReject(selectedSES.id)}
                       className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold inline-flex items-center space-x-1"
                     >
                       <XCircle className="w-4 h-4" />
-                      <span>Reject</span>
+                      <span>{t('common.reject')}</span>
                     </button>
                   </div>
                 </div>
@@ -545,7 +553,7 @@ export default function ServiceEntrySheetsView({ currentUser, onDataChanged, foc
 
             <div className="flex justify-end pt-3 border-t border-slate-200">
               <button onClick={() => setSelectedSES(null)} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold">
-                Close
+                {t('common.close')}
               </button>
             </div>
           </div>
