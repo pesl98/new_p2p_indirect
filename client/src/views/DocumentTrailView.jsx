@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { documentTrailQueryFromLookup } from '../documentTrailNav';
+import { t, presentError, statusLabel, formatDateTime } from '../i18n';
 import { formatMoney } from '../money';
 
 const STAGE_ICONS = {
@@ -33,22 +34,75 @@ const STAGE_ICONS = {
   ap: CreditCard
 };
 
-function formatWhen(iso) {
-  if (!iso) return '—';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+const STAGE_LABEL_KEYS = {
+  Requisition: 'trail.stage.requisition',
+  Approvals: 'trail.stage.approvals',
+  'Purchase order': 'trail.stage.purchaseOrder',
+  'GRN / SES': 'trail.stage.grnSes',
+  'Consignment issue': 'trail.stage.consignment',
+  'Utility reading': 'trail.stage.utility',
+  'Bulk draw': 'trail.stage.bulk',
+  Consumption: 'trail.stage.consumption',
+  Invoice: 'trail.stage.invoice',
+  'AP payment': 'trail.stage.ap'
+};
+
+const EVENT_TITLE_KEYS = {
+  Requisition: 'trail.event.requisition',
+  'Contract proposed': 'trail.event.contractProposed',
+  'Contract use allowed': 'trail.event.contractAllowed',
+  'Contract use refused': 'trail.event.contractRefused',
+  'Contract link cleared': 'trail.event.contractCleared',
+  'Purchase order': 'trail.event.purchaseOrder',
+  'Change order applied': 'trail.event.changeOrder',
+  'Consignment issue': 'trail.event.consignment',
+  'Utility consumption': 'trail.event.utility',
+  'Bulk draw': 'trail.event.bulk',
+  'Goods receipt': 'trail.event.goodsReceipt',
+  'Service entry sheet': 'trail.event.ses',
+  'Vendor invoice': 'trail.event.invoice',
+  'Exception accepted': 'trail.event.exceptionAccepted',
+  'Exception rejected': 'trail.event.exceptionRejected',
+  'Returned to buyer': 'trail.event.returned',
+  'Invoice short-paid': 'trail.event.shortPay',
+  'Buyer responded': 'trail.event.buyerResponded',
+  'Duplicate suspected': 'trail.event.duplicateSuspected',
+  'Duplicate cleared': 'trail.event.duplicateCleared',
+  'Duplicate confirmed': 'trail.event.duplicateConfirmed',
+  'Marked paid': 'trail.event.markedPaid',
+  'AP approved for payment': 'trail.event.apApproved',
+  'Payment run executed': 'trail.event.paymentRun'
+};
+
+function stageTitle(label) {
+  const key = STAGE_LABEL_KEYS[label];
+  return key ? t(key) : label;
 }
 
-function humanize(value) {
-  if (!value) return '—';
-  return String(value).replace(/_/g, ' ');
+function displayStatus(status) {
+  if (status === 'recorded') return t('trail.statusRecorded');
+  if (status === 'drawn') return t('trail.statusDrawn');
+  return statusLabel(status);
+}
+
+function displayEventTitle(title) {
+  if (!title) return '';
+  const step = String(title).match(/^Approval step (\d+)(?![\s\S])/);
+  if (step) return t('trail.event.approvalStep', { n: step[1] });
+  const key = EVENT_TITLE_KEYS[title];
+  return key ? t(key) : title;
+}
+
+function displayEventNumber(number) {
+  const step = String(number ?? '').match(/^Step (\d+)(?![\s\S])/);
+  if (step) return t('trail.stepNumber', { n: step[1] });
+  return number;
+}
+
+function startingTypeLabel(type) {
+  if (type === 'requisition') return t('trail.type.requisition');
+  if (type === 'purchase_order') return t('trail.type.purchaseOrder');
+  return statusLabel(type);
 }
 
 function statusTone(status) {
@@ -91,7 +145,7 @@ function statusTone(status) {
 function StatusPill({ status, label }) {
   return (
     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full capitalize ${statusTone(status)}`}>
-      {label || humanize(status)}
+      {label || displayStatus(status)}
     </span>
   );
 }
@@ -162,7 +216,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
       }
     } catch (err) {
       setTrail(null);
-      setError(err.message || 'Document trail not found');
+      setError(presentError(err, 'errors.trail'));
     } finally {
       setLoading(false);
     }
@@ -191,7 +245,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
     event.preventDefault();
     const term = query.trim();
     if (!term) {
-      setError('Enter a PR number, PO number, or invoice number.');
+      setError(t('trail.queryRequired'));
       return;
     }
     loadTrail({ q: term });
@@ -206,9 +260,9 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">P2P Document Trail</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('trail.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            One chronological chain for a buying journey: PR → approvals → PO(s) → GRN / SES → invoice → AP / payment run.
+            {t('trail.subtitle')}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -235,7 +289,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                 setQuery(e.target.value);
                 loadSuggestions(e.target.value);
               }}
-              placeholder="Search PR-2026-001, PO-2026-001, or INV-WED-9042"
+              placeholder={t('trail.searchPlaceholder')}
               className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
             />
           </div>
@@ -243,13 +297,13 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
             type="submit"
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm"
           >
-            Open trail
+            {t('trail.openTrail')}
           </button>
         </div>
         {(suggestions.requisitions.length > 0 || suggestions.purchase_orders.length > 0) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Requisitions</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">{t('trail.requisitions')}</div>
               <div className="space-y-1">
                 {suggestions.requisitions.slice(0, 5).map((pr) => (
                   <button
@@ -265,7 +319,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
               </div>
             </div>
             <div>
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Purchase orders</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">{t('trail.purchaseOrders')}</div>
               <div className="space-y-1">
                 {suggestions.purchase_orders.slice(0, 5).map((po) => (
                   <button
@@ -292,7 +346,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
       )}
 
       {loading && !trail && (
-        <div className="text-center text-slate-400 py-12 text-sm">Loading document trail...</div>
+        <div className="text-center text-slate-400 py-12 text-sm">{t('trail.loading')}</div>
       )}
 
       {trail && (
@@ -301,13 +355,13 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
             <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600 mb-1">
-                  Starting {humanize(trail.starting_point.type)}
+                  {t('trail.starting', { type: startingTypeLabel(trail.starting_point.type) })}
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 font-mono">
                   {trail.requisition?.pr_number || trail.starting_point.number}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-                  {trail.requisition?.justification || 'Purchase order without a linked requisition.'}
+                  {trail.requisition?.justification || t('trail.noRequisition')}
                 </p>
               </div>
               <div className="text-right">
@@ -323,7 +377,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                 {trail.split && (
                   <div className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-full">
                     <GitBranch className="w-3 h-3" />
-                    Multi-supplier split
+                    {t('trail.split')}
                   </div>
                 )}
               </div>
@@ -343,13 +397,10 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                   >
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
                       <Icon className="w-3.5 h-3.5" />
-                      {stage.label}
+                      {stageTitle(stage.label)}
                     </div>
                     <div className="mt-1.5">
-                      <StatusPill
-                        status={stage.status}
-                        label={stage.status === 'not_started' ? 'Not started' : humanize(stage.status)}
-                      />
+                      <StatusPill status={stage.status} />
                     </div>
                   </div>
                 );
@@ -369,23 +420,23 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                     <StatusPill status={po.status} />
                   </div>
                   <div className="mt-3 text-xs text-slate-600 space-y-1">
-                    <div>Amount: <span className="font-semibold">{formatMoney(po.total_amount)}</span></div>
+                    <div>{t('common.amount')}: <span className="font-semibold">{formatMoney(po.total_amount)}</span></div>
                     <div>
                       {po.receiving?.goods === 'consignment' ? (
-                        <>Consignment: {po.consignment_issues?.[0]?.issue_number || 'issued'} <span className="text-slate-400">(no GRN)</span></>
+                        <>{t('trail.consignmentPrefix')} {po.consignment_issues?.[0]?.issue_number || t('trail.issued')} <span className="text-slate-400">({t('trail.noGrn')})</span></>
                       ) : po.receiving?.goods === 'utility' ? (
-                        <>Utility: {po.utility_consumptions?.[0]?.consumption_number || 'recorded'} <span className="text-slate-400">(no GRN)</span></>
+                        <>{t('trail.utilityPrefix')} {po.utility_consumptions?.[0]?.consumption_number || t('trail.recordedWord')} <span className="text-slate-400">({t('trail.noGrn')})</span></>
                       ) : po.receiving?.goods === 'bulk' ? (
-                        <>Bulk draw: {po.bulk_draws?.[0]?.draw_number || 'drawn'} <span className="text-slate-400">(no GRN)</span></>
+                        <>{t('trail.bulkPrefix')} {po.bulk_draws?.[0]?.draw_number || t('trail.drawnWord')} <span className="text-slate-400">({t('trail.noGrn')})</span></>
                       ) : (
-                        <>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">not started</span>}</>
+                        <>GRN: {po.goods_receipts[0]?.grn_number || <span className="text-slate-400">{t('trail.notStarted')}</span>}</>
                       )}
                     </div>
-                    <div>SES: {po.service_entry_sheets[0]?.ses_number || <span className="text-slate-400">not started</span>}</div>
+                    <div>SES: {po.service_entry_sheets[0]?.ses_number || <span className="text-slate-400">{t('trail.notStarted')}</span>}</div>
                     <div>
-                      Invoice: {po.invoices[0]?.invoice_number || <span className="text-slate-400">not started</span>}
+                      {t('trail.invoicePrefix')} {po.invoices[0]?.invoice_number || <span className="text-slate-400">{t('trail.notStarted')}</span>}
                       {po.invoices[0] && (
-                        <span className="ml-1 text-slate-400">({humanize(po.invoices[0].match_status)})</span>
+                        <span className="ml-1 text-slate-400">({statusLabel(po.invoices[0].match_status)})</span>
                       )}
                     </div>
                   </div>
@@ -394,7 +445,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                     onClick={() => openTab('purchase_orders', po.id)}
                     className="mt-3 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 inline-flex items-center gap-1"
                   >
-                    Open PO <ExternalLink className="w-3 h-3" />
+                    {t('trail.openPo')} <ExternalLink className="w-3 h-3" />
                   </button>
                 </div>
               ))}
@@ -402,9 +453,9 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
           )}
 
           <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5">
-            <h4 className="text-sm font-bold text-slate-900 mb-4">Chronological chain</h4>
+            <h4 className="text-sm font-bold text-slate-900 mb-4">{t('trail.chain')}</h4>
             {trail.timeline.length === 0 ? (
-              <div className="text-sm text-slate-400">No documents on this trail yet.</div>
+              <div className="text-sm text-slate-400">{t('trail.emptyChain')}</div>
             ) : (
               <ol className="relative border-l border-slate-200 ml-3 space-y-4">
                 {trail.timeline.map((event) => {
@@ -418,16 +469,16 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-mono font-bold text-slate-900 text-sm">{event.number}</span>
+                              <span className="font-mono font-bold text-slate-900 text-sm">{displayEventNumber(event.number)}</span>
                               <StatusPill status={event.status} />
                               {event.match_status && <StatusPill status={event.match_status} />}
                               {event.po_number && event.kind !== 'purchase_order' && (
                                 <span className="text-[10px] font-semibold text-slate-500">{event.po_number}</span>
                               )}
                             </div>
-                            <div className="text-xs font-semibold text-slate-700 mt-1">{event.title}</div>
+                            <div className="text-xs font-semibold text-slate-700 mt-1">{displayEventTitle(event.title)}</div>
                             <div className="text-[11px] text-slate-500 mt-0.5">
-                              {formatWhen(event.at)}
+                              {formatDateTime(event.at)}
                               {event.actor_name ? ` · ${event.actor_name}` : ''}
                               {event.supplier_name ? ` · ${event.supplier_name}` : ''}
                             </div>
@@ -439,7 +490,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                                 {formatMoney(event.amount_cents)}
                                 {event.payable_total_cents != null && event.kind === 'invoice' && (
                                   <span className="ml-1 text-[11px] font-semibold text-amber-800">
-                                    → Pay {formatMoney(event.payable_total_cents)}
+                                    {t('trail.pay', { amount: formatMoney(event.payable_total_cents) })}
                                   </span>
                                 )}
                               </div>
@@ -451,7 +502,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                               onClick={() => openTab(event.tab, event.focus_id || event.entity_id)}
                               className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 inline-flex items-center gap-1 self-start"
                             >
-                              Open <ExternalLink className="w-3 h-3" />
+                              {t('trail.open')} <ExternalLink className="w-3 h-3" />
                             </button>
                           )}
                         </div>
@@ -467,7 +518,7 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
 
       {!loading && !trail && !error && (
         <div className="bg-white rounded-xl border border-dashed border-slate-200 p-10 text-center text-sm text-slate-400">
-          Search a PR or PO to see the timed document chain.
+          {t('trail.empty')}
         </div>
       )}
     </div>

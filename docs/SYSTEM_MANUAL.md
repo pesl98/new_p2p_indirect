@@ -25,7 +25,8 @@ ProcureFlow is a **full-lifecycle indirect Procure-to-Pay (P2P)** app for non-pr
 - **API:** Node.js / Express (`server/src/app.js`).
 - **Local DB:** SQLite via `better-sqlite3` when both `TURSO_*` vars are omitted (`PROCUREMENT_DB_PATH`, gitignored under `server/data/`).
 - **Customer / Vercel DB:** Turso (classic libSQL) over **HTTP** (`POST /v2/pipeline`). No native libsql `.so`.
-- **Money:** integer **cents** of the deployment currency everywhere in SQLite and the API (default EUR; `CURRENCY=USD` does not rescale). Display uses `formatMoney` (`nl-NL`). Numeric inputs stay dot-decimal major units.
+- **Money:** integer **cents** of the deployment currency everywhere in SQLite and the API (default EUR; `CURRENCY=USD` does not rescale). Display uses `formatMoney` (`nl-NL`). Amount fields accept a Dutch comma decimal (`1.295,50`); stored values stay cents.
+- **UI language:** Dutch (Netherlands), locale `nl-NL`. There is no language picker. Catalog: `client/src/i18n/`.
 
 **Isolation:** **one database per customer** (one Turso DB or one SQLite file) **and** one Vercel project per customer. Schema and application code are shared; **data is not**. There is **no** shared-row `org_id` (or equivalent) multi-tenancy. Pointing two deploys at the same Turso URL **merges** those customers.
 
@@ -641,7 +642,7 @@ Inbound supplier invoices (they would have to run through match and exceptions).
 
 ## 6. Money model (integer cents)
 
-SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`, payment-run snapshots) store **integer cents** of the deployment currency. EUR and USD both have two decimal places, so switching `CURRENCY` does not migrate or rescale stored values. The API returns cents. Display and audit text use `formatMoney` (`shared/currency.js`, locale `nl-NL`) from `client/src/money.js` and `server/src/money.js`. `formatCents` stays a symbol-free dot-decimal string (`749.00`) for non-display use. Typed amounts stay dot-decimal major units (`toCents` / `fromCents`). Dutch comma input is Sprint 6.
+SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`, payment-run snapshots) store **integer cents** of the deployment currency. EUR and USD both have two decimal places, so switching `CURRENCY` does not migrate or rescale stored values. The API returns cents. Display and audit text use `formatMoney` (`shared/currency.js`, locale `nl-NL`) from `client/src/money.js` and `server/src/money.js`. `formatCents` stays a symbol-free dot-decimal string (`749.00`) for non-display use. Amount fields on the client accept nl-NL major units (`1.295,50`, comma decimal, dot thousands) via `parseMajorAmount` / `toCents`. A pasted `749.00` still parses. The API and the database still store integer cents. `shared/currency.js` is unchanged.
 
 Do not mix a float major-unit amount with cents in the same field. Whole-unit line totals are `qty * unit_price_cents`. Discrete quantities (goods, services, consignment) are whole units. Utility and bulk quantities are integer milli-units (scale 1000); the line amount is `round(milli × unit_price_cents / 1000)`.
 

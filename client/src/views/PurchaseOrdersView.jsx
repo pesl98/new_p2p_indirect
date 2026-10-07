@@ -18,6 +18,7 @@ import {
 import { api } from '../api';
 import { documentTrailLookupForPurchaseOrder } from '../documentTrailNav';
 import { formatMoney } from '../money';
+import { t, statusLabel, categoryLabel, paymentTermLabel } from '../i18n';
 import { formatLineQuantity, isConsignmentLine, isMeasuredSettlement, isServiceLine, lineTypeWithBasisLabel } from '../lineType';
 import { formatMeasured } from '../measuredQty';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
@@ -26,19 +27,19 @@ import ChangeOrderModal from '../components/ChangeOrderModal';
 const AMENDABLE_PO_STATUSES = ['issued', 'acknowledged', 'partially_received', 'received'];
 
 function poOrigin(po) {
-  if (po.order_source === 'consignment') return 'Consignment';
-  if (po.settlement_kind === 'utility') return 'Utility';
-  if (po.settlement_kind === 'bulk') return 'Bulk draw';
-  return po.pr_number || 'Direct Order';
+  if (po.order_source === 'consignment') return t('purchasing.po.originConsignment');
+  if (po.settlement_kind === 'utility') return t('purchasing.po.originUtility');
+  if (po.settlement_kind === 'bulk') return t('purchasing.po.originBulk');
+  return po.pr_number || t('purchasing.po.originDirect');
 }
 
 function fulfillmentNote(po) {
-  if (po.order_source === 'consignment') return ' · consignment';
-  if (po.settlement_kind === 'utility') return ' · utility reading';
-  if (po.settlement_kind === 'bulk') return ' · bulk draw';
-  if (po.service_line_count > 0 && po.goods_line_count > 0) return ' · mixed PO';
-  if (po.service_line_count > 0) return ' · SES';
-  return ' · GRN';
+  if (po.order_source === 'consignment') return t('purchasing.po.noteConsignment');
+  if (po.settlement_kind === 'utility') return t('purchasing.po.noteUtility');
+  if (po.settlement_kind === 'bulk') return t('purchasing.po.noteBulk');
+  if (po.service_line_count > 0 && po.goods_line_count > 0) return t('purchasing.po.noteMixed');
+  if (po.service_line_count > 0) return t('purchasing.po.noteSes');
+  return t('purchasing.po.noteGrn');
 }
 
 export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, convertRequisitionId }) {
@@ -103,17 +104,19 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
   const getStatusBadge = (status) => {
     switch (status) {
       case 'issued':
-        return <span className="bg-sky-100 text-sky-800 text-xs px-2.5 py-1 rounded-full font-medium">Issued to Vendor</span>;
+        return <span className="bg-sky-100 text-sky-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('issued')}</span>;
+      case 'acknowledged':
+        return <span className="bg-slate-100 text-slate-800 text-xs px-2 py-0.5 rounded">{t('purchasing.po.acknowledged')}</span>;
       case 'partially_received':
-        return <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-medium">Partially Received</span>;
+        return <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('partially_received')}</span>;
       case 'received':
-        return <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-medium">Fully Received</span>;
+        return <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('received')}</span>;
       case 'closed':
-        return <span className="bg-slate-100 text-slate-800 text-xs px-2.5 py-1 rounded-full font-medium">Closed</span>;
+        return <span className="bg-slate-100 text-slate-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('closed')}</span>;
       case 'cancelled':
-        return <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-medium">Cancelled</span>;
+        return <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-medium">{statusLabel('cancelled')}</span>;
       default:
-        return <span className="bg-slate-100 text-slate-800 text-xs px-2 py-0.5 rounded">{status}</span>;
+        return <span className="bg-slate-100 text-slate-800 text-xs px-2 py-0.5 rounded">{statusLabel(status)}</span>;
     }
   };
 
@@ -122,9 +125,9 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Purchase Orders (PO)</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('purchasing.po.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Manage binding supplier purchase contracts, track shipments, and dispatch formal orders.
+            {t('purchasing.po.subtitle')}
           </p>
         </div>
 
@@ -135,7 +138,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
               className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-2"
             >
               <Plus className="w-4 h-4" />
-              <span>Convert Approved PR ({approvedPRs.length})</span>
+              <span>{t('purchasing.po.convertApproved', { n: approvedPRs.length })}</span>
             </button>
           )}
         </div>
@@ -147,24 +150,24 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">PO Number</th>
-                <th className="py-3 px-4">Supplier</th>
-                <th className="py-3 px-4">Requisition</th>
-                <th className="py-3 px-4">Total Amount</th>
-                <th className="py-3 px-4">Fulfillment Status</th>
-                <th className="py-3 px-4">Issue Date</th>
-                <th className="py-3 px-4">Delivery Due</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">{t('purchasing.po.number')}</th>
+                <th className="py-3 px-4">{t('common.supplier')}</th>
+                <th className="py-3 px-4">{t('purchasing.po.requisition')}</th>
+                <th className="py-3 px-4">{t('purchasing.pr.totalAmount')}</th>
+                <th className="py-3 px-4">{t('purchasing.po.fulfillment')}</th>
+                <th className="py-3 px-4">{t('purchasing.po.issueDate')}</th>
+                <th className="py-3 px-4">{t('purchasing.po.deliveryDue')}</th>
+                <th className="py-3 px-4 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading purchase orders...</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('purchasing.po.loading')}</td>
                 </tr>
               ) : orders.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">No purchase orders found.</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('purchasing.po.empty')}</td>
                 </tr>
               ) : (
                 orders.map((po) => {
@@ -179,7 +182,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         {po.po_number}
                         {po.revision > 0 && (
                           <span className="ml-1.5 text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
-                            Rev {po.revision}
+                            {t('purchasing.po.rev', { n: po.revision })}
                           </span>
                         )}
                       </td>
@@ -203,20 +206,28 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
                           {isMeasuredSettlement(po)
-                            ? `${formatMeasured(fulfilled, po.measured_uom)} of ${formatMeasured(po.total_qty_ordered, po.measured_uom)} fulfilled (${pct}%)`
-                            : `${fulfilled} of ${po.total_qty_ordered} units fulfilled (${pct}%)`}
+                            ? t('purchasing.po.fulfilledMeasured', {
+                                done: formatMeasured(fulfilled, po.measured_uom),
+                                ordered: formatMeasured(po.total_qty_ordered, po.measured_uom),
+                                pct
+                              })
+                            : t('purchasing.po.fulfilledUnits', {
+                                done: fulfilled,
+                                ordered: po.total_qty_ordered,
+                                pct
+                              })}
                           {fulfillmentNote(po)}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-slate-500">{po.issue_date}</td>
-                      <td className="py-3 px-4 text-slate-500">{po.expected_delivery_date || 'TBD'}</td>
+                      <td className="py-3 px-4 text-slate-500">{po.expected_delivery_date || t('purchasing.po.tbd')}</td>
                       <td className="py-3 px-4 text-right space-x-2">
                         <button
                           onClick={() => handleOpenDetail(po.id)}
                           className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded font-semibold text-[11px] inline-flex items-center space-x-1"
                         >
                           <Eye className="w-3.5 h-3.5" />
-                          <span>View PO</span>
+                          <span>{t('purchasing.po.view')}</span>
                         </button>
                         {po.status !== 'received' && po.status !== 'closed' && po.goods_line_count > 0 && (
                           <button
@@ -290,7 +301,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
             <div className="p-4 bg-slate-800 text-white flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center space-x-2 text-xs">
                 <FileText className="w-4 h-4 text-emerald-400" />
-                <span className="font-bold">Official Purchase Order Document</span>
+                <span className="font-bold">{t('purchasing.po.official')}</span>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
@@ -299,7 +310,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg font-medium flex items-center space-x-1"
                 >
                   <GitBranch className="w-3.5 h-3.5" />
-                  <span>Document trail</span>
+                  <span>{t('common.documentTrail')}</span>
                 </button>
                 {AMENDABLE_PO_STATUSES.includes(selectedPO.status) && !isMeasuredSettlement(selectedPO) && (
                   <button
@@ -307,7 +318,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                     className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-xs rounded-lg font-medium flex items-center space-x-1"
                   >
                     <FileEdit className="w-3.5 h-3.5" />
-                    <span>Change order</span>
+                    <span>{t('purchasing.po.changeOrder')}</span>
                   </button>
                 )}
                 <button
@@ -315,7 +326,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-xs rounded-lg font-medium flex items-center space-x-1"
                 >
                   <Printer className="w-3.5 h-3.5" />
-                  <span>Print Document</span>
+                  <span>{t('purchasing.po.print')}</span>
                 </button>
                 <button onClick={() => setSelectedPO(null)} className="text-slate-400 hover:text-white p-1">
                   <X className="w-5 h-5" />
@@ -329,16 +340,16 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
               <div className="flex justify-between items-start border-b border-slate-200 pb-6">
                 <div>
                   <h1 className="text-2xl font-black text-slate-900 tracking-tight">ACME ENTERPRISE CORP</h1>
-                  <p className="text-slate-500 mt-1">450 Tech Blvd, Building B<br />Austin, TX 78701 • Tax ID: US-8823901</p>
-                  <p className="text-slate-500 mt-0.5">Procurement Dept: purchasing@acme.com</p>
+                  <p className="text-slate-500 mt-1">450 Tech Blvd, Building B<br />Austin, TX 78701 • {t('purchasing.po.taxId')}: US-8823901</p>
+                  <p className="text-slate-500 mt-0.5">{t('purchasing.po.procurementDept')}: purchasing@acme.com</p>
                 </div>
                 <div className="text-right">
                   <div className="text-xl font-mono font-black text-indigo-700">
                     {selectedPO.po_number}
-                    {selectedPO.revision > 0 ? ` · Rev ${selectedPO.revision}` : ''}
+                    {selectedPO.revision > 0 ? ` · ${t('purchasing.po.rev', { n: selectedPO.revision })}` : ''}
                   </div>
-                  <div className="text-slate-500 mt-1">Date: <strong>{selectedPO.issue_date}</strong></div>
-                  <div className="text-slate-500">Terms: <strong>{selectedPO.payment_terms}</strong></div>
+                  <div className="text-slate-500 mt-1">{t('common.date')}: <strong>{selectedPO.issue_date}</strong></div>
+                  <div className="text-slate-500">{t('purchasing.po.terms')}: <strong>{paymentTermLabel(selectedPO.payment_terms)}</strong></div>
                   <div className="mt-2">{getStatusBadge(selectedPO.status)}</div>
                 </div>
               </div>
@@ -346,16 +357,16 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
               {/* Vendor & Ship-To Blocks */}
               <div className="grid grid-cols-2 gap-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Vendor / Supplier</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{t('common.supplier')}</span>
                   <div className="font-bold text-slate-900 text-sm">{selectedPO.supplier_name}</div>
-                  <div className="text-slate-600 mt-0.5">{selectedPO.supplier_address || 'Supplier Headquarters'}</div>
-                  <div className="text-slate-500 mt-0.5">Contact: {selectedPO.supplier_contact || 'B2B Sales'} ({selectedPO.supplier_email})</div>
+                  <div className="text-slate-600 mt-0.5">{selectedPO.supplier_address || t('purchasing.po.supplierHq')}</div>
+                  <div className="text-slate-500 mt-0.5">{t('common.contact')}: {selectedPO.supplier_contact || t('purchasing.po.b2bSales')} ({selectedPO.supplier_email})</div>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Ship-To Location</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">{t('purchasing.po.shipTo')}</span>
                   <div className="font-bold text-slate-900 text-sm">Acme Corp Receiving Dock</div>
                   <div className="text-slate-600 mt-0.5">{selectedPO.shipping_address}</div>
-                  <div className="text-slate-500 mt-0.5">Buyer: {selectedPO.buyer_name} ({selectedPO.buyer_email})</div>
+                  <div className="text-slate-500 mt-0.5">{t('purchasing.po.buyer')}: {selectedPO.buyer_name} ({selectedPO.buyer_email})</div>
                 </div>
               </div>
 
@@ -364,13 +375,13 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                 <table className="w-full text-left border border-slate-200 rounded-lg overflow-hidden">
                   <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px]">
                     <tr>
-                      <th className="py-2.5 px-3">Item / Service Description</th>
-                      <th className="py-2.5 px-3">Type</th>
-                      <th className="py-2.5 px-3">Category</th>
-                      <th className="py-2.5 px-3 text-center">Qty Ordered</th>
-                      <th className="py-2.5 px-3 text-center">Fulfilled</th>
-                      <th className="py-2.5 px-3 text-right">Unit Price</th>
-                      <th className="py-2.5 px-3 text-right">Total</th>
+                      <th className="py-2.5 px-3">{t('purchasing.po.itemDesc')}</th>
+                      <th className="py-2.5 px-3">{t('common.type')}</th>
+                      <th className="py-2.5 px-3">{t('common.category')}</th>
+                      <th className="py-2.5 px-3 text-center">{t('purchasing.po.qtyOrdered')}</th>
+                      <th className="py-2.5 px-3 text-center">{t('purchasing.po.fulfilled')}</th>
+                      <th className="py-2.5 px-3 text-right">{t('common.unitPrice')}</th>
+                      <th className="py-2.5 px-3 text-right">{t('common.total')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -391,7 +402,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                             {lineTypeWithBasisLabel(item)}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-500">{item.category}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{categoryLabel(item.category)}</td>
                         <td className="py-2.5 px-3 text-center font-semibold">{formatLineQuantity(item)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <span className={`font-semibold ${fulfilled >= item.quantity ? 'text-emerald-700' : 'text-amber-600'}`}>
@@ -400,7 +411,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                               quantity_scale: item.quantity_scale,
                               unit_of_measure: item.unit_of_measure,
                               service_basis: service ? item.service_basis : null
-                            })} {service ? 'SES' : measured ? 'consumed' : consignment ? 'drawn' : 'GRN'}
+                            })} {service ? 'SES' : measured ? t('purchasing.po.consumed') : consignment ? t('purchasing.po.drawn') : 'GRN'}
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">{formatMoney(item.unit_price)}</td>
@@ -413,7 +424,7 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
                   </tbody>
                   <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
                     <tr>
-                      <td colSpan="6" className="py-2.5 px-3 text-right text-slate-600">Total Purchase Order Value:</td>
+                      <td colSpan="6" className="py-2.5 px-3 text-right text-slate-600">{t('purchasing.po.totalValue')}</td>
                       <td className="py-2.5 px-3 text-right text-emerald-700 text-sm font-black">
                         {formatMoney(selectedPO.total_amount)}
                       </td>
@@ -425,27 +436,27 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
               {/* Terms & Signature Box */}
               <div className="pt-4 border-t border-slate-200 grid grid-cols-2 gap-6 text-[11px] text-slate-500">
                 <div>
-                  <span className="font-bold text-slate-700 block mb-1">Standard Purchase Terms:</span>
+                  <span className="font-bold text-slate-700 block mb-1">{t('purchasing.po.standardTerms')}</span>
                   <p className="leading-relaxed">
                     {selectedPO.order_source === 'consignment'
-                      ? `This PO is a consignment draw-down. Supplier-owned stock was issued into company use. Invoice match uses the drawn quantity. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
+                      ? t('purchasing.po.termsConsignment', { number: selectedPO.po_number })
                       : selectedPO.settlement_kind === 'utility'
-                        ? `This PO bills measured utility consumption. Invoice match uses the recorded usage. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
+                        ? t('purchasing.po.termsUtility', { number: selectedPO.po_number })
                         : selectedPO.settlement_kind === 'bulk'
-                          ? `This PO is a vendor-managed bulk draw-down. Invoice match uses the measured quantity taken from the vessel. No GRN was posted. Invoices must reference Purchase Order #${selectedPO.po_number}.`
-                          : `Goods are received on a GRN; services are accepted on a Service Entry Sheet. Invoices must reference Purchase Order #${selectedPO.po_number}. Goods match PO+GRN+invoice; services match PO+SES+invoice.`}
+                          ? t('purchasing.po.termsBulk', { number: selectedPO.po_number })
+                          : t('purchasing.po.termsDefault', { number: selectedPO.po_number })}
                   </p>
                 </div>
                 <div className="border border-dashed border-slate-300 rounded-xl p-3 flex flex-col justify-between">
                   <div className="flex justify-between text-[10px] text-slate-400 uppercase font-bold">
-                    <span>Authorized Procurement Signature</span>
-                    <span>Electronic Validation</span>
+                    <span>{t('purchasing.po.signature')}</span>
+                    <span>{t('purchasing.po.electronic')}</span>
                   </div>
                   <div className="font-serif italic text-base text-slate-800 my-1">
                     {selectedPO.buyer_name}
                   </div>
                   <div className="text-[10px] text-slate-400">
-                    Acme Strategic Sourcing • Signed {selectedPO.issue_date}
+                    {t('purchasing.po.signed', { date: selectedPO.issue_date })}
                   </div>
                 </div>
               </div>
@@ -453,13 +464,13 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
 
             {selectedPO.change_orders?.length > 0 && (
               <div className="px-8 pb-4 text-xs">
-                <div className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-2">Change orders</div>
+                <div className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-2">{t('purchasing.po.changeOrders')}</div>
                 <div className="space-y-2">
                   {selectedPO.change_orders.map((co) => (
                     <div key={co.id} className="border border-slate-200 rounded-lg px-3 py-2 bg-slate-50">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono font-bold text-slate-900">{co.co_number}</span>
-                        <span className="text-[10px] font-semibold text-indigo-700">Rev {co.revision} · {co.status}</span>
+                        <span className="text-[10px] font-semibold text-indigo-700">{t('purchasing.po.rev', { n: co.revision })} · {statusLabel(co.status)}</span>
                       </div>
                       <div className="text-slate-600 mt-1">{co.reason}</div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
@@ -474,22 +485,22 @@ export default function PurchaseOrdersView({ currentUser, onNavigate, focusId, c
 
             {selectedPO.service_entry_sheets?.length > 0 && (
               <div className="px-8 pb-4 text-xs">
-                <div className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-1">Service Entry Sheets</div>
+                <div className="font-bold text-slate-700 uppercase tracking-wider text-[10px] mb-1">{t('purchasing.po.sesHeading')}</div>
                 <div className="text-slate-600">
-                  {selectedPO.service_entry_sheets.map((ses) => `${ses.ses_number} (${ses.status})`).join(' · ')}
+                  {selectedPO.service_entry_sheets.map((ses) => `${ses.ses_number} (${statusLabel(ses.status)})`).join(' · ')}
                 </div>
               </div>
             )}
 
             <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <div className="text-xs text-slate-500">
-                Associated Requisition: <strong className="text-slate-800">{selectedPO.pr_number || 'Direct'}</strong>
+                {t('purchasing.po.associated')} <strong className="text-slate-800">{selectedPO.pr_number || t('purchasing.po.direct')}</strong>
               </div>
               <button
                 onClick={() => setSelectedPO(null)}
                 className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
               >
-                Close View
+                {t('common.close')}
               </button>
             </div>
           </div>

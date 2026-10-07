@@ -23,7 +23,7 @@
     "dev:server": "node --watch server/src/index.js",
     "dev:client": "npm --prefix client run dev",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "test": "node --test server/src/*.test.js client/src/documentTrailNav.test.js",
+    "test": "node --test server/src/*.test.js client/src/documentTrailNav.test.js client/src/i18n.test.js client/src/money.test.js",
     "build": "npm --prefix client install && npm --prefix client run build && rm -rf public && mkdir -p public && cp -r client/dist/. public/"
   },
   "dependencies": {
