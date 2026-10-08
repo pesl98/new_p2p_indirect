@@ -17,6 +17,17 @@ function escapeHtml(message) {
     .replace(/>/g, '&gt;');
 }
 
+function previewDbSteps() {
+  return `<h2>Preview needs its own database</h2>
+  <ol>
+    <li>Create <code>procureflow-&lt;slug&gt;-preview</code> in the same Turso group and location as production.</li>
+    <li>On the Vercel <strong>Preview</strong> environment set <code>TURSO_PREVIEW_DATABASE_URL</code> and <code>TURSO_PREVIEW_AUTH_TOKEN</code>.</li>
+    <li>A preview URL and token are enough. Set <code>TURSO_PRODUCTION_DATABASE_URL</code> (no token) when you also have the production URL on Preview, so the host can be compared. <code>vercel:customer</code> copies <code>TURSO_DATABASE_URL</code> and <code>TURSO_AUTH_TOKEN</code> onto Preview; those are compared and are not the preview connection.</li>
+    <li>The preview host must not be the production host. Scheme (<code>libsql</code>, <code>https</code>, <code>http</code>, <code>wss</code>), path, and query are ignored. A legacy <code>name.turso.io</code> host and a regional <code>name.aws-….turso.io</code> host are the same database. The preview token must not equal the production token when that token is present.</li>
+    <li>Redeploy the Preview. <code>ALLOW_PREVIEW_PRODUCTION_DATABASE=allow</code> is ignored when a valid preview database is set. It serves production only when Preview has no valid database of its own.</li>
+  </ol>`;
+}
+
 export function configErrorHtml(message, { code } = {}) {
   const detail = escapeHtml(message);
   const steps = code === 'currency_misconfigured'
@@ -28,6 +39,10 @@ export function configErrorHtml(message, { code } = {}) {
     <li>Enable <strong>Production</strong> and <strong>Preview</strong> (or All Environments)</li>
     <li>Redeploy after saving — env changes do not apply to an old deploy</li>
   </ol>`
+    : (code === 'preview_db_unconfigured'
+      || code === 'preview_db_matches_production'
+      || code === 'preview_db_token_matches_production')
+    ? previewDbSteps()
     : `<h2>Set these on Vercel</h2>
   <ol>
     <li>Project → Settings → Environment Variables</li>
@@ -61,10 +76,12 @@ export function sendConfigError(req, res, error, statusCode = 503) {
   const message = error?.message || TURSO_REQUIRED_MSG;
   const status = error?.statusCode || statusCode;
   if (wantsJson(req)) {
-    return res.status(status).json({
+    const body = {
       error: error?.name || 'TursoConfigError',
       detail: message
-    });
+    };
+    if (error?.code) body.code = error.code;
+    return res.status(status).json(body);
   }
   return res.status(status).type('html').send(configErrorHtml(message, { code: error?.code }));
 }

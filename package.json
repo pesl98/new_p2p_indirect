@@ -10,6 +10,8 @@
     "seed": "node server/src/seed.js",
     "db:migrate": "node server/scripts/db-migrate.js",
     "db:status": "node server/scripts/db-status.js",
+    "db:seed:preview": "node server/scripts/seed-preview.js",
+    "db:invoice-proposal-pdf-column": "node server/scripts/invoice-proposal-pdf-column.js",
     "bootstrap-admin": "node server/src/bootstrapAdmin.js",
     "bootstrap-org": "node server/scripts/bootstrap-org.js",
     "provision:customer": "node server/scripts/provision-customer.js",

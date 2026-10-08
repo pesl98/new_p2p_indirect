@@ -2,8 +2,21 @@
  * Turso / libSQL SQL-over-HTTP client (POST /v2/pipeline).
  *
  * No native libsql/.so — safe on Vercel serverless. Uses fetch (Node 18+).
- * Transactions keep a Hrana baton so BEGIN/COMMIT share one connection.
+ * An interactive transaction is a Hrana stream identified by a baton. The
+ * baton and the nesting count live in AsyncLocalStorage, one store per
+ * transaction() call, so concurrent requests on one warm instance cannot
+ * share a stream. Statements outside a store send no baton and close.
  */
+
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+const txLocal = new AsyncLocalStorage();
+
+function currentTx(client) {
+  const store = txLocal.getStore();
+  if (!store || store.client !== client) return null;
+  return store;
+}
 
 export class TursoHttpError extends Error {
   constructor(message, { statusCode = 500 } = {}) {
@@ -282,9 +295,6 @@ export class TursoHttpClient {
     this._token = authToken;
     this._timeout = timeout;
     this._fetch = fetchImpl;
-    this._baton = null;
-    this._baseUrl = null;
-    this._inTransaction = 0;
   }
 
   get mode() {
@@ -296,7 +306,43 @@ export class TursoHttpClient {
   }
 
   inTransaction() {
-    return this._inTransaction > 0;
+    return (currentTx(this)?.depth || 0) > 0;
+  }
+
+  /**
+   * Run `fn` outside this client's transaction store. Async work created
+   * inside `fn` (including setImmediate) does not inherit the open baton.
+   */
+  runOutsideTransaction(fn) {
+    return txLocal.exit(fn);
+  }
+
+  /**
+   * One non-interactive pipeline: BEGIN, the statements, COMMIT, close.
+   * Turso's interactive-transaction cap does not apply. Refuses to join
+   * an open interactive transaction.
+   */
+  async batch(statements) {
+    if ((currentTx(this)?.depth || 0) > 0) {
+      throw new TursoHttpError('batch() cannot run inside an interactive transaction');
+    }
+    const requests = [{ type: 'execute', stmt: { sql: 'BEGIN' } }];
+    for (const item of statements || []) {
+      if (item?.exec) {
+        for (const sql of splitSqlScript(item.sql)) {
+          requests.push({ type: 'execute', stmt: { sql } });
+        }
+      } else if (item?.sql) {
+        const args = [...(item.args || [])].map(encodeArg);
+        const stmt = { sql: item.sql };
+        if (args.length) stmt.args = args;
+        requests.push({ type: 'execute', stmt });
+      }
+    }
+    if (requests.length === 1) return;
+    requests.push({ type: 'execute', stmt: { sql: 'COMMIT' } });
+    requests.push({ type: 'close' });
+    await this._pipeline(requests, { keepOpen: false });
   }
 
   _headers() {
@@ -307,12 +353,13 @@ export class TursoHttpClient {
   }
 
   async _pipeline(requests, { keepOpen = false } = {}) {
+    const tx = currentTx(this);
     const body = { requests };
-    if (this._baton) body.baton = this._baton;
+    if (tx?.baton) body.baton = tx.baton;
 
     let response;
     try {
-      response = await this._fetch(this._baseUrl || this.pipelineUrl, {
+      response = await this._fetch(tx?.baseUrl || this.pipelineUrl, {
         method: 'POST',
         headers: this._headers(),
         body: JSON.stringify(body),
@@ -346,18 +393,15 @@ export class TursoHttpClient {
       throw new TursoHttpError(`Turso HTTP returned non-JSON: ${text.slice(0, 300)}`);
     }
 
-    this._baton = payload.baton || null;
-    if (payload.base_url) this._baseUrl = payload.base_url;
+    if (tx && keepOpen) {
+      tx.baton = payload.baton || null;
+      if (payload.base_url) tx.baseUrl = payload.base_url;
+    }
 
     const executes = extractExecuteResults(payload);
     const lastExecute = executes.length
       ? executes[executes.length - 1]
       : { cols: [], rows: [], affected_row_count: 0, last_insert_rowid: null };
-
-    if (!keepOpen && !this._inTransaction) {
-      this._baton = null;
-      this._baseUrl = null;
-    }
 
     return { ...lastExecute, executes };
   }
@@ -367,10 +411,10 @@ export class TursoHttpClient {
     const stmt = { sql };
     if (args.length) stmt.args = args;
     const requests = [{ type: 'execute', stmt }];
-    if (!keepOpen && !this._inTransaction) {
-      requests.push({ type: 'close' });
-    }
-    return this._pipeline(requests, { keepOpen: keepOpen || this._inTransaction > 0 });
+    const inTx = (currentTx(this)?.depth || 0) > 0;
+    const hold = keepOpen || inTx;
+    if (!hold) requests.push({ type: 'close' });
+    return this._pipeline(requests, { keepOpen: hold });
   }
 
   prepare(sql) {
@@ -397,7 +441,7 @@ export class TursoHttpClient {
         if (insertLike) {
           requests.push({ type: 'execute', stmt: { sql: 'SELECT last_insert_rowid() AS id' } });
         }
-        const keepOpen = client._inTransaction > 0;
+        const keepOpen = (currentTx(client)?.depth || 0) > 0;
         if (!keepOpen) requests.push({ type: 'close' });
 
         const result = await client._pipeline(requests, { keepOpen });
@@ -426,8 +470,9 @@ export class TursoHttpClient {
     const stmts = splitSqlScript(sql);
     if (stmts.length === 0) return;
     const requests = stmts.map((stmt) => ({ type: 'execute', stmt: { sql: stmt } }));
-    if (!this._inTransaction) requests.push({ type: 'close' });
-    await this._pipeline(requests, { keepOpen: this._inTransaction > 0 });
+    const inTx = (currentTx(this)?.depth || 0) > 0;
+    if (!inTx) requests.push({ type: 'close' });
+    await this._pipeline(requests, { keepOpen: inTx });
   }
 
   async pragma(source) {
@@ -453,53 +498,58 @@ export class TursoHttpClient {
   _transaction(fn, beginSql) {
     const client = this;
     const run = async (...args) => {
-      const nested = client._inTransaction > 0;
-      if (!nested) {
-        client._inTransaction += 1;
-        await client._execute(beginSql, [], { keepOpen: true });
-      } else {
-        client._inTransaction += 1;
+      const existing = currentTx(client);
+      if (existing && existing.depth > 0) {
+        existing.depth += 1;
         await client._execute('SAVEPOINT pf_tx', [], { keepOpen: true });
-      }
-      try {
-        const result = await fn(...args);
-        if (!nested) {
-          await client._execute('COMMIT', [], { keepOpen: true });
-          await client._pipeline([{ type: 'close' }]);
-          client._baton = null;
-          client._baseUrl = null;
-        } else {
-          await client._execute('RELEASE pf_tx', [], { keepOpen: true });
-        }
-        client._inTransaction -= 1;
-        return result;
-      } catch (error) {
         try {
-          if (!nested) {
-            await client._execute('ROLLBACK', [], { keepOpen: true });
-            await client._pipeline([{ type: 'close' }]);
-          } else {
+          const result = await fn(...args);
+          await client._execute('RELEASE pf_tx', [], { keepOpen: true });
+          existing.depth -= 1;
+          return result;
+        } catch (error) {
+          try {
             await client._execute('ROLLBACK TO pf_tx', [], { keepOpen: true });
             await client._execute('RELEASE pf_tx', [], { keepOpen: true });
+          } catch {
+            // ignore rollback failures
           }
-        } catch {
-          // ignore rollback failures
+          existing.depth = Math.max(0, existing.depth - 1);
+          throw error;
         }
-        client._inTransaction = Math.max(0, client._inTransaction - 1);
-        if (client._inTransaction === 0) {
-          client._baton = null;
-          client._baseUrl = null;
-        }
-        throw error;
       }
+
+      const ctx = { client, baton: null, baseUrl: null, depth: 0 };
+      return txLocal.run(ctx, async () => {
+        ctx.depth = 1;
+        try {
+          await client._execute(beginSql, [], { keepOpen: true });
+          try {
+            const result = await fn(...args);
+            await client._execute('COMMIT', [], { keepOpen: true });
+            await client._pipeline([{ type: 'close' }], { keepOpen: true });
+            return result;
+          } catch (error) {
+            try {
+              await client._execute('ROLLBACK', [], { keepOpen: true });
+              await client._pipeline([{ type: 'close' }], { keepOpen: true });
+            } catch {
+              // ignore rollback failures
+            }
+            throw error;
+          }
+        } finally {
+          ctx.depth = 0;
+          ctx.baton = null;
+          ctx.baseUrl = null;
+        }
+      });
     };
     run.then = (onFulfilled, onRejected) => run().then(onFulfilled, onRejected);
     return run;
   }
 
   close() {
-    this._baton = null;
-    this._baseUrl = null;
-    this._inTransaction = 0;
+    // Baton state is per transaction, not on this shared client.
   }
 }
