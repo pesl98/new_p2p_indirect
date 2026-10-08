@@ -125,12 +125,12 @@ The customer CLIs write only three variables, and only to **Production** and **P
 
 | Variable | Purpose | Required? | Vercel environments | Secret? | How it is produced |
 | --- | --- | --- | --- | --- | --- |
-| `TURSO_DATABASE_URL` | libSQL URL of this customer’s **production** database (usually `libsql://…`). | Required on Vercel Production. Required locally if you want Turso. Must be set together with the token. | **Production.** The customer CLIs still copy it to Preview; the app does not open that copy. On Preview it is only a comparison value when `TURSO_PRODUCTION_DATABASE_URL` is unset. Not set on Development by the scripts. | Treat as sensitive. It names the database. | `turso db show procureflow-<slug> --url`, printed by `npm run turso:customer -- --apply`. |
-| `TURSO_AUTH_TOKEN` | Database token for the production URL. | Required on Production together with the URL. An org or platform JWT is the wrong kind and returns Turso HTTP 401 (the app surfaces that as 503). | **Production.** The CLIs still copy it to Preview. Preview does not use it to connect. Not set on Development by the scripts. | Yes. | `turso db tokens create procureflow-<slug>`. Not `turso auth token`. |
+| `TURSO_DATABASE_URL` | libSQL URL of this customer’s **production** database (usually `libsql://…`). | Required on Vercel Production. Required locally if you want Turso. Must be set together with the token. | **Production.** The customer CLIs still copy it to Preview. Preview does not connect with that copy. When it is present, its host is compared with the preview host. Not set on Development by the scripts. | Treat as sensitive. It names the database. | `turso db show procureflow-<slug> --url`, printed by `npm run turso:customer -- --apply`. |
+| `TURSO_AUTH_TOKEN` | Database token for the production URL. | Required on Production together with the URL. An org or platform JWT is the wrong kind and returns Turso HTTP 401 (the app surfaces that as 503). | **Production.** The CLIs still copy it to Preview. Preview does not connect with it. When it is present, it must differ from `TURSO_PREVIEW_AUTH_TOKEN`. Not set on Development by the scripts. | Yes. | `turso db tokens create procureflow-<slug>`. Not `turso auth token`. |
 | `TURSO_PREVIEW_DATABASE_URL` | libSQL URL of this customer’s **preview** database, `procureflow-<slug>-preview`. | Required when `VERCEL_ENV=preview`. | **Preview only.** Do not set it on Production. | Treat as sensitive. It names the database. | `turso db show procureflow-<slug>-preview --url`. Not created by the CLIs. |
 | `TURSO_PREVIEW_AUTH_TOKEN` | Database token for the preview URL. | Required on Preview together with the preview URL. | **Preview only.** | Yes. | `turso db tokens create procureflow-<slug>-preview`. |
-| `TURSO_PRODUCTION_DATABASE_URL` | The production libsql URL, used only to prove Preview is not that database. No token. | Required on Preview when Preview does not also have `TURSO_DATABASE_URL` set to the production URL. | **Preview.** Optional on Production (ignored). | Treat as sensitive. It names the production database. | The same value as production `TURSO_DATABASE_URL`. |
-| `ALLOW_PREVIEW_PRODUCTION_DATABASE` | Escape hatch. The only value that does anything is the exact word `allow`. | Leave unset. `1` and `true` do nothing. | Preview, and only if you accept Preview serving the production database. The process logs an error every time it loads config. | No. | Do not set it for a customer. |
+| `TURSO_PRODUCTION_DATABASE_URL` | The production libsql URL, used only to compare hosts. No token. | Optional. Set it on Preview when the production URL is not already there as `TURSO_DATABASE_URL`. A preview pair alone is enough to boot. | **Preview.** Optional on Production (ignored). | Treat as sensitive. It names the production database. | The same value as production `TURSO_DATABASE_URL`. |
+| `ALLOW_PREVIEW_PRODUCTION_DATABASE` | Escape hatch. The only value that does anything is the exact word `allow`. | Leave unset. `1` and `true` do nothing. Ignored when a valid preview database is configured. | Preview, and only if you accept Preview serving the production database because it has no valid preview database. The process logs an error every time it loads config. | No. | Do not set it for a customer. |
 | `SESSION_SECRET` | HMAC key for the `pf_session` cookie. | Required for a customer / Vercel deploy. If it is unset, local dev uses a built-in insecure default. On Vercel, or when `NODE_ENV=production`, the process logs a warning. | Production and Preview. One value per customer project. Do not reuse it across customers. | Yes. | 32-byte hex. `turso:customer --apply` mints one with `crypto.randomBytes(32)` unless `SESSION_SECRET` is already exported, in which case it **reuses** it and does not rotate. Or: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. |
 | `DEMO_PERSONA_SWITCHER` | Shows the header persona switcher when the value is `1`, `true`, or `yes`. Any other value, including unset, `0`, `false`, and `no`, leaves it off. | Optional. Leave unset on a live customer. | Do not set it for a real customer. The CLIs will not copy it to Vercel even if it is set in your shell. | No. | Set the shell variable yourself only for a training demo. |
 | `PROCUREMENT_DB_PATH` | SQLite file path. Used only when both Turso variables are unset. | Optional locally. Do **not** set it on Vercel. Serverless has no durable disk. | Leave unset on Vercel. | The file holds all P2P data. Do not commit it. | A path you choose, for example `server/data/acme.db`. Default is `server/data/procurement.db`. |
@@ -244,14 +244,14 @@ Sprint 8.0 refuses to serve when `VERCEL_ENV=preview` would use the production d
 | | |
 | --- | --- |
 | Name | `procureflow-<slug>-preview` (example: `procureflow-acme-preview`) |
-| Engine | Classic libSQL. Do not pass `--tursodb`. |
+| Engine | Classic libSQL. Do not pass `--turso` or `--tursodb`. |
 | Region | The same group and primary location as `procureflow-<slug>`. |
 
 This repo does not record a location code. `turso db create procureflow-<slug>` is run with no `--group` and no `--location`, so production lives in the organization’s default group and that group’s primary location (section 4.2). Match that. Run `turso db show procureflow-<slug>` and, if it prints a group or location, pass the same `--group` and `--location` your CLI documents. If it does not name one, create the preview database with the same CLI and **no** `--group` or `--location`, so it lands in that same default primary location. Do not pick a different region.
 
 ```bash
 turso db show procureflow-acme
-turso db create procureflow-acme-preview          # no --tursodb; add --group/--location only to match production
+turso db create procureflow-acme-preview          # classic libSQL: do not pass --turso or --tursodb; add --group/--location only to match production
 turso db show procureflow-acme-preview --url
 turso db tokens create procureflow-acme-preview   # database token, not an org JWT
 ```
@@ -262,15 +262,17 @@ Set these on the existing project. Do not create a second Vercel project for pre
 
 | Variable | Production | Preview | Development |
 | --- | --- | --- | --- |
-| `TURSO_DATABASE_URL` | Production URL. Required. | Do not use as the connection. You may leave the value the CLI copied, as the comparison URL. | Unset. Local sqlite, as today. |
-| `TURSO_AUTH_TOKEN` | Production token. Required. | Not used to connect. | Unset. |
+| `TURSO_DATABASE_URL` | Production URL. Required. | Do not use as the connection. Compared when present (`vercel:customer` copies it). On this project it was Production-only; leave it unset on Preview unless you want the host check. | Unset. Local sqlite, as today. |
+| `TURSO_AUTH_TOKEN` | Production token. Required. | Not used to connect. Compared when present. | Unset. |
 | `TURSO_PREVIEW_DATABASE_URL` | Do not set. | Preview URL. Required. | Do not set. |
 | `TURSO_PREVIEW_AUTH_TOKEN` | Do not set. | Preview token. Required. | Do not set. |
-| `TURSO_PRODUCTION_DATABASE_URL` | Do not set. | Production URL, no token. Required if Preview does not still have `TURSO_DATABASE_URL`. | Do not set. |
+| `TURSO_PRODUCTION_DATABASE_URL` | Do not set. | Optional production URL, no token. Use it for the host check when `TURSO_DATABASE_URL` is unset on Preview. | Do not set. |
 | `SESSION_SECRET` | Unchanged. | Unchanged. The CLI still sets it. | Unset, unless you are running `vercel dev`. |
-| `ALLOW_PREVIEW_PRODUCTION_DATABASE` | Do not set. | Do not set. Exact `allow` serves production and is logged as an error. | Ignored. |
+| `ALLOW_PREVIEW_PRODUCTION_DATABASE` | Do not set. | Do not set. Exact `allow` serves production only when Preview has no valid database of its own, and that is logged as an error. | Ignored. |
 
-`libsql://` and `https://` for the same host are the same database. A trailing slash does not make them different. If the preview URL equals the production URL, or either preview variable is missing, the deployment returns **503** and logs `ProcureFlow preview database refused: …`. `GET /api/health` returns that reason (`code` is `preview_db_unconfigured`, `preview_db_unverified`, or `preview_db_matches_production`). It does not include the token.
+The preview URL and token are enough to boot. Preview does not 503 merely because `TURSO_PRODUCTION_DATABASE_URL` and `TURSO_DATABASE_URL` are absent, and it does not open local SQLite. When a production URL is visible, the hosts are compared after normalisation: lower case, no scheme (`libsql`, `https`, `http`, `wss`), no path, no query. `name.turso.io` and `name.<region>.turso.io` are the same database. When `TURSO_AUTH_TOKEN` is visible, it must differ from the preview token. A missing preview URL or token returns **503** and logs `ProcureFlow preview database refused: …`. `GET /api/health` returns that reason (`code` is `preview_db_unconfigured`, `preview_db_matches_production`, or `preview_db_token_matches_production`). It does not include the token.
+
+On `new-p2p-indirect`, Production is the only environment that had `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`. Preview had no Turso variables until the preview URL was added. A Preview deploy of main in that shape, including the 7b deployments `f94a732` and `2496b85`, hits `createApp` with `VERCEL_ENV=preview` and no Turso pair. That returns the 503 configuration page and never calls `getDb()`, so it does not open `server/data/procurement.db`, a file under `/tmp`, or the production database. Those previews most likely never touched production. The guarded `pdf_bytes` check stays in this release anyway.
 
 Production (`VERCEL_ENV=production`) and a laptop with `VERCEL_ENV` unset keep using `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` or local SQLite, exactly as before.
 
@@ -282,13 +284,14 @@ From a laptop, point the process at the preview database. Do not export the prod
 export VERCEL_ENV=preview
 export TURSO_PREVIEW_DATABASE_URL='libsql://…'          # procureflow-<slug>-preview
 export TURSO_PREVIEW_AUTH_TOKEN='…'
-export TURSO_PRODUCTION_DATABASE_URL='libsql://…'       # production URL, comparison only
+export TURSO_PRODUCTION_DATABASE_URL='libsql://…'       # optional; host check only, no token
+unset TURSO_DATABASE_URL
 unset TURSO_AUTH_TOKEN
-npm run db:migrate
+npm run db:migrate          # do not pass --turso; that flag demands TURSO_DATABASE_URL
 npm run db:seed:preview
 ```
 
-`db:migrate` applies the schema to whichever database `VERCEL_ENV=preview` selected (the preview URL). `db:seed:preview` loads the same demo personas as `npm run seed` (password `ProcureFlow!demo`). A second run sees `elena.rostova@company.com` and changes nothing. If the database already has other users or departments, it refuses. It does not drop tables.
+`db:migrate` applies the schema to whichever database `VERCEL_ENV=preview` selected (the preview URL). Do not pass `--turso`: that flag requires `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` and fails closed when they are unset. `db:seed:preview` loads the same demo personas as `npm run seed` (password `ProcureFlow!demo`) in short batches, so the load is not one interactive Turso transaction. A second run sees `elena.rostova@company.com` and changes nothing. If the database already has other users or departments, it refuses. It does not drop tables. The demo password is public. Keep Vercel Deployment Protection on for that Preview.
 
 `npm run seed` is still the destructive local wipe. Do not point it at production, and do not use it for this preview path.
 
@@ -437,7 +440,7 @@ vercel inspect <deployment-url-or-id> --json
 | Target | What it is |
 | --- | --- |
 | Production | The deployment `vercel deploy --prod` / `vercel redeploy` updates. Default hostname `https://procureflow-<slug>.vercel.app`. Custom domains you attach to Production also hit this deployment. |
-| Preview | Other deployment URLs. They need `SESSION_SECRET` plus their own Turso database (section 4.2.1). The production URL on Preview is not a connection. An old Preview keeps the env it was built with until you rebuild it. A Preview without `TURSO_PREVIEW_DATABASE_URL` returns 503. |
+| Preview | Other deployment URLs. They need `SESSION_SECRET` plus their own Turso database (section 4.2.1). The production URL on Preview is not a connection. An old Preview keeps the env it was built with until you rebuild it. A Preview without `TURSO_PREVIEW_DATABASE_URL` or `TURSO_PREVIEW_AUTH_TOKEN` returns 503 and does not open local SQLite. |
 | Development | `vercel dev` / env pulled for local CLI development. The customer scripts do not write this target. Use a shell or `.env` locally instead. |
 
 Custom domains are not set by these scripts. In the dashboard: Project → Settings → Domains → add the hostname, then create the DNS records Vercel shows you. After the domain serves Production, point smoke at it:
@@ -1072,7 +1075,7 @@ What to do: `vercel switch` to the team that owns `procureflow-<slug>`. Run from
 
 ### Preview URL broken, Production works
 
-`GET /api/health` on Preview returns **503** with `code` `preview_db_unconfigured`, `preview_db_unverified`, or `preview_db_matches_production` when Preview has no database of its own or that URL is the production URL. The function log contains `ProcureFlow preview database refused`. Create `procureflow-<slug>-preview` in the same Turso group and location as production and set the Preview variables in section 4.2.1, then rebuild the Preview. `vercel:customer --apply` still copies the production URL and token onto Preview and only redeploys Production. That copy is not the preview connection. Old Previews do not pick up env edits.
+`GET /api/health` on Preview returns **503** with `code` `preview_db_unconfigured`, `preview_db_matches_production`, or `preview_db_token_matches_production` when the preview URL or token is missing, or when a visible production host or token matches the preview pair. It does not 503 only because the production URL is absent, and it does not open local SQLite. The function log contains `ProcureFlow preview database refused`. Create `procureflow-<slug>-preview` (classic libSQL: do not pass `--turso` or `--tursodb`) in the same Turso group and location as production and set the Preview variables in section 4.2.1, then rebuild the Preview. `vercel:customer --apply` still copies the production URL and token onto Preview and only redeploys Production. That copy is compared, not used as the connection. Old Previews do not pick up env edits. A Preview that was built with no Turso variables, including 7b `f94a732` and `2496b85` on a project whose Turso vars are Production-only, returned this 503 and did not touch production.
 
 ### `SESSION_SECRET` missing, or everyone is logged out after a redeploy
 

@@ -59,6 +59,13 @@ describe('preview demo seed', () => {
       TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
     });
     assert.equal(assertPreviewSeedTarget(preview).previewDatabase, true);
+    const previewOnly = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
+    });
+    assert.equal(assertPreviewSeedTarget(previewOnly).previewDatabase, true);
   });
 
   test('the CLI exits before opening a database when preview is not configured', async () => {

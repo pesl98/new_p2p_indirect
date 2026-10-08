@@ -105,12 +105,16 @@ export async function enqueueWebhook(db, { eventType, entityType, entityId, data
   return Number(result.lastInsertRowid);
 }
 
-export function kickWebhookDispatch(db) {
-  const config = loadIntegrationConfig();
+export function kickWebhookDispatch(db, config = loadIntegrationConfig()) {
   if (!config.ready) return;
-  setImmediate(() => {
-    dispatchWebhookOutbox(db, { config }).catch((error) => {
-      console.error('webhook dispatch:', error.message);
+  const schedule = typeof db?.runOutsideTransaction === 'function'
+    ? (fn) => db.runOutsideTransaction(fn)
+    : (fn) => fn();
+  schedule(() => {
+    setImmediate(() => {
+      dispatchWebhookOutbox(db, { config }).catch((error) => {
+        console.error('webhook dispatch:', error.message);
+      });
     });
   });
 }

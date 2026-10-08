@@ -52,7 +52,7 @@ Checked in the tree at `cdefb448`.
 1. **Shared-connection transaction isolation blocks the portal.** `getDb()` returns one `TursoHttpClient` per warm instance, and its `_baton`/`_inTransaction` state is shared. When one instance serves concurrent requests (Vercel Fluid compute), request B's statements can run inside A's open transaction, or A's `COMMIT`/`ROLLBACK` can end B's work. Supplier bids cluster just before a deadline, so this must be fixed **before 8b**.
    - Fix: route statements issued inside `transaction()` to that transaction's own baton using `AsyncLocalStorage`, and keep all other statements stateless. Call sites do not change.
    - Test: two interleaved transactions on one client, using a fake fetch.
-2. **Preview and Prod share one Turso DB.** This blocks customer use, not development. Any preview build (any branch) can read production sealed bids, and `SESSION_SECRET` may be the same in both environments. Split the databases before a customer runs a live RFQ. Until then, set `SOURCING_ENABLED=1` and `PORTAL_TOKEN_SECRET` on **Production only** (§3.1).
+2. **Preview must not open the production Turso database.** On `new-p2p-indirect`, `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set for Production only. A Preview deploy of main with no Turso variables does not open production and does not create a local SQLite file: `createApp` sees `VERCEL` / `VERCEL_ENV` and a missing pair, and returns **503** `TursoConfigError` before `getDb()`. The Vercel entry is `api/index.js`, which only calls `createApp()`. The 7b previews `f94a732` and `2496b85` took that path, so they most likely never touched production. `SESSION_SECRET` may still be the same in both environments. `vercel:customer` does copy the production URL and token onto Preview for a new customer project; that copy must not become the preview connection. Set `SOURCING_ENABLED=1` and `PORTAL_TOKEN_SECRET` on **Production only** (§3.1) until a customer runs a live RFQ.
 3. **The approval engine is requisition-only.** There is no PO approval and no draft PO; convert creates `issued` POs directly. An award therefore travels as an **award requisition** (§5.4). Whether POs should start as drafts is an open decision (§10).
 4. **The PO routes have weak gates.** `POST /api/purchase-orders/from-requisition` has no `requireRole`. `PATCH /api/purchase-orders/:id/status` accepts any status with no checks. Convert defaults `created_by` to 3 and the ship-to to a hardcoded Austin, TX address. Award POs go through this path, so 8c adds a role gate for award PRs and lists the rest as follow-ups.
 5. **`FISCAL_YEAR = 2026` is hardcoded** in approvals and change orders. An award PR approved in 2027 would fail the budget lookup. This is an existing limit, recorded here.
@@ -176,7 +176,7 @@ Unknown, revoked, and expired tokens all get the same response: `401 portal_link
 - **Bid opening is recorded.** The first time a buyer views prices after the deadline, the server appends `SOURCING_BIDS_OPENED`, once per user per event.
 - **No side channels.** Exports, the document trail, analytics, and the compliance reports must not join bid prices while an event is sealed. The scan test enforces this.
 - **Webhooks carry no prices.** The `sourcing_bid.submitted` payload contains only the event number, the supplier code or external id, the revision, `submitted_at`, and the content hash.
-- **Known limit** (stated in the docs as well): sealing is enforced by the application. Anyone with the Turso token can read the rows directly, and so can a preview build while Preview and Prod share a database. Encryption at rest is in the "later" list.
+- **Known limit** (stated in the docs as well): sealing is enforced by the application. Anyone with the Turso token can read the rows directly. A preview build can read production only when that environment actually has the production URL and token. This project's Preview did not. Encryption at rest is in the "later" list.
 
 ### 3.3 Editing until the deadline, nothing after
 
@@ -204,6 +204,8 @@ Unknown, revoked, and expired tokens all get the same response: `401 portal_link
 - **The award result is minimal.** The portal (8d) shows only "gegund aan u" or "niet gegund", with no competitors or prices.
 
 ### 3.5 Email delivery
+
+§10's decisions override this section: delivery is copy-link plus optional SMTP.
 
 **Today:** no mail exists. There is no code, no dependency, and no env var in the onboarding CLIs.
 
@@ -907,6 +909,8 @@ Award statuses: `pending_approval` Ter goedkeuring, `approved` Goedgekeurd, `rej
 
 ### 7.3 Supplier portal (`portal.html`, separate bundle, Dutch)
 
+§10's decisions override this section: the portal is Dutch and English.
+
 | Page | Content |
 | --- | --- |
 | Header | Customer name, "Offerteaanvraag RFQ-2026-004" |
@@ -1211,5 +1215,5 @@ How these flags map to Gratis, Premium, and Executive is Peter's decision (§10)
 - The portal is NL + EN from day one.
 - Attachments are PDF only.
 - Limits: 50 lines, 20 invitations, 10 files × 4 MiB.
-- The Preview/Prod DB split happens in 8.0.
+- The Preview/Prod DB split happens in 8.0. On this project the 7b previews had no Turso variables, so they returned 503 instead of opening production. The split is still required where `vercel:customer` has copied the production URL and token onto Preview.
 - Still open: retention, pricing tier, losing-bidder notices (default: the buyer decides on the notice).

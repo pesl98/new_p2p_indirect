@@ -1,6 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
 import { createMemoryDatabase } from './db.js';
+import { SqliteAdapter } from './sqliteAdapter.js';
 
 describe('sqlite adapter transaction isolation', () => {
   test('a second transaction is not nested, and an outside read waits', async () => {
@@ -61,6 +63,43 @@ describe('sqlite adapter transaction isolation', () => {
       assert.equal(db.prepare('SELECT code FROM departments WHERE code = ?').get('BB'), undefined);
     })();
     assert.equal(db.prepare('SELECT code FROM departments WHERE code = ?').get('AA').code, 'AA');
+    db.close();
+  });
+
+  test('a statement waiting on another transaction times out', async () => {
+    const raw = new Database(':memory:');
+    const db = new SqliteAdapter(raw, { waitMs: 40 });
+    db.exec('CREATE TABLE t (id INTEGER)');
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const pending = db.transaction(async () => {
+      await gate;
+    })();
+    await new Promise((resolve) => setImmediate(resolve));
+    await assert.rejects(
+      () => db.prepare('SELECT 1 AS n').get(),
+      (error) => error.code === 'sqlite_transaction_timeout'
+        && /timed out after 40ms/.test(error.message)
+    );
+    release();
+    await pending;
+    db.close();
+  });
+
+  test('batch commits the chunk or rolls it back together', async () => {
+    const db = await createMemoryDatabase();
+    await db.batch([
+      { sql: 'INSERT INTO departments (code, name) VALUES (?, ?)', args: ['AA', 'Alpha'] }
+    ]);
+    assert.equal(db.prepare('SELECT code FROM departments WHERE code = ?').get('AA').code, 'AA');
+    await assert.rejects(
+      () => db.batch([
+        { sql: 'INSERT INTO departments (code, name) VALUES (?, ?)', args: ['BB', 'Beta'] },
+        { sql: 'INSERT INTO departments (code, name) VALUES (?, ?)', args: ['AA', 'Duplicate'] }
+      ]),
+      /UNIQUE/
+    );
+    assert.equal(db.prepare('SELECT code FROM departments WHERE code = ?').get('BB'), undefined);
     db.close();
   });
 });

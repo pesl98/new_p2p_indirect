@@ -28,27 +28,9 @@ function emptyReport() {
     columnPresent: false,
     notNull: false,
     proposalRows: 0,
-    rowsWithBytes: 0,
     fileRows: 0,
-    rowsAccounted: 0,
-    rowsMissingFile: 0,
-    rowsByteMismatch: 0,
     needsRepair: false
   };
-}
-
-function asBuffer(value) {
-  if (value == null) return null;
-  if (Buffer.isBuffer(value)) return value;
-  if (value instanceof Uint8Array) return Buffer.from(value);
-  return Buffer.from(value);
-}
-
-function sameBytes(left, right) {
-  const a = asBuffer(left);
-  const b = asBuffer(right);
-  if (a == null || b == null) return a == null && b == null;
-  return a.equals(b);
 }
 
 async function tableNames(db) {
@@ -80,61 +62,38 @@ export async function inspectInvoiceProposalPdfColumn(db) {
     };
   }
 
-  const proposals = await db.prepare('SELECT id, pdf_bytes FROM invoice_proposals').all();
-  let rowsWithBytes = 0;
-  let rowsAccounted = 0;
-  let rowsMissingFile = 0;
-  let rowsByteMismatch = 0;
-  for (const row of proposals || []) {
-    if (row.pdf_bytes != null) rowsWithBytes += 1;
-    if (!names.has('invoice_proposal_files')) {
-      rowsMissingFile += 1;
-      continue;
-    }
-    const file = await db.prepare(
-      'SELECT pdf_bytes FROM invoice_proposal_files WHERE proposal_id = ?'
-    ).get(row.id);
-    if (!file) {
-      rowsMissingFile += 1;
-    } else if (!sameBytes(file.pdf_bytes, row.pdf_bytes)) {
-      rowsByteMismatch += 1;
-    } else {
-      rowsAccounted += 1;
-    }
-  }
-
   return {
     tablePresent: true,
     columnPresent: true,
     notNull: Number(column.notnull) === 1,
     proposalRows,
-    rowsWithBytes,
     fileRows: Number(fileCount?.n || 0),
-    rowsAccounted,
-    rowsMissingFile,
-    rowsByteMismatch,
     needsRepair: true
   };
 }
 
-async function accounted(db) {
-  const proposals = await db.prepare('SELECT id, pdf_bytes FROM invoice_proposals').all();
-  let rowsAccounted = 0;
-  let rowsMissingFile = 0;
-  let rowsByteMismatch = 0;
-  for (const row of proposals || []) {
-    const file = await db.prepare(
-      'SELECT pdf_bytes FROM invoice_proposal_files WHERE proposal_id = ?'
-    ).get(row.id);
-    if (!file) rowsMissingFile += 1;
-    else if (!sameBytes(file.pdf_bytes, row.pdf_bytes)) rowsByteMismatch += 1;
-    else rowsAccounted += 1;
+/** Counts only. Blob bytes stay in the database. */
+async function accountPdfRows(db) {
+  const names = await tableNames(db);
+  const proposalRows = Number(
+    (await db.prepare('SELECT COUNT(*) AS n FROM invoice_proposals').get())?.n || 0
+  );
+  if (!names.has('invoice_proposal_files')) {
+    return { proposalRows, rowsAccounted: 0, rowsMissingFile: proposalRows, rowsByteMismatch: 0 };
   }
+  const row = await db.prepare(`
+    SELECT
+      SUM(CASE WHEN f.proposal_id IS NULL THEN 1 ELSE 0 END) AS rowsMissingFile,
+      SUM(CASE WHEN f.proposal_id IS NOT NULL AND f.pdf_bytes IS NOT p.pdf_bytes THEN 1 ELSE 0 END) AS rowsByteMismatch,
+      SUM(CASE WHEN f.proposal_id IS NOT NULL AND f.pdf_bytes IS p.pdf_bytes THEN 1 ELSE 0 END) AS rowsAccounted
+    FROM invoice_proposals p
+    LEFT JOIN invoice_proposal_files f ON f.proposal_id = p.id
+  `).get();
   return {
-    proposalRows: (proposals || []).length,
-    rowsAccounted,
-    rowsMissingFile,
-    rowsByteMismatch
+    proposalRows,
+    rowsMissingFile: Number(row?.rowsMissingFile || 0),
+    rowsByteMismatch: Number(row?.rowsByteMismatch || 0),
+    rowsAccounted: Number(row?.rowsAccounted || 0)
   };
 }
 
@@ -146,31 +105,25 @@ export async function repairInvoiceProposalPdfColumn(db, { confirm = false } = {
   if (!confirm) {
     return { dryRun: true, action: 'would_repair', copied: 0, dropped: false, diagnostic: before };
   }
-  if (before.rowsByteMismatch > 0) {
+  const prior = await accountPdfRows(db);
+  if (prior.rowsByteMismatch > 0) {
     throw new InvoiceProposalPdfColumnError(
       'Aborting: invoice_proposal_files already has different bytes for a proposal. Nothing was written and the column was not dropped.',
       { code: 'pdf_bytes_mismatch', diagnostic: before }
     );
   }
 
-  await db.exec(FILES_SQL);
   let copied = 0;
   try {
     await db.transaction(async () => {
-      const rows = await db.prepare('SELECT id, pdf_bytes FROM invoice_proposals').all();
+      await db.exec(FILES_SQL);
+      const rows = await db.prepare(`
+        SELECT p.id, p.pdf_bytes
+        FROM invoice_proposals p
+        LEFT JOIN invoice_proposal_files f ON f.proposal_id = p.id
+        WHERE f.proposal_id IS NULL
+      `).all();
       for (const row of rows || []) {
-        const file = await db.prepare(
-          'SELECT pdf_bytes FROM invoice_proposal_files WHERE proposal_id = ?'
-        ).get(row.id);
-        if (file) {
-          if (!sameBytes(file.pdf_bytes, row.pdf_bytes)) {
-            throw new InvoiceProposalPdfColumnError(
-              'Aborting: a file row changed while copying. The column was not dropped.',
-              { code: 'pdf_bytes_mismatch' }
-            );
-          }
-          continue;
-        }
         if (row.pdf_bytes == null) {
           throw new InvoiceProposalPdfColumnError(
             'Aborting: a proposal has no pdf_bytes and no file row. The column was not dropped.',
@@ -182,13 +135,14 @@ export async function repairInvoiceProposalPdfColumn(db, { confirm = false } = {
         ).run(row.id, row.pdf_bytes);
         copied += 1;
       }
-      const check = await accounted(db);
+      const check = await accountPdfRows(db);
       if (check.rowsMissingFile > 0 || check.rowsByteMismatch > 0 || check.rowsAccounted !== check.proposalRows) {
         throw new InvoiceProposalPdfColumnError(
           'Aborting: the copy did not account for every invoice_proposals row. The column was not dropped.',
           { code: 'pdf_bytes_unaccounted' }
         );
       }
+      await db.exec('ALTER TABLE invoice_proposals DROP COLUMN pdf_bytes');
     })();
   } catch (error) {
     if (error instanceof InvoiceProposalPdfColumnError && !error.diagnostic) {
@@ -197,15 +151,6 @@ export async function repairInvoiceProposalPdfColumn(db, { confirm = false } = {
     throw error;
   }
 
-  const ready = await inspectInvoiceProposalPdfColumn(db);
-  if (ready.rowsMissingFile > 0 || ready.rowsByteMismatch > 0 || ready.rowsAccounted !== ready.proposalRows) {
-    throw new InvoiceProposalPdfColumnError(
-      'Aborting: after the copy, not every proposal row has matching bytes. The column was not dropped.',
-      { code: 'pdf_bytes_unaccounted', diagnostic: ready }
-    );
-  }
-
-  await db.exec('ALTER TABLE invoice_proposals DROP COLUMN pdf_bytes');
   const after = await inspectInvoiceProposalPdfColumn(db);
   if (after.columnPresent) {
     throw new InvoiceProposalPdfColumnError(

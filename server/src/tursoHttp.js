@@ -309,6 +309,42 @@ export class TursoHttpClient {
     return (currentTx(this)?.depth || 0) > 0;
   }
 
+  /**
+   * Run `fn` outside this client's transaction store. Async work created
+   * inside `fn` (including setImmediate) does not inherit the open baton.
+   */
+  runOutsideTransaction(fn) {
+    return txLocal.exit(fn);
+  }
+
+  /**
+   * One non-interactive pipeline: BEGIN, the statements, COMMIT, close.
+   * Turso's interactive-transaction cap does not apply. Refuses to join
+   * an open interactive transaction.
+   */
+  async batch(statements) {
+    if ((currentTx(this)?.depth || 0) > 0) {
+      throw new TursoHttpError('batch() cannot run inside an interactive transaction');
+    }
+    const requests = [{ type: 'execute', stmt: { sql: 'BEGIN' } }];
+    for (const item of statements || []) {
+      if (item?.exec) {
+        for (const sql of splitSqlScript(item.sql)) {
+          requests.push({ type: 'execute', stmt: { sql } });
+        }
+      } else if (item?.sql) {
+        const args = [...(item.args || [])].map(encodeArg);
+        const stmt = { sql: item.sql };
+        if (args.length) stmt.args = args;
+        requests.push({ type: 'execute', stmt });
+      }
+    }
+    if (requests.length === 1) return;
+    requests.push({ type: 'execute', stmt: { sql: 'COMMIT' } });
+    requests.push({ type: 'close' });
+    await this._pipeline(requests, { keepOpen: false });
+  }
+
   _headers() {
     return {
       Authorization: `Bearer ${this._token}`,

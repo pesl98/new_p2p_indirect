@@ -59,9 +59,10 @@ describe('leftover invoice_proposals.pdf_bytes', () => {
       assert.equal(report.columnPresent, true);
       assert.equal(report.notNull, true);
       assert.equal(report.proposalRows, 2);
-      assert.equal(report.rowsAccounted, 1);
-      assert.equal(report.rowsMissingFile, 1);
+      assert.equal(report.fileRows, 1);
       assert.equal(report.needsRepair, true);
+      assert.equal(report.rowsAccounted, undefined);
+      assert.equal(JSON.stringify(report).includes('%PDF'), false);
       const dry = await repairInvoiceProposalPdfColumn(db, { confirm: false });
       assert.equal(dry.dryRun, true);
       assert.equal(dry.action, 'would_repair');
@@ -168,7 +169,7 @@ describe('leftover invoice_proposals.pdf_bytes', () => {
     assert.ok(names.includes('pdf_bytes'));
     still.close();
 
-    const applied = await runNode(scriptPath, ['--sqlite', file, '--confirm'], env);
+    const applied = await runNode(scriptPath, ['--sqlite', file, '--apply'], env);
     assert.equal(applied.code, 0);
     assert.match(applied.stdout, /"dropped": true/);
     const after = new Database(file);
@@ -177,6 +178,17 @@ describe('leftover invoice_proposals.pdf_bytes', () => {
     assert.equal(after.prepare('SELECT COUNT(*) AS n FROM invoice_proposal_files').get().n, 2);
     after.close();
     fs.unlinkSync(file);
+
+    const tursoEnv = { ...process.env };
+    for (const key of ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN', 'TURSO_PREVIEW_DATABASE_URL', 'TURSO_PREVIEW_AUTH_TOKEN']) {
+      delete tursoEnv[key];
+    }
+    const refused = await runNode(scriptPath, ['--turso'], tursoEnv);
+    assert.equal(refused.code, 2);
+    assert.match(refused.stderr, /TURSO_DATABASE_URL/);
+    assert.match(refused.stderr, /No local SQLite file was opened/);
+    const refusedApply = await runNode(scriptPath, ['--turso', '--apply'], tursoEnv);
+    assert.equal(refusedApply.code, 2);
   });
 });
 

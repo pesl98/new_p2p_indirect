@@ -70,10 +70,52 @@ const DEMO_TABLES = [
   'audit_logs'
 ];
 
-export async function insertDemoData(db) {
-  const demoPasswordHash = await hashPassword(DEMO_SEED_PASSWORD, 10);
+/** Statements per non-interactive batch. Stays under Turso's interactive cap. */
+const SEED_BATCH_SIZE = 40;
 
-  await db.transaction(async () => {
+function createChunkedSeedWriter(db) {
+  const pending = [];
+
+  async function flush() {
+    while (pending.length) {
+      const slice = pending.splice(0, SEED_BATCH_SIZE);
+      await db.batch(slice);
+    }
+  }
+
+  return {
+    flush,
+    db: {
+      prepare(sql) {
+        return {
+          run(...args) {
+            pending.push({ sql, args });
+            if (pending.length >= SEED_BATCH_SIZE) {
+              return flush().then(() => ({ changes: 1, lastInsertRowid: 0 }));
+            }
+            return { changes: 1, lastInsertRowid: 0 };
+          },
+          get(...args) {
+            return flush().then(() => db.prepare(sql).get(...args));
+          },
+          all(...args) {
+            return flush().then(() => db.prepare(sql).all(...args));
+          }
+        };
+      },
+      exec(sql) {
+        pending.push({ sql, exec: true });
+        if (pending.length >= SEED_BATCH_SIZE) return flush();
+      }
+    }
+  };
+}
+
+export async function insertDemoData(rootDb) {
+  const demoPasswordHash = await hashPassword(DEMO_SEED_PASSWORD, 10);
+  const writer = createChunkedSeedWriter(rootDb);
+  const db = writer.db;
+
   // 1. Departments
   const insertDept = db.prepare(`INSERT INTO departments (id, code, name) VALUES (?, ?, ?)`);
   await insertDept.run(1, 'MKT', 'Marketing & Brand');
@@ -1476,7 +1518,7 @@ export async function insertDemoData(db) {
     UPDATE invoices SET created_at = '2026-09-20 10:00:00' WHERE id = 15;
   `);
 
-  });
+  await writer.flush();
 }
 
 async function destructiveSeed() {

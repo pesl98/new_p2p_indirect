@@ -7,7 +7,9 @@ import {
   TursoConfigError,
   assertDeployableConfig,
   loadDbConfig,
+  databaseHostname,
   normalizeDatabaseUrl,
+  sameDatabaseHost,
   runningOnVercel
 } from './dbConfig.js';
 import { createApp } from './app.js';
@@ -136,15 +138,125 @@ describe('dual-mode DB selection', () => {
     assert.equal(assertDeployableConfig(config).tursoUrl, 'libsql://preview.turso.io');
   });
 
-  test('preview without a production URL to compare is refused', () => {
+  test('preview with its own URL and token serves when no production variables are visible', () => {
+    const config = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-org.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
+    });
+    assert.equal(config.previewBlocked, null);
+    assert.equal(config.previewDatabase, true);
+    assert.equal(config.useTurso, true);
+    assert.equal(config.tursoUrl, 'libsql://preview-org.turso.io');
+    assert.equal(config.tursoAuthToken, 'preview-token');
+    assert.equal(assertDeployableConfig(config).useTurso, true);
+  });
+
+  test('preview host comparison ignores scheme, path, query, and regional Turso hosts', () => {
+    assert.equal(
+      databaseHostname('LIBSQL://DB-ORG.TURSO.IO/v2/pipeline?tls=1'),
+      'db-org.turso.io'
+    );
+    assert.equal(sameDatabaseHost('http://db-org.turso.io', 'wss://db-org.turso.io:443/ignored'), true);
+    assert.equal(
+      sameDatabaseHost(
+        'libsql://db-org.turso.io',
+        'https://db-org.aws-eu-west-1.turso.io/v2/pipeline?tls=1'
+      ),
+      true
+    );
+    assert.equal(
+      sameDatabaseHost('libsql://preview-org.turso.io', 'libsql://prod-org.aws-eu-west-1.turso.io'),
+      false
+    );
+
+    const regional = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://db-org.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      TURSO_PREVIEW_DATABASE_URL: 'https://DB-ORG.aws-eu-west-1.turso.io/v2/pipeline?tls=1',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
+    }));
+    assert.equal(regional.previewBlocked.code, 'preview_db_matches_production');
+    assert.equal(regional.useTurso, false);
+    assert.doesNotMatch(regional.previewBlocked.message, /preview-token|prod-token/);
+
+    const distinct = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_PRODUCTION_DATABASE_URL: 'https://prod-org.turso.io/extra',
+      TURSO_PREVIEW_DATABASE_URL: 'wss://preview-org.aws-eu-west-1.turso.io/v2/pipeline',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
+    });
+    assert.equal(distinct.previewDatabase, true);
+    assert.equal(distinct.tursoUrl, 'wss://preview-org.aws-eu-west-1.turso.io/v2/pipeline');
+  });
+
+  test('preview token equal to the production token is refused', () => {
+    const logs = [];
     const config = withMutedError(() => loadDbConfig({
       VERCEL: '1',
       VERCEL_ENV: 'preview',
-      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.turso.io',
-      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
-    }));
-    assert.equal(config.previewBlocked.code, 'preview_db_unverified');
+      TURSO_DATABASE_URL: 'libsql://prod-org.turso.io',
+      TURSO_AUTH_TOKEN: 'same-token',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-org.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'same-token'
+    }), logs);
+    assert.equal(config.previewBlocked.code, 'preview_db_token_matches_production');
     assert.equal(config.useTurso, false);
+    assert.equal(config.tursoAuthToken, null);
+    assert.doesNotMatch(logs.join('\n'), /same-token/);
+    assert.doesNotMatch(config.previewBlocked.message, /same-token/);
+  });
+
+  test('a missing preview URL or token refuses and does not select local SQLite', () => {
+    const missingToken = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-org.turso.io'
+    }));
+    assert.equal(missingToken.previewBlocked.code, 'preview_db_unconfigured');
+    assert.equal(missingToken.useTurso, false);
+    assert.equal(missingToken.tursoUrl, null);
+
+    const bare = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview'
+    }));
+    assert.equal(bare.previewBlocked.code, 'preview_db_unconfigured');
+    assert.equal(bare.useTurso, false);
+  });
+
+  test('the escape hatch applies only when no valid preview database is configured', () => {
+    const logs = [];
+    const ignored = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://prod-org.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-org.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token',
+      [PREVIEW_PRODUCTION_DB_ALLOW_ENV]: 'allow'
+    }), logs);
+    assert.equal(ignored.previewDatabase, true);
+    assert.equal(ignored.allowPreviewProductionDatabase, false);
+    assert.equal(ignored.tursoUrl, 'libsql://preview-org.turso.io');
+    assert.doesNotMatch(logs.join('\n'), /PREVIEW IS SERVING THE PRODUCTION DATABASE/);
+
+    const hatch = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://prod-org.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://prod-org.aws-eu-west-1.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token',
+      [PREVIEW_PRODUCTION_DB_ALLOW_ENV]: 'allow'
+    }));
+    assert.equal(hatch.allowPreviewProductionDatabase, true);
+    assert.equal(hatch.previewDatabase, false);
+    assert.equal(hatch.tursoUrl, 'libsql://prod-org.turso.io');
   });
 
   test('ALLOW_PREVIEW_PRODUCTION_DATABASE=allow is the only escape hatch and is logged', () => {
@@ -234,6 +346,46 @@ describe('Vercel config error page', () => {
       const html = await page.text();
       assert.equal(page.status, 503);
       assert.match(html, /TURSO_PREVIEW_DATABASE_URL/);
+      assert.equal(body.db, undefined);
+    });
+  });
+
+  test('preview with only the preview pair does not return 503', async () => {
+    const { createMemoryDatabase } = await import('./db.js');
+    const db = await createMemoryDatabase();
+    const config = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-org.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
+    });
+    const app = createApp({ db, config });
+    try {
+      await withServer(app, async (base) => {
+        const response = await fetch(`${base}/api/health`);
+        const body = await response.json();
+        assert.equal(response.status, 200);
+        assert.equal(body.status, 'ok');
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('preview with no Turso variables returns 503 and does not report sqlite', async () => {
+    const app = withMutedError(() => createApp({
+      env: {
+        VERCEL: '1',
+        VERCEL_ENV: 'preview'
+      }
+    }));
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}/api/health`);
+      const body = await response.json();
+      assert.equal(response.status, 503);
+      assert.equal(body.code, 'preview_db_unconfigured');
+      assert.equal(body.db, undefined);
+      assert.match(body.detail, /local SQLite|TURSO_PREVIEW_DATABASE_URL/);
     });
   });
 

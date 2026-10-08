@@ -13,6 +13,7 @@ import {
   splitSqlScript
 } from './tursoHttp.js';
 import { preferTursoHttp, schemaPath } from './dbConfig.js';
+import { kickWebhookDispatch } from './webhookOutbox.js';
 
 function mockFetch(payload, { status = 200 } = {}) {
   return async () => ({
@@ -418,6 +419,144 @@ CREATE TABLE IF NOT EXISTS users (
     assert.deepEqual(await client.prepare('SELECT v FROM t WHERE k = ?').get('b'), { v: '2' });
     assert.equal(await client.prepare('SELECT v FROM t WHERE k = ?').get('a'), undefined);
   });
+
+  test('a nested transaction keeps its parent stream while another transaction runs', async () => {
+    const fake = createIsolatingFetch();
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    let releaseA;
+    const gateA = new Promise((resolve) => { releaseA = resolve; });
+    let markA;
+    const aStarted = new Promise((resolve) => { markA = resolve; });
+
+    const pendingA = client.transaction(async () => {
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+      markA();
+      await gateA;
+      await client.transaction(async () => {
+        await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('n', '9');
+      })();
+    })();
+
+    await aStarted;
+    const outside = client.prepare('SELECT v FROM t WHERE k = ?').get('a');
+    const pendingB = client.transaction(async () => {
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('b', '2');
+    })();
+    await pendingB;
+    releaseA();
+    await pendingA;
+    assert.equal(await outside, undefined);
+
+    const nested = fake.calls.find((body) => bodyHasArg(body, 'n') && sqlIncludes(body, 'INSERT'));
+    const insertB = fake.calls.find((body) => bodyHasArg(body, 'b') && sqlIncludes(body, 'INSERT'));
+    const outsideCall = fake.calls.find((body) => sqlIncludes(body, 'SELECT v FROM t'));
+    assert.ok(nested?.baton);
+    assert.ok(insertB?.baton);
+    assert.notEqual(nested.baton, insertB.baton);
+    assert.equal(outsideCall.baton, undefined);
+    const savepoint = fake.calls.find((body) => sqlIncludes(body, 'SAVEPOINT'));
+    assert.ok(savepoint?.streamId);
+    assert.equal(savepoint.streamId, nested.streamId);
+    assert.notEqual(savepoint.streamId, insertB.streamId);
+  });
+
+  test('webhook delivery started inside a transaction does not send that baton', async () => {
+    const fake = createIsolatingFetch();
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let mark;
+    const started = new Promise((resolve) => { mark = resolve; });
+
+    const pending = client.transaction(async () => {
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+      kickWebhookDispatch(client, {
+        ready: true,
+        webhookTargetUrl: 'https://hooks.example.test/procureflow',
+        webhookSigningSecret: 'secret'
+      });
+      mark();
+      await gate;
+    })();
+
+    await started;
+    await new Promise((resolve) => setImmediate(resolve));
+    const outbox = fake.calls.find((body) => sqlIncludes(body, 'webhook_outbox'));
+    assert.ok(outbox, 'dispatch should query the outbox');
+    assert.equal(outbox.baton, undefined);
+    assert.ok(outbox.requests.some((request) => request.type === 'close'));
+    release();
+    await pending;
+  });
+
+  test('a failed BEGIN leaves the client outside any transaction', async () => {
+    const fake = createIsolatingFetch({ failOn: /^begin\b/i });
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    await assert.rejects(
+      () => client.transaction(async () => {
+        await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+      })(),
+      /forced failure/
+    );
+    assert.equal(client.inTransaction(), false);
+    fake.calls.length = 0;
+    await client.prepare('SELECT v FROM t WHERE k = ?').get('a');
+    assert.equal(fake.calls[0].baton, undefined);
+    assert.ok(fake.calls[0].requests.some((request) => request.type === 'close'));
+  });
+
+  test('a failed COMMIT leaves the client outside any transaction', async () => {
+    const fake = createIsolatingFetch({ failOn: /^commit\b/i });
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    await assert.rejects(
+      () => client.transaction(async () => {
+        await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+      })(),
+      /forced failure/
+    );
+    assert.equal(client.inTransaction(), false);
+    fake.calls.length = 0;
+    fake.failOn = null;
+    await client.prepare('SELECT v FROM t WHERE k = ?').get('a');
+    assert.equal(fake.calls[0].baton, undefined);
+    assert.equal(await client.prepare('SELECT v FROM t WHERE k = ?').get('a'), undefined);
+  });
+
+  test('a rotated baton is rejected when presented again', async () => {
+    const fake = createIsolatingFetch();
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    await client.transaction(async () => {
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('c', '3');
+    })();
+    const used = fake.calls.map((body) => body.baton).filter(Boolean);
+    assert.ok(used.length >= 2);
+    assert.notEqual(used[0], used[1]);
+    const stale = await fake.fetchImpl('https://ex.turso.io/v2/pipeline', {
+      body: JSON.stringify({
+        baton: used[0],
+        requests: [{ type: 'execute', stmt: { sql: 'SELECT 1' } }]
+      })
+    });
+    assert.equal(stale.status, 400);
+    const text = await stale.text();
+    assert.match(text, /stale or unknown baton/);
+  });
+
+  test('batch sends BEGIN and COMMIT in one pipeline and does not keep a baton', async () => {
+    const calls = [];
+    const fetchImpl = mockPipelineBySql(() => ({ cols: [], rows: [], affected_row_count: 1 }), calls);
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl });
+    await client.batch([
+      { sql: 'INSERT INTO t (k) VALUES (?)', args: ['a'] },
+      { sql: 'INSERT INTO t (k) VALUES (?)', args: ['b'] }
+    ]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].baton, undefined);
+    assert.equal(calls[0].requests[0].stmt.sql, 'BEGIN');
+    assert.equal(calls[0].requests.at(-2).stmt.sql, 'COMMIT');
+    assert.equal(calls[0].requests.at(-1).type, 'close');
+  });
 });
 
 function sqlIncludes(body, fragment) {
@@ -429,15 +568,18 @@ function bodyHasArg(body, value) {
 }
 
 /**
- * One committed map, plus a stream per baton. A statement with no baton reads
- * only committed rows. Rollback discards that stream and leaves other streams
- * and the committed map alone.
+ * One committed map, plus a stream per baton. Each response rotates the
+ * baton. A reused or unknown baton is rejected. A statement with no baton
+ * reads only committed rows.
  */
-function createIsolatingFetch() {
+function createIsolatingFetch({ failOn = null } = {}) {
   const calls = [];
   let seq = 0;
   const committed = new Map();
   const streams = new Map();
+  const stale = new Set();
+  const state = { failOn };
+  let streamSeq = 0;
 
   function readMap(map, key) {
     if (!map.has(key)) return undefined;
@@ -470,22 +612,58 @@ function createIsolatingFetch() {
     return { cols: [], rows: [], affected_row_count: 0 };
   }
 
+  function rotate(baton) {
+    const stream = streams.get(baton);
+    streams.delete(baton);
+    stale.add(baton);
+    const next = `baton-${++seq}`;
+    streams.set(next, stream);
+    return next;
+  }
+
+  function rejected(message) {
+    return {
+      status: 400,
+      ok: false,
+      async text() {
+        return message;
+      }
+    };
+  }
+
   const fetchImpl = async (_url, options) => {
     const body = JSON.parse(options.body);
     calls.push(body);
     const requests = body.requests || [];
+    if (state.failOn && requests.some((request) => state.failOn.test(String(request.stmt?.sql || '')))) {
+      return {
+        status: 500,
+        ok: false,
+        async text() {
+          return 'forced failure';
+        }
+      };
+    }
+
     const closing = requests.some((request) => request.type === 'close');
     let baton = body.baton || null;
     let map;
-    if (!baton && !closing) {
+    let stream = null;
+    if (baton) {
+      if (stale.has(baton) || !streams.has(baton)) {
+        return rejected('stale or unknown baton');
+      }
+      stream = streams.get(baton);
+      map = stream.map;
+    } else if (!closing) {
       baton = `baton-${++seq}`;
-      streams.set(baton, new Map(committed));
-      map = streams.get(baton);
-    } else if (baton) {
-      map = streams.get(baton) || committed;
+      stream = { id: `stream-${++streamSeq}`, map: new Map(committed) };
+      streams.set(baton, stream);
+      map = stream.map;
     } else {
       map = committed;
     }
+    body.streamId = stream?.id;
 
     const results = [];
     for (const request of requests) {
@@ -496,23 +674,28 @@ function createIsolatingFetch() {
       const sql = String(request.stmt?.sql || '');
       const args = request.stmt?.args || [];
       if (/^commit\b/i.test(sql) && baton && streams.has(baton)) {
-        const stream = streams.get(baton);
+        const current = streams.get(baton);
         committed.clear();
-        for (const [key, value] of stream) committed.set(key, value);
+        for (const [key, value] of current.map) committed.set(key, value);
         streams.delete(baton);
-      } else if (/^rollback\b/i.test(sql) && !/^rollback\s+to\b/i.test(sql) && baton) {
+        stale.add(baton);
+        baton = null;
+      } else if (/^rollback\b/i.test(sql) && !/^rollback\s+to\b/i.test(sql) && baton && streams.has(baton)) {
         streams.delete(baton);
+        stale.add(baton);
+        baton = null;
       }
+      const live = baton && streams.has(baton) ? streams.get(baton).map : map;
       results.push({
         type: 'ok',
         response: {
           type: 'execute',
-          result: resultFor(sql, args, baton && streams.has(baton) ? streams.get(baton) : map)
+          result: resultFor(sql, args, live)
         }
       });
     }
 
-    const responseBaton = baton && streams.has(baton) ? baton : null;
+    const responseBaton = baton && streams.has(baton) ? rotate(baton) : null;
     return {
       status: 200,
       ok: true,
@@ -522,7 +705,16 @@ function createIsolatingFetch() {
     };
   };
 
-  return { fetchImpl, calls };
+  return {
+    fetchImpl,
+    calls,
+    get failOn() {
+      return state.failOn;
+    },
+    set failOn(value) {
+      state.failOn = value;
+    }
+  };
 }
 
 function mockPipelineBySql(handler, calls = []) {

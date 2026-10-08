@@ -72,6 +72,41 @@ export function databaseHost(value) {
   }
 }
 
+/** Hostname only: lower case, no port, no path, no query. */
+export function databaseHostname(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const rewritten = raw.replace(/^(?:libsql|turso|wss|ws|http):\/\//i, 'https://');
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(rewritten) ? rewritten : `https://${rewritten}`;
+  try {
+    return new URL(candidate).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * First DNS label of a `*.turso.io` host. Legacy `db-org.turso.io` and
+ * regional `db-org.aws-eu-west-1.turso.io` share that label.
+ */
+export function tursoDatabaseLabel(hostname) {
+  const parts = String(hostname || '').toLowerCase().split('.').filter(Boolean);
+  if (parts.length < 3) return null;
+  if (parts.at(-2) !== 'turso' || parts.at(-1) !== 'io') return null;
+  return parts[0] || null;
+}
+
+/** Same database host, ignoring scheme, port, path, and query. */
+export function sameDatabaseHost(left, right) {
+  const a = databaseHostname(left);
+  const b = databaseHostname(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const labelA = tursoDatabaseLabel(a);
+  const labelB = tursoDatabaseLabel(b);
+  return Boolean(labelA && labelA === labelB);
+}
+
 function nonEmpty(value) {
   const text = String(value || '').trim();
   return text || null;
@@ -127,8 +162,54 @@ export function loadDbConfig(env = process.env) {
   };
 }
 
+function previewRefusal(base, code, message) {
+  logPreviewRefusal(code, message);
+  return {
+    ...base,
+    tursoUrl: null,
+    tursoAuthToken: null,
+    useTurso: false,
+    previewBlocked: { code, message }
+  };
+}
+
 function loadPreviewDbConfig(env, base, productionUrl, productionToken) {
   const comparisonUrl = nonEmpty(env.TURSO_PRODUCTION_DATABASE_URL) || productionUrl;
+  const previewUrl = nonEmpty(env.TURSO_PREVIEW_DATABASE_URL);
+  const previewToken = nonEmpty(env.TURSO_PREVIEW_AUTH_TOKEN);
+  const pair = Boolean(previewUrl && previewToken);
+  let block = null;
+
+  if (!pair) {
+    block = {
+      code: 'preview_db_unconfigured',
+      message: 'Preview database is not configured. Set TURSO_PREVIEW_DATABASE_URL and '
+        + 'TURSO_PREVIEW_AUTH_TOKEN on the Vercel Preview environment. '
+        + 'Refusing to open another database or local SQLite.'
+    };
+  } else if (comparisonUrl && sameDatabaseHost(previewUrl, comparisonUrl)) {
+    const host = databaseHostname(previewUrl) || '(unparseable)';
+    block = {
+      code: 'preview_db_matches_production',
+      message: `Preview database host equals the production database (${host}). Refusing to serve.`
+    };
+  } else if (productionToken && previewToken === productionToken) {
+    block = {
+      code: 'preview_db_token_matches_production',
+      message: 'Preview auth token equals the production auth token. Refusing to serve.'
+    };
+  }
+
+  if (!block) {
+    return {
+      ...base,
+      tursoUrl: previewUrl,
+      tursoAuthToken: previewToken,
+      useTurso: true,
+      previewDatabase: true
+    };
+  }
+
   if (allowPreviewProductionDatabase(env)) {
     logPreviewEscape(databaseHost(productionUrl));
     return {
@@ -141,56 +222,7 @@ function loadPreviewDbConfig(env, base, productionUrl, productionToken) {
     };
   }
 
-  const previewUrl = nonEmpty(env.TURSO_PREVIEW_DATABASE_URL);
-  const previewToken = nonEmpty(env.TURSO_PREVIEW_AUTH_TOKEN);
-  if (!previewUrl || !previewToken) {
-    const message = 'Preview database is not configured. Set TURSO_PREVIEW_DATABASE_URL and '
-      + 'TURSO_PREVIEW_AUTH_TOKEN on the Vercel Preview environment. '
-      + 'Refusing to open TURSO_DATABASE_URL.';
-    logPreviewRefusal('preview_db_unconfigured', message);
-    return {
-      ...base,
-      tursoUrl: null,
-      tursoAuthToken: null,
-      useTurso: false,
-      previewBlocked: { code: 'preview_db_unconfigured', message }
-    };
-  }
-
-  if (!comparisonUrl) {
-    const message = 'Preview cannot verify that its database is not production. '
-      + 'Set TURSO_PRODUCTION_DATABASE_URL to the production libsql URL (no token) on Preview, '
-      + 'or leave TURSO_DATABASE_URL set to that production URL for comparison only.';
-    logPreviewRefusal('preview_db_unverified', message);
-    return {
-      ...base,
-      tursoUrl: null,
-      tursoAuthToken: null,
-      useTurso: false,
-      previewBlocked: { code: 'preview_db_unverified', message }
-    };
-  }
-
-  if (normalizeDatabaseUrl(previewUrl) === normalizeDatabaseUrl(comparisonUrl)) {
-    const host = databaseHost(previewUrl) || '(unparseable)';
-    const message = `Preview database URL equals the production database (${host}). Refusing to serve.`;
-    logPreviewRefusal('preview_db_matches_production', message);
-    return {
-      ...base,
-      tursoUrl: null,
-      tursoAuthToken: null,
-      useTurso: false,
-      previewBlocked: { code: 'preview_db_matches_production', message }
-    };
-  }
-
-  return {
-    ...base,
-    tursoUrl: previewUrl,
-    tursoAuthToken: previewToken,
-    useTurso: true,
-    previewDatabase: true
-  };
+  return previewRefusal(base, block.code, block.message);
 }
 
 export function assertDeployableConfig(config = loadDbConfig()) {

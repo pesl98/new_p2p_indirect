@@ -22,9 +22,9 @@ function previewDbSteps() {
   <ol>
     <li>Create <code>procureflow-&lt;slug&gt;-preview</code> in the same Turso group and location as production.</li>
     <li>On the Vercel <strong>Preview</strong> environment set <code>TURSO_PREVIEW_DATABASE_URL</code> and <code>TURSO_PREVIEW_AUTH_TOKEN</code>.</li>
-    <li>Set <code>TURSO_PRODUCTION_DATABASE_URL</code> to the production libsql URL (comparison only, no token), or leave <code>TURSO_DATABASE_URL</code> as that production URL. Preview will not open it.</li>
-    <li>The preview URL must not equal the production URL. <code>libsql://</code> and <code>https://</code> for the same host are the same database.</li>
-    <li>Redeploy the Preview. Do not set <code>ALLOW_PREVIEW_PRODUCTION_DATABASE</code> unless you intend Preview to serve production.</li>
+    <li>A preview URL and token are enough. Set <code>TURSO_PRODUCTION_DATABASE_URL</code> (no token) when you also have the production URL on Preview, so the host can be compared. <code>vercel:customer</code> copies <code>TURSO_DATABASE_URL</code> and <code>TURSO_AUTH_TOKEN</code> onto Preview; those are compared and are not the preview connection.</li>
+    <li>The preview host must not be the production host. Scheme (<code>libsql</code>, <code>https</code>, <code>http</code>, <code>wss</code>), path, and query are ignored. A legacy <code>name.turso.io</code> host and a regional <code>name.aws-….turso.io</code> host are the same database. The preview token must not equal the production token when that token is present.</li>
+    <li>Redeploy the Preview. <code>ALLOW_PREVIEW_PRODUCTION_DATABASE=allow</code> is ignored when a valid preview database is set. It serves production only when Preview has no valid database of its own.</li>
   </ol>`;
 }
 
@@ -40,8 +40,8 @@ export function configErrorHtml(message, { code } = {}) {
     <li>Redeploy after saving — env changes do not apply to an old deploy</li>
   </ol>`
     : (code === 'preview_db_unconfigured'
-      || code === 'preview_db_unverified'
-      || code === 'preview_db_matches_production')
+      || code === 'preview_db_matches_production'
+      || code === 'preview_db_token_matches_production')
     ? previewDbSteps()
     : `<h2>Set these on Vercel</h2>
   <ol>

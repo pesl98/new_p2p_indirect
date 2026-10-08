@@ -13,10 +13,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const txLocal = new AsyncLocalStorage();
 
+/** How long a foreign statement waits for the open transaction. */
+export const SQLITE_TX_WAIT_MS = 15000;
+
 export class SqliteAdapter {
-  constructor(raw) {
+  constructor(raw, { waitMs = SQLITE_TX_WAIT_MS } = {}) {
     this.raw = raw;
     this._active = null;
+    this._waitMs = waitMs;
   }
 
   get mode() {
@@ -32,12 +36,55 @@ export class SqliteAdapter {
     return Boolean(store && store === this._active && store.depth > 0);
   }
 
+  /**
+   * Run `fn` outside this connection's transaction store. Async work created
+   * inside `fn` does not inherit the open transaction.
+   */
+  runOutsideTransaction(fn) {
+    return txLocal.exit(fn);
+  }
+
+  _waitFor(done) {
+    const waitMs = this._waitMs;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const error = new Error(`SQLite transaction wait timed out after ${waitMs}ms`);
+        error.code = 'sqlite_transaction_timeout';
+        reject(error);
+      }, waitMs);
+      Promise.resolve(done).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
+  }
+
   _runSync(fn) {
     const store = txLocal.getStore();
     if (this._active && store !== this._active) {
-      return this._active.done.then(() => this._runSync(fn));
+      return this._waitFor(this._active.done).then(() => this._runSync(fn));
     }
     return fn();
+  }
+
+  /**
+   * Several writes in one short transaction. The preview seed uses this so
+   * a Turso load is not one interactive transaction of hundreds of round trips.
+   */
+  async batch(statements) {
+    if (!statements?.length) return;
+    await this.transaction(async () => {
+      for (const item of statements) {
+        if (item?.exec) await this.exec(item.sql);
+        else if (item?.sql) await this.prepare(item.sql).run(...(item.args || []));
+      }
+    })();
   }
 
   prepare(sql) {
@@ -82,9 +129,8 @@ export class SqliteAdapter {
         return adapter._nested(fn, args);
       }
       while (adapter._active) {
-        await adapter._active.done;
+        await adapter._waitFor(adapter._active.done);
       }
-      if (adapter._active) return run(...args);
 
       let resolveDone;
       const done = new Promise((resolve) => { resolveDone = resolve; });
