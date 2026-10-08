@@ -840,6 +840,9 @@ CREATE TABLE IF NOT EXISTS integration_invoice_links (
   updated_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS integration_invoice_links_invoice
+  ON integration_invoice_links (invoice_id);
+
 CREATE TABLE IF NOT EXISTS integration_idempotency (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   api_key_id INTEGER NOT NULL,
@@ -872,4 +875,54 @@ CREATE TABLE IF NOT EXISTS webhook_outbox (
 
 CREATE INDEX IF NOT EXISTS webhook_outbox_pending
   ON webhook_outbox (status, next_attempt_at);
+
+-- Sprint 7b. One row per uploaded supplier-invoice PDF. The bytes live in
+-- invoice_proposal_files so list and detail queries never read the blob.
+-- Only the session download route selects that table.
+CREATE TABLE IF NOT EXISTS invoice_proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'posted', 'rejected')),
+  pdf_filename TEXT NOT NULL,
+  pdf_sha256 TEXT NOT NULL,
+  pdf_size INTEGER NOT NULL,
+  ocr_json TEXT NOT NULL,
+  baseline_json TEXT NOT NULL,
+  working_json TEXT NOT NULL,
+  vendor_match_json TEXT NOT NULL,
+  po_match_json TEXT NOT NULL,
+  preview_json TEXT NOT NULL,
+  uploaded_by_user_id INTEGER,
+  uploaded_by_name TEXT NOT NULL,
+  uploaded_by_role TEXT,
+  api_key_id INTEGER,
+  source TEXT NOT NULL CHECK (source IN ('ui', 'integration')),
+  posted_invoice_id INTEGER,
+  rejected_reason TEXT,
+  rejected_by_user_id INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id),
+  FOREIGN KEY (api_key_id) REFERENCES api_keys(id),
+  FOREIGN KEY (posted_invoice_id) REFERENCES invoices(id)
+);
+
+CREATE INDEX IF NOT EXISTS invoice_proposals_status
+  ON invoice_proposals (status, id);
+
+CREATE TABLE IF NOT EXISTS invoice_proposal_files (
+  proposal_id INTEGER PRIMARY KEY,
+  pdf_bytes BLOB NOT NULL,
+  FOREIGN KEY (proposal_id) REFERENCES invoice_proposals(id)
+);
+
+-- One row per signed-in upload attempt, written before OCR.
+-- Failed and in-flight calls count toward the per-user minute limit.
+CREATE TABLE IF NOT EXISTS invoice_proposal_upload_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS invoice_proposal_upload_attempts_user
+  ON invoice_proposal_upload_attempts (user_id, created_at);
 

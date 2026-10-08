@@ -26,6 +26,7 @@ import LoginView from './views/LoginView';
 import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
 import ComplianceView from './views/ComplianceView';
 import IntegrationsView from './views/IntegrationsView';
+import InvoiceProposalsView from './views/InvoiceProposalsView';
 import { api } from './api';
 import { DEMO_SEED_PASSWORD } from './demoAuth';
 import { setDisplayCurrency } from './money';
@@ -180,6 +181,9 @@ export default function App() {
       setActiveTab('dashboard');
     }
     if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'compliance') {
+      setActiveTab('dashboard');
+    }
+    if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'finance_inbox') {
       setActiveTab('dashboard');
     }
   };
@@ -340,6 +344,10 @@ export default function App() {
               onDataChanged={fetchCoreData}
               focusId={navFocus?.focusId}
             />
+          )}
+
+          {activeTab === 'finance_inbox' && (
+            <InvoiceProposalsView onDataChanged={fetchCoreData} />
           )}
 
           {activeTab === 'invoices' && (

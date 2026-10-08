@@ -11,11 +11,18 @@ import { publicIntegrationConfig } from '../integrationConfig.js';
 import {
   exportInvoices,
   exportPaymentRuns,
+  replayIdempotentIfPresent,
   runIdempotent,
   postInboundInvoice,
   upsertCatalogItem,
   upsertVendor
 } from '../integrationConnectors.js';
+import { filenameFromRequest, pdfUploadMiddleware, sha256Pdf } from '../invoicePdf.js';
+import {
+  compileInvoiceProposal,
+  integrationProposalActor,
+  uploadInvoiceProposal
+} from '../invoiceProposalsService.js';
 import {
   dispatchWebhookOutbox,
   listWebhookOutbox,
@@ -151,6 +158,49 @@ router.post('/invoices', requireMachine('invoices:write'), async (req, res) => {
   }
 });
 
+router.post('/invoice-proposals', requireMachine('invoices:write'), pdfUploadMiddleware, async (req, res) => {
+  try {
+    const filename = filenameFromRequest(req.headers);
+    const fingerprint = {
+      pdf_sha256: sha256Pdf(req.body),
+      filename,
+      byte_length: req.body.length
+    };
+    const existing = await replayIdempotentIfPresent(
+      req.db,
+      req.integrationKey,
+      req.headers['idempotency-key'],
+      fingerprint
+    );
+    if (existing) {
+      if (existing.replay) res.set('Idempotent-Replayed', 'true');
+      return res.status(existing.status).json(existing.body);
+    }
+    // Extract before the idempotent write so the model call does not hold
+    // the database transaction. The insert stays inside runIdempotent.
+    const draft = await compileInvoiceProposal(req.db, { pdf: req.body, filename });
+    const result = await runIdempotent(
+      req.db,
+      req.integrationKey,
+      req.headers['idempotency-key'],
+      fingerprint,
+      async () => {
+        const proposal = await uploadInvoiceProposal(req.db, {
+          pdf: req.body,
+          filename,
+          actor: integrationProposalActor(req.integrationKey),
+          draft
+        });
+        return { status: 201, body: { proposal } };
+      }
+    );
+    if (result.replay) res.set('Idempotent-Replayed', 'true');
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.get('/exports/invoices', requireMachine('export:read'), async (req, res) => {
   try {
     const exported = await exportInvoices(req.db, req.integrationKey, req);
@@ -186,6 +236,7 @@ function methodNotAllowed(req, res) {
 router.all('/vendors', requireMachine('vendors:write'), methodNotAllowed);
 router.all('/catalog', requireMachine('catalog:write'), methodNotAllowed);
 router.all('/invoices', requireMachine('invoices:write'), methodNotAllowed);
+router.all('/invoice-proposals', requireMachine('invoices:write'), methodNotAllowed);
 router.all('/exports/invoices', requireMachine('export:read'), methodNotAllowed);
 router.all('/exports/payment-runs', requireMachine('export:read'), methodNotAllowed);
 

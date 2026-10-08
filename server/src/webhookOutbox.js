@@ -27,6 +27,8 @@ export const WEBHOOK_EVENTS = Object.freeze({
   RECEIPT_POSTED: 'receipt.posted',
   INVOICE_CREATED: 'invoice.created',
   INVOICE_APPROVED: 'invoice.approved',
+  INVOICE_PROPOSAL_POSTED: 'invoice_proposal.posted',
+  INVOICE_PROPOSAL_REJECTED: 'invoice_proposal.rejected',
   PAYMENT_RUN_CREATED: 'payment_run.created',
   PAYMENT_RUN_PAID: 'payment_run.paid'
 });

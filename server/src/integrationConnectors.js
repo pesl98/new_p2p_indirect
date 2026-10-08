@@ -914,6 +914,19 @@ function replayOrConflict(existing, requestHash) {
   };
 }
 
+/**
+ * Return a stored replay or throw `idempotency_conflict` before doing new work.
+ * `null` means this key has not been seen. The write still belongs in `runIdempotent`.
+ */
+export async function replayIdempotentIfPresent(db, apiKey, idempotencyHeader, body) {
+  const key = normalizeIdempotencyKey(idempotencyHeader);
+  if (!key) return null;
+  const requestHash = sha256(canonicalJson(body ?? null));
+  const existing = await findIdempotency(db, apiKey.id, key);
+  if (!existing) return null;
+  return replayOrConflict(existing, requestHash);
+}
+
 export async function runIdempotent(db, apiKey, idempotencyHeader, body, work) {
   const key = normalizeIdempotencyKey(idempotencyHeader);
   const requestHash = key ? sha256(canonicalJson(body ?? null)) : null;

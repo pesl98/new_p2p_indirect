@@ -68,7 +68,8 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
 | 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
-| 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | | in progress |
+| 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | `91f7e541e8a9e9a6e7972dd3ab6fee7c26dc3ddf` | merged |
+| 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) (draft, base `main`) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -289,13 +290,13 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 
 **Goal:** Let an ERP, e-invoicing hub, or scanning service post a supplier invoice with a scoped API key, through the same match, duplicate, and exception pipeline as an invoice entered on screen.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/53 (#53). Draft. Do not merge until Architect dual-ACK and Peter OK.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/53 (#53).
 
-**Merge SHA:**
+**Merge SHA:** `91f7e541e8a9e9a6e7972dd3ab6fee7c26dc3ddf`
 
-**Status:** in progress.
+**Status:** merged.
 
-Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprint 7b (PDF upload, OCR proposals, finance inbox) is a separate draft and is not in this PR.
+Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprint 7b (PDF upload, OCR proposals, finance inbox) is a separate draft on `main` and is not in the 7a commit.
 
 ### Done when
 
@@ -318,3 +319,42 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **UI copy.** The scope checkbox shows the English token and a Dutch label (`Inkomende facturen schrijven`). Other scopes on that form got Dutch labels too. The API value is unchanged.
 - **Existing databases.** Invoice external ids go in `integration_invoice_links` (`CREATE TABLE IF NOT EXISTS`). `integration_entity_links` stays supplier and catalog only. There is no table rebuild and no `DROP`. A failed statement on Turso does not stop the rest of a batch, so a rebuild that dropped the old table could erase supplier and catalog links if two instances booted together or the copy failed.
 - **Left alone.** SSO, `pf_session`, the ledger triggers, webhook drain, UBL/Peppol, and OCR/PDF. Those last two are follow-ups. OCR/PDF is Sprint 7b, built on `createSupplierInvoice`.
+
+## Sprint 7b — PDF invoice upload, OCR proposals, finance inbox
+
+**Date:** 2026-10-08
+
+**Goal:** Let finance upload a supplier-invoice PDF, review an OCR proposal with a match preview, and post or reject it through the Sprint 7a invoice service.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/54 (#54, draft). Base is `main` after 7a merged as `91f7e541e8a9e9a6e7972dd3ab6fee7c26dc3ddf`. Do not merge until the Architect re-ACK and Peter’s OK.
+
+**Merge SHA:**
+
+**Status:** in progress.
+
+### Done when
+
+- Finance and admin can upload one or more PDFs in **Financiële inbox**. `POST /api/integrations/invoice-proposals` accepts one PDF under `invoices:write`, with the Sprint 7a key check, rate limit, and `Idempotency-Key`.
+- The file is a real PDF (`%PDF-`) and at most 4 MiB. The bytes sit in `invoice_proposal_files`, keyed by proposal id. List and detail queries do not read that table. Download is only the finance or admin PDF route.
+- Extraction is behind `INVOICE_OCR_PROVIDER=gateway` and `INVOICE_OCR_MODEL`. Unset means upload is disabled in the UI and **503** `ocr_not_configured` on the API. Tests use a fake provider and do not call the network.
+- A proposal is not an invoice. It matches vendor and PO when it can, suggests when it cannot, and previews the 3-way match and duplicate check with `createSupplierInvoice({ dryRun: true })`.
+- Approve posts through `createSupplierInvoice`. Edit-then-post keeps the OCR snapshot and audits the diff. Reject requires a reason, keeps the PDF, and posts nothing.
+- The uploader cannot post their own proposal, and neither can the user who created the API key that uploaded it, unless `INVOICE_PROPOSAL_SOD=off`. `off` is for a single-person tenant only.
+- Compliance events: uploaded, extracted, edited, posted, rejected. Post and reject each enqueue their webhook in the same transaction as the status change (`invoice_proposal.posted`, `invoice_proposal.rejected`). Posting also writes `invoice.created` because it calls `createSupplierInvoice`. `invoice.approved` stays on payment approval.
+- Post and reject update the row only while `status = 'proposed'`. A second writer gets **409** `proposal_not_open` and does not create another invoice.
+- A guessed vendor or PO (suggested, ambiguous, or vendor taken from the PO) is not stored as the chosen id. The inbox highlights it and the reviewer picks one.
+- Net plus VAT must equal gross, and the lines must equal net, before post. A short reason can override those two checks only, and the reason is on the posted audit event.
+- The inbox list is paged (default 50, max 100, `offset`, `has_more`, Vorige/Volgende in the UI) and does not run a live match preview per row. UI uploads are limited per user (default 10 per minute), counting the attempt before OCR so a failure or an in-flight call uses a slot. OCR calls time out (default 20s, capped so two attempts plus a 1s backoff fit in 60s) and retry once. `maxDuration: 60` is only on the PDF upload function.
+- Dutch labels, EUR formatting, and comma amount entry. Docs name the env vars, the size cap, and the disabled state. `npm test` is green.
+
+### Decisions
+
+- **Storage.** Private BLOB in `invoice_proposal_files`, not a column on the proposal row and not Vercel Blob. One Turso database is already the isolation boundary. A Blob token is a second secret that can be copied onto the wrong project. Download stays behind the session and is the only query that reads the blob. 4 MiB keeps the raw upload under the usual serverless body limit and the base64 Turso pipeline body near 5.4 MiB. The same cap applies to local SQLite. A 4 MiB upload and download on a Vercel preview plus Turso was not run from this environment.
+- **OCR.** A vision model through the Vercel AI Gateway (`generateText` + `Output.object`, PDF sent inline) beats shipping Tesseract for invoices that are not clean scans. The provider is env-configured and fail-closed. Each attempt aborts after `INVOICE_OCR_TIMEOUT_MS` (default 20000). The ceiling is 24500 so two attempts, a 1 second backoff, and about 10 seconds of other work stay inside the 60 second upload limit. A higher setting is clamped. Tests may read `ocrCallLimits`. They do not call the gateway.
+- **Duration.** Vercel’s `maxDuration` is per function file, and this app is one Express process. Rewrites cannot choose by HTTP method. `application/pdf` posts to `/api/invoice-proposals` and `/api/integrations/invoice-proposals` run `api/invoice-proposal-upload.js` (`maxDuration` 60, same app, original URL). Every other `/api` route stays on `api/index.js` with the platform default.
+- **No second pipeline.** The match preview runs before the approve lock. Inside the lock, `createSupplierInvoice` matches once. The inbox list uses the preview stored at upload and does not preview every row again. Post uses `source: ui` even when a key uploaded the PDF, because the poster is the signed-in user. The key remains the actor on the upload compliance rows.
+- **Upload limit.** A signed-in attempt is inserted in `invoice_proposal_upload_attempts` before OCR and is counted even when OCR is still running or fails. API-key uploads already increment the key window at authentication, before OCR.
+- **Segregation.** Default `enforce`. It blocks the session uploader and the user who created the uploading API key. The key itself cannot approve. `INVOICE_PROPOSAL_SOD=off` is only for a tenant with one person. Reject is allowed for the uploader; the control is on posting.
+- **Webhooks.** `invoice_proposal.posted` and `invoice_proposal.rejected` are written in the same transaction as the status change. Posting also enqueues `invoice.created` from the invoice write. Posted proposals do not enqueue `invoice.approved`. That event still fires later if AP approves the invoice for payment.
+- **Claim.** Post and reject take a write lock (`BEGIN IMMEDIATE`) and update only `AND status = 'proposed'`. Zero changed rows is **409** `proposal_not_open`, before an invoice insert on post. On local SQLite the lock attempt does not block the process; a busy result is retried so the writer that holds the lock can finish.
+- **Left alone.** Email ingestion, Peppol/UBL, auto-post, webhook cron, SSO, and `pf_session`.

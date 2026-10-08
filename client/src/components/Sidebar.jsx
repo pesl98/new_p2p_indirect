@@ -3,7 +3,8 @@ import { api } from '../api';
 import { t } from '../i18n';
 import { 
   LayoutDashboard, 
-  FileText, 
+  FileText,
+  FileUp, 
   CheckSquare, 
   ShoppingCart, 
   PackageCheck,
@@ -112,6 +113,14 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       icon: ClipboardCheck,
       desc: t('shell.nav.serviceEntryDesc')
     },
+    ...(['finance', 'admin'].includes(currentUser?.role)
+      ? [{
+          id: 'finance_inbox',
+          label: t('shell.nav.financeInbox'),
+          icon: FileUp,
+          desc: t('shell.nav.financeInboxDesc')
+        }]
+      : []),
     {
       id: 'invoices',
       label: t('shell.nav.invoices'),

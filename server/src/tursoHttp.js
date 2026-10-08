@@ -442,12 +442,21 @@ export class TursoHttpClient {
   }
 
   transaction(fn) {
+    return this._transaction(fn, 'BEGIN');
+  }
+
+  /** Reserve the write lock before the callback reads, so a second writer waits. */
+  immediateTransaction(fn) {
+    return this._transaction(fn, 'BEGIN IMMEDIATE');
+  }
+
+  _transaction(fn, beginSql) {
     const client = this;
     const run = async (...args) => {
       const nested = client._inTransaction > 0;
       if (!nested) {
         client._inTransaction += 1;
-        await client._execute('BEGIN', [], { keepOpen: true });
+        await client._execute(beginSql, [], { keepOpen: true });
       } else {
         client._inTransaction += 1;
         await client._execute('SAVEPOINT pf_tx', [], { keepOpen: true });
