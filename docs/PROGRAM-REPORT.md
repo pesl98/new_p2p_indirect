@@ -2,7 +2,7 @@
 
 This is the account of what has been delivered in [pesl98/new_p2p_indirect](https://github.com/pesl98/new_p2p_indirect), written from the repository: `git log` on `main`, the merged pull requests, and the manuals listed below. It does not add product behavior.
 
-Dates are the author dates of the squash-merge commits (`git log`, timezone `+0200`). Each SHA in the Architect program was checked with `git rev-parse` against `main` at `8a025b4ff35e6eee3346cadec8ee13b12b288850` (Sprint 5, PR #50). Test counts are the figures written in those pull-request bodies. They were not re-run at the historical commits.
+Dates are the author dates of the squash-merge commits (`git log`, timezone `+0200`). Each SHA in the Architect program was checked with `git rev-parse` against `main` at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (Sprint 6, PR #52). Test counts are the figures written in those pull-request bodies. They were not re-run at the historical commits.
 
 The day-by-day register is [SPRINT-LOG.md](SPRINT-LOG.md). Operator procedure stays in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md).
 
@@ -136,8 +136,9 @@ Owner recorded in [SPRINT-LOG.md](SPRINT-LOG.md): Peter (`pesl98`). The program 
 | Deploy and operations manual | [#41](https://github.com/pesl98/new_p2p_indirect/pull/41) | `d3e8b656b0a8e398e4782319e6960e467803e665` | 2026-10-06 |
 | Sprint 4 — integrations | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | 2026-10-06 |
 | Sprint 5 — EUR currency | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | 2026-10-06 |
+| Sprint 6 — Dutch (NL) i18n | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | 2026-10-07 |
 
-#41 is a documentation PR. It merged after Sprint 3 and before Sprint 4, which is why it sits in this list rather than with #42–#45. Sprint 6 (Dutch UI) has no row and no merge. See section 7.
+#41 is a documentation PR. It merged after Sprint 3 and before Sprint 4, which is why it sits in this list rather than with #42–#45. Sprint 6 is the tip of `main` at the SHA above.
 
 ---
 
@@ -283,6 +284,30 @@ The manual’s own summary of coverage: the customer commands; Sprint 1 session 
 
 **Tests at merge.** The PR body records **526 passed, 0 failed** (112 suites): formatter cases, a client `$` / `USD` guard, export and webhook currency, and `CURRENCY` validation including boot 503 for `GBP`.
 
+### Sprint 6 — Dutch (NL) i18n ([#52](https://github.com/pesl98/new_p2p_indirect/pull/52))
+
+**Goal.** Make the user-facing UI Dutch (Netherlands) so an NL customer can work in the product, with a catalog the team can extend, and accept comma decimals on amount fields.
+
+**Merge.** `a41ec42a327afe2c0d28211c7e9a17d3343450a5` on 2026-10-07. `git rev-parse` on `main` matches that SHA. The commit subject is “Sprint 6 — Dutch (NL) i18n (#52)”.
+
+**What was built.**
+
+- The React UI is Dutch, locale `nl-NL`: login, navigation, dashboards, requisitions, approvals, purchase orders, receipts, invoices, payments, and the admin and settings screens that already exist. `html lang` is `nl-NL`.
+- Strings live in a message catalog. `client/src/i18n.js` loads `client/src/i18n/nl-NL.js`, which is merged from `client/src/i18n/parts/`. `t('key', { name })` replaces `{name}`. `useI18n()` in `client/src/useI18n.js` subscribes to `setLocale` so a later locale can re-render. Only `nl-NL` is registered. An unknown locale falls back to `nl-NL`. There is no language picker.
+- Amount fields accept a Dutch comma decimal. On the client, `parseMajorAmount` / `toCents` treat comma as the decimal separator and dot as thousands (`1.295,50` → 129550 cents). A single dot with one or two fractional digits still parses (`749.00`). `formatMajorInput` shows `1.295,50` in the field. Quantity, meter, and capacity inputs are not money.
+- `presentError` maps known API sentences and machine codes to Dutch. Anything else becomes a Dutch fallback. The API response itself is unchanged. `presentNotice` translates success banners and match findings on display. The stored sentence is not rewritten.
+
+**Design decisions.**
+
+- Catalog, not a framework. The app had no i18n library.
+- What stays English, on purpose: persona names, emails, document numbers, category and status values sent to the API, scope names, and text already stored in the database (audit details, justifications, seed descriptions). Actor-name fallbacks written onto the ledger stay the previous English strings so audit rows do not change shape.
+- Stored values stay integer cents. `formatMoney` and `shared/currency.js` are unchanged from Sprint 5 (display locale `nl-NL`, default EUR). Server `toCents` is unchanged.
+- Left alone: SSO, `pf_session`, the append-only ledger, integration routes, `CURRENCY`, the webhook drain, and the Sprint 5 icon follow-ups.
+
+**Security.** No change to session auth, SSO fail-closed behavior, the hash chain, or scoped API keys. API machine codes stay English. The UI maps them. A role is still never taken from an IdP claim.
+
+**Tests at merge.** The PR body records **535 pass, 0 fail** (114 suites, 0 skipped).
+
 ---
 
 ## 4. Design principles in force
@@ -297,13 +322,13 @@ From [SPRINT-LOG.md](SPRINT-LOG.md), “Design principles (from Storycodes)”. 
 
 **Do not port:** Storycodes Petri-everywhere, the always-302 resolver, or scan metrics.
 
-Peter’s backlog order, still the rule for future work: do not start a later item inside an earlier sprint’s pull request. The six items are authorization (done), SSO (done), audit (done), integrations (done), currency (done), and Dutch (Netherlands) UI (not started).
+Peter’s backlog order, still the rule for future work: do not start a later item inside an earlier sprint’s pull request. The six items are authorization, SSO, audit, integrations, currency, and Dutch (Netherlands) UI. All six are merged.
 
 ---
 
 ## 5. Current system state
 
-`main` at the Sprint 5 merge includes the product in section 2.1, the customer CLIs, service procurement, consignment, the View PO document-trail button, metered utilities and bulk, session auth, SSO, compliance reports, integrations, the deploy manual, and EUR as the default currency.
+`main` at the Sprint 6 merge (`a41ec42a327afe2c0d28211c7e9a17d3343450a5`) includes the product in section 2.1, the customer CLIs, service procurement, consignment, the View PO document-trail button, metered utilities and bulk, session auth, SSO, compliance reports, integrations, the deploy manual, EUR as the default currency, and a Dutch `nl-NL` UI.
 
 ### 5.1 Roles and access
 
@@ -405,7 +430,11 @@ Signature, retry, and the Vercel drain limit are in Sprint 4 above. Single-invoi
 | `EUR`, `eur`, `USD`, `usd` | That code, uppercased |
 | Anything else | Process refuses to boot, HTTP 503 `currency_misconfigured` |
 
-Display locale `nl-NL`. No in-app picker. No foreign exchange. Stored columns stay integer cents. `createApp` loads the code once onto the app. `formatMoney` in `server/src/money.js` still calls `deploymentCurrency()`, which reads the environment again on each call. The client applies `GET /api/auth/config` via `setDisplayCurrency`, and falls back to EUR if the code is missing or not allowlisted (`client/src/money.js`, `client/src/App.jsx`).
+Display locale `nl-NL`. No in-app currency picker and no language picker. No foreign exchange. Stored columns stay integer cents. The Sprint 5 formatter is unchanged: `formatMoney` and `shared/currency.js` still format with locale `nl-NL` and default EUR. `createApp` loads the code once onto the app. `formatMoney` in `server/src/money.js` still calls `deploymentCurrency()`, which reads the environment again on each call. The client applies `GET /api/auth/config` via `setDisplayCurrency`, and falls back to EUR if the code is missing or not allowlisted (`client/src/money.js`, `client/src/App.jsx`).
+
+### 5.6.1 UI language
+
+The user-facing UI is Dutch (`nl-NL`) through the message catalog (`t()` / `useI18n()`). There is no picker. Unknown locales fall back to `nl-NL`. Amount fields accept a Dutch comma decimal (`1.295,50`); stored values remain integer cents. Seed and demo names, emails, document numbers, and text already stored in the database stay English. That residual English is intentional (Sprint 6 decisions). API responses stay as they were; the client maps known sentences and codes to Dutch on display.
 
 ### 5.7 Environment variables
 
@@ -475,9 +504,12 @@ npm run offboard:customer -- --slug <customer> --apply --confirm-slug <customer>
 
 These items are not done. Where the current code was checked, the file is named. They are not a commitment that a later pull request has already specified the patch.
 
-### Sprint 6 — Dutch (NL) i18n
+### #52 follow-ups still open
 
-Not started. [SPRINT-LOG.md](SPRINT-LOG.md) lists it as backlog item 6: a Dutch (Netherlands) UI so the product is useful for NL users. It is not part of Sprint 5. There is no Sprint 6 row in the register. UI strings are still English. Display locale is already `nl-NL`. Dutch comma entry for amounts is called out as Sprint 6 in the Sprint 5 decisions. No i18n catalog was found in this tree.
+Confirmed on `main` at `a41ec42a327afe2c0d28211c7e9a17d3343450a5`. GitHub review comments on PR #52 were empty when this report was updated (the Codex review bot reported a usage limit). These are the Architect follow-ups still visible in the tree, not quotes from a review thread.
+
+- **Stale comment in `shared/currency.js`.** The file header still says “UI strings stay English until Sprint 6.” Sprint 6 shipped the Dutch catalog and did not change this formatter. The comment is leftover.
+- **Residual demo and seed English is intentional.** Persona names, emails, document numbers, and text stored by the seed (audit details, justifications, descriptions) stay English, as the Sprint 6 decisions record. That is not an unfinished translation of the UI chrome.
 
 ### Webhook cron / drain
 
@@ -510,7 +542,7 @@ From that pull request’s “Follow-ups left out” list, still not in the code
 - Inbound supplier invoices through the existing match and exception flow. `invoices:write` does not exist.
 - ERP-specific adapters (SAP, NetSuite, and so on).
 - Service-entry webhooks. `receipt.posted` is a goods receipt.
-- Also listed there, and still true: overlapping signing secrets during rotation, a Vercel cron (see above), and single-invoice mark-paid as a webhook. EUR shipped in #50. Dutch UI did not.
+- Also listed there, and still true: overlapping signing secrets during rotation, a Vercel cron (see above), and single-invoice mark-paid as a webhook. EUR shipped in #50. Dutch UI shipped in #52.
 
 ### Deferred #48 nits
 

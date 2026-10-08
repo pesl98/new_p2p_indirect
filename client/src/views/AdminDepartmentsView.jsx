@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Building2, Save, Shield, UserCog } from 'lucide-react';
 import { api } from '../api';
+import { presentError, roleLabel, t } from '../i18n';
 
 function sortEligible(eligible, departmentId) {
   return [...(eligible || [])].sort((a, b) => {
@@ -9,16 +10,6 @@ function sortEligible(eligible, departmentId) {
     if (aIn !== bIn) return aIn - bIn;
     return String(a.name).localeCompare(String(b.name));
   });
-}
-
-function roleLabel(role) {
-  switch (role) {
-    case 'approver': return 'Dept Head';
-    case 'admin': return 'Admin / CFO';
-    case 'finance': return 'Finance';
-    case 'procurement': return 'Procurement';
-    default: return role || '';
-  }
 }
 
 export default function AdminDepartmentsView({ currentUser }) {
@@ -49,7 +40,7 @@ export default function AdminDepartmentsView({ currentUser }) {
       });
       setDraft(nextDraft);
     } catch (err) {
-      setError(err.message || 'Failed to load departments');
+      setError(presentError(err, 'errors.departments'));
     } finally {
       setLoading(false);
     }
@@ -68,10 +59,9 @@ export default function AdminDepartmentsView({ currentUser }) {
     return (
       <div className="bg-white p-8 rounded-xl border border-slate-200/80 shadow-sm text-center">
         <UserCog className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-        <h2 className="text-lg font-bold text-slate-900">Org Admin</h2>
+        <h2 className="text-lg font-bold text-slate-900">{t('admin.departments.gatedTitle')}</h2>
         <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-          Switch the header persona to <strong>Elena Rostova</strong> (admin / CFO) to assign
-          department heads. This screen is gated in the UI only — APIs stay demo-open like the rest of ProcureFlow.
+          {t('admin.departments.gatedBody')}
         </p>
       </div>
     );
@@ -100,7 +90,7 @@ export default function AdminDepartmentsView({ currentUser }) {
       }));
       setSavedId(dept.id);
     } catch (err) {
-      setError(err.message || 'Failed to save department approver');
+      setError(presentError(err, 'errors.departmentApprover'));
     } finally {
       setSavingId(null);
     }
@@ -111,20 +101,19 @@ export default function AdminDepartmentsView({ currentUser }) {
       <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Department Approvers</h2>
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('admin.departments.title')}</h2>
             <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
-              Assign the step-1 department head for each cost center. Submit uses this mapping first,
-              then falls back to the first user with <span className="font-mono">role=approver</span> in
-              that department. Sequential procurement and finance thresholds are unchanged.
+              {t('admin.departments.introBefore')}{' '}
+              <span className="font-mono">role=approver</span>{' '}
+              {t('admin.departments.introAfter')}
             </p>
           </div>
           <span className="text-[10px] font-semibold uppercase tracking-wider bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-1 rounded-full whitespace-nowrap">
-            Admin persona
+            {t('admin.departments.persona')}
           </span>
         </div>
         <p className="text-[11px] text-slate-400 mt-3">
-          Demo auth is the header switcher only (no JWT). These APIs are reachable without a server identity
-          check, same as supplier and catalog master-data.
+          {t('admin.departments.demoAuth')}
         </p>
       </div>
 
@@ -132,8 +121,7 @@ export default function AdminDepartmentsView({ currentUser }) {
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl px-4 py-3 flex items-start space-x-2">
           <Shield className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <span>
-            {missingCount} department{missingCount === 1 ? '' : 's'} {missingCount === 1 ? 'has' : 'have'} no
-            mapped head. Requisition submit will fail unless a user with role=approver already sits in that department.
+            {t(missingCount === 1 ? 'admin.departments.missingOne' : 'admin.departments.missingMany', { count: missingCount })}
           </span>
         </div>
       )}
@@ -146,15 +134,15 @@ export default function AdminDepartmentsView({ currentUser }) {
 
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         {loading ? (
-          <div className="py-12 text-center text-slate-400 text-xs">Loading departments…</div>
+          <div className="py-12 text-center text-slate-400 text-xs">{t('admin.departments.loading')}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                 <tr>
-                  <th className="px-4 py-3">Cost center</th>
-                  <th className="px-4 py-3">Current head</th>
-                  <th className="px-4 py-3">Assign approver</th>
+                  <th className="px-4 py-3">{t('common.costCenter')}</th>
+                  <th className="px-4 py-3">{t('admin.departments.currentHead')}</th>
+                  <th className="px-4 py-3">{t('admin.departments.assign')}</th>
                   <th className="px-4 py-3 w-32"></th>
                 </tr>
               </thead>
@@ -186,7 +174,7 @@ export default function AdminDepartmentsView({ currentUser }) {
                           </div>
                         ) : (
                           <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
-                            Unassigned
+                            {t('common.unassigned')}
                           </span>
                         )}
                       </td>
@@ -196,7 +184,7 @@ export default function AdminDepartmentsView({ currentUser }) {
                           onChange={(e) => setDraft((prev) => ({ ...prev, [dept.id]: e.target.value }))}
                           className="w-full max-w-xs bg-white border border-slate-300 rounded-lg py-1.5 px-2 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                         >
-                          <option value="">— Unassigned (legacy role lookup) —</option>
+                          <option value="">{t('admin.departments.unassignedLegacy')}</option>
                           {choices.map((u) => (
                             <option key={u.id} value={u.id}>
                               {u.name} ({roleLabel(u.role)})
@@ -205,7 +193,7 @@ export default function AdminDepartmentsView({ currentUser }) {
                           ))}
                           {dept.approver_user_id && !mappedUser && (
                             <option value={dept.approver_user_id}>
-                              {dept.approver_name || `User #${dept.approver_user_id}`} (current)
+                              {dept.approver_name || t('admin.departments.userFallback', { id: dept.approver_user_id })} ({t('admin.departments.current')})
                             </option>
                           )}
                         </select>
@@ -222,7 +210,7 @@ export default function AdminDepartmentsView({ currentUser }) {
                           }`}
                         >
                           <Save className="w-3.5 h-3.5" />
-                          <span>{savingId === dept.id ? 'Saving…' : savedId === dept.id && !dirty ? 'Saved' : 'Save'}</span>
+                          <span>{savingId === dept.id ? t('common.saving') : savedId === dept.id && !dirty ? t('common.saved') : t('common.save')}</span>
                         </button>
                       </td>
                     </tr>

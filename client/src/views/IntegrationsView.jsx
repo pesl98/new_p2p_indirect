@@ -1,12 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { KeyRound, Plus, RefreshCw, RotateCcw } from 'lucide-react';
 import { api } from '../api';
+import { presentError, statusLabel, t } from '../i18n';
 
-const SCOPES = [
-  { id: 'vendors:write', label: 'Vendors write' },
-  { id: 'catalog:write', label: 'Catalog write' },
-  { id: 'export:read', label: 'Export read' }
-];
+const SCOPES = ['vendors:write', 'catalog:write', 'export:read'];
 
 function emptyForm() {
   return {
@@ -49,7 +46,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
       setEvents(Array.isArray(outbox?.events) ? outbox.events : []);
       setConfig(settings);
     } catch (err) {
-      setError(err.message || 'Failed to load integrations');
+      setError(presentError(err, 'errors.integrations'));
     } finally {
       setLoading(false);
     }
@@ -82,20 +79,20 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
       setForm(emptyForm());
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to create API key');
+      setError(presentError(err, 'errors.apiKeyCreate'));
     } finally {
       setSaving(false);
     }
   };
 
   const revoke = async (row) => {
-    if (!window.confirm(`Revoke ${row.name} (${row.key_prefix}…)? Callers using it will get 401.`)) return;
+    if (!window.confirm(t('admin.integrations.confirmRevoke', { name: row.name, prefix: row.key_prefix }))) return;
     setError('');
     try {
       await api.revokeApiKey(row.id);
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to revoke API key');
+      setError(presentError(err, 'errors.apiKeyRevoke'));
     }
   };
 
@@ -105,7 +102,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
       await api.replayWebhook(row.id);
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to replay webhook');
+      setError(presentError(err, 'errors.replay'));
     }
   };
 
@@ -115,7 +112,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
       await api.dispatchWebhooks();
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to deliver webhooks');
+      setError(presentError(err, 'errors.dispatch'));
     }
   };
 
@@ -123,9 +120,9 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
     return (
       <div className="bg-white p-8 rounded-xl border border-slate-200/80 shadow-sm text-center">
         <KeyRound className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-        <h2 className="text-lg font-bold text-slate-900">Integrations</h2>
+        <h2 className="text-lg font-bold text-slate-900">{t('admin.integrations.gatedTitle')}</h2>
         <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-          Only an admin can issue API keys and inspect the webhook outbox.
+          {t('admin.integrations.gatedBody')}
         </p>
       </div>
     );
@@ -134,17 +131,27 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
   return (
     <div className="space-y-6">
       <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">Integrations</h2>
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('admin.integrations.title')}</h2>
         <p className="text-xs text-slate-500 mt-0.5 max-w-3xl">
-          Machine clients use a scoped API key (<span className="font-mono">Authorization: Bearer pfk_…</span>).
-          The plaintext is shown once and only a hash is stored. The key is the actor. It does not sign in as a user,
-          and a <span className="font-mono">pf_session</span> cookie does not call the vendor, catalog, or export routes.
+          {t('admin.integrations.introBefore')}
+          <span className="font-mono">Authorization: Bearer pfk_…</span>
+          {t('admin.integrations.introMid')}{' '}
+          <span className="font-mono">pf_session</span>
+          {t('admin.integrations.introAfter')}
         </p>
         {config && (
           <p className="text-[11px] text-slate-600 mt-3">
-            Webhook target {config.webhook_target_configured ? `configured (${config.webhook_target_host || 'host unavailable'})` : 'not configured'}.
-            Signing secret {config.webhook_signing_secret_configured ? 'configured' : 'not configured'}.
-            Set <span className="font-mono">WEBHOOK_TARGET_URL</span> and <span className="font-mono">WEBHOOK_SIGNING_SECRET</span> on this deployment. The secret is never returned.
+            {t('admin.integrations.webhookTarget')}{' '}
+            {config.webhook_target_configured
+              ? t('admin.integrations.configuredHost', { host: config.webhook_target_host || t('admin.integrations.hostUnavailable') })
+              : t('admin.integrations.notConfigured')}.{' '}
+            {t('admin.integrations.signingSecret')}{' '}
+            {config.webhook_signing_secret_configured ? t('admin.integrations.configured') : t('admin.integrations.notConfigured')}.{' '}
+            {t('admin.integrations.setEnvBefore')}{' '}
+            <span className="font-mono">WEBHOOK_TARGET_URL</span>{' '}
+            {t('admin.integrations.setEnvMid')}{' '}
+            <span className="font-mono">WEBHOOK_SIGNING_SECRET</span>{' '}
+            {t('admin.integrations.setEnvAfter')}
           </p>
         )}
       </div>
@@ -157,33 +164,33 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
 
       {revealedKey && (
         <div className="bg-amber-50 border border-amber-200 text-amber-950 text-xs rounded-xl px-4 py-3">
-          <div className="font-semibold">Copy this API key now. It will not be shown again.</div>
+          <div className="font-semibold">{t('admin.integrations.copyOnce')}</div>
           <code className="block mt-2 break-all font-mono text-[11px]">{revealedKey}</code>
           <button
             type="button"
             onClick={() => setRevealedKey(null)}
             className="mt-2 text-[11px] font-semibold underline"
           >
-            I have stored it
+            {t('admin.integrations.stored')}
           </button>
         </div>
       )}
 
       <form onSubmit={createKey} className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm space-y-3">
-        <h3 className="text-sm font-bold text-slate-900">New API key</h3>
+        <h3 className="text-sm font-bold text-slate-900">{t('admin.integrations.newKey')}</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="block text-xs">
-            <span className="font-semibold text-slate-600">Name</span>
+            <span className="font-semibold text-slate-600">{t('common.name')}</span>
             <input
               required
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="SAP vendor sync"
+              placeholder={t('admin.integrations.namePlaceholder')}
               className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
             />
           </label>
           <label className="block text-xs">
-            <span className="font-semibold text-slate-600">Requests per minute</span>
+            <span className="font-semibold text-slate-600">{t('admin.integrations.perMinute')}</span>
             <input
               required
               type="number"
@@ -195,7 +202,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
             />
           </label>
           <label className="block text-xs">
-            <span className="font-semibold text-slate-600">Expires (optional)</span>
+            <span className="font-semibold text-slate-600">{t('admin.integrations.expiresOptional')}</span>
             <input
               type="datetime-local"
               value={form.expires_at}
@@ -206,13 +213,13 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
         </div>
         <div className="flex flex-wrap gap-3 text-xs">
           {SCOPES.map((scope) => (
-            <label key={scope.id} className="inline-flex items-center gap-1.5">
+            <label key={scope} className="inline-flex items-center gap-1.5">
               <input
                 type="checkbox"
-                checked={form.scopes.includes(scope.id)}
-                onChange={() => toggleScope(scope.id)}
+                checked={form.scopes.includes(scope)}
+                onChange={() => toggleScope(scope)}
               />
-              <span className="font-mono">{scope.id}</span>
+              <span className="font-mono">{scope}</span>
             </label>
           ))}
         </div>
@@ -222,31 +229,31 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
           className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-semibold px-3 py-2 rounded-lg"
         >
           <Plus className="w-3.5 h-3.5" />
-          <span>{saving ? 'Creating…' : 'Create key'}</span>
+          <span>{saving ? t('admin.integrations.creating') : t('admin.integrations.createKey')}</span>
         </button>
       </form>
 
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         {loading ? (
-          <div className="py-12 text-center text-slate-400 text-xs">Loading integrations…</div>
+          <div className="py-12 text-center text-slate-400 text-xs">{t('admin.integrations.loading')}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                 <tr>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Prefix</th>
-                  <th className="px-4 py-3">Scopes</th>
-                  <th className="px-4 py-3">Limit</th>
-                  <th className="px-4 py-3">Last used</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">{t('common.name')}</th>
+                  <th className="px-4 py-3">{t('admin.integrations.prefix')}</th>
+                  <th className="px-4 py-3">{t('admin.integrations.scopes')}</th>
+                  <th className="px-4 py-3">{t('admin.integrations.limit')}</th>
+                  <th className="px-4 py-3">{t('admin.integrations.lastUsed')}</th>
+                  <th className="px-4 py-3">{t('common.status')}</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {keys.length === 0 && (
                   <tr>
-                    <td colSpan="7" className="px-4 py-8 text-center text-slate-400">No API keys yet.</td>
+                    <td colSpan="7" className="px-4 py-8 text-center text-slate-400">{t('admin.integrations.emptyKeys')}</td>
                   </tr>
                 )}
                 {keys.map((row) => (
@@ -254,11 +261,11 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
                     <td className="px-4 py-3.5 font-semibold text-slate-900">{row.name}</td>
                     <td className="px-4 py-3.5 font-mono text-[11px]">{row.key_prefix}…</td>
                     <td className="px-4 py-3.5 font-mono text-[11px]">{(row.scopes || []).join(', ')}</td>
-                    <td className="px-4 py-3.5">{row.rate_limit_per_minute}/min</td>
+                    <td className="px-4 py-3.5">{t('admin.integrations.rate', { n: row.rate_limit_per_minute })}</td>
                     <td className="px-4 py-3.5 text-slate-500">{row.last_used_at || '—'}</td>
                     <td className="px-4 py-3.5">
                       <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${row.revoked_at ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-800'}`}>
-                        {row.revoked_at ? 'Revoked' : 'Active'}
+                        {row.revoked_at ? t('admin.integrations.revoked') : statusLabel('active')}
                       </span>
                     </td>
                     <td className="px-4 py-3.5 text-right">
@@ -269,7 +276,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
                           onClick={() => revoke(row)}
                           className="text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                         >
-                          Revoke
+                          {t('admin.integrations.revoke')}
                         </button>
                       )}
                     </td>
@@ -283,7 +290,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
 
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-slate-900">Webhook outbox</h3>
+          <h3 className="text-sm font-bold text-slate-900">{t('admin.integrations.outbox')}</h3>
           <div className="flex items-center gap-2">
             <select
               value={outboxStatus}
@@ -293,10 +300,10 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
               }}
               className="border border-slate-300 rounded-lg px-2 py-1 text-xs"
             >
-              <option value="all">All</option>
-              <option value="pending">Pending</option>
-              <option value="delivered">Delivered</option>
-              <option value="dead">Dead letter</option>
+              <option value="all">{statusLabel('all')}</option>
+              <option value="pending">{statusLabel('pending')}</option>
+              <option value="delivered">{statusLabel('delivered')}</option>
+              <option value="dead">{statusLabel('dead')}</option>
             </select>
             <button
               type="button"
@@ -304,7 +311,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
               className="inline-flex items-center space-x-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
             >
               <RefreshCw className="w-3 h-3" />
-              <span>Deliver pending</span>
+              <span>{t('admin.integrations.deliverPending')}</span>
             </button>
           </div>
         </div>
@@ -312,18 +319,18 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
               <tr>
-                <th className="px-4 py-3">Event</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Attempts</th>
-                <th className="px-4 py-3">Next</th>
-                <th className="px-4 py-3">Last error</th>
+                <th className="px-4 py-3">{t('admin.integrations.event')}</th>
+                <th className="px-4 py-3">{t('common.status')}</th>
+                <th className="px-4 py-3">{t('admin.integrations.attempts')}</th>
+                <th className="px-4 py-3">{t('common.next')}</th>
+                <th className="px-4 py-3">{t('admin.integrations.lastError')}</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {events.length === 0 && (
                 <tr>
-                  <td colSpan="6" className="px-4 py-8 text-center text-slate-400">No webhook events.</td>
+                  <td colSpan="6" className="px-4 py-8 text-center text-slate-400">{t('admin.integrations.emptyEvents')}</td>
                 </tr>
               )}
               {events.map((row) => (
@@ -334,7 +341,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
                   </td>
                   <td className="px-4 py-3.5">
                     <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${statusPill(row.status)}`}>
-                      {row.status}
+                      {statusLabel(row.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3.5">{row.attempt_count}</td>
@@ -347,7 +354,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
                       className="inline-flex items-center space-x-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
                     >
                       <RotateCcw className="w-3 h-3" />
-                      <span>Replay</span>
+                      <span>{t('admin.integrations.replay')}</span>
                     </button>
                   </td>
                 </tr>

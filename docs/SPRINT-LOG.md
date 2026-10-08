@@ -42,9 +42,9 @@ Peter’s order. Do not start a later item inside an earlier sprint’s PR.
 3. **Audit / compliance reporting**
 4. **Integrations**
 5. **Currency selection** — Sprint 5. One deployment currency, default EUR, shared formatter, locale `nl-NL`. No in-app picker and no foreign exchange.
-6. **Translation / i18n** — Dutch (Netherlands) UI so the product is useful for NL users. Sprint 6. Not part of Sprint 5.
+6. **Translation / i18n** — Dutch (Netherlands) UI so the product is useful for NL users. Sprint 6. It was not part of Sprint 5.
 
-Item 6 is backlog only. It is not part of Sprint 5.
+Item 6 is Sprint 6 (below).
 
 ## Recent history on `main` (before this program)
 
@@ -67,6 +67,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | `4472b2725a70f7743a978ecfb5cdd02488aca72e` | merged |
 | 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
+| 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -250,3 +251,33 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 - **Config.** `CURRENCY` unset or blank is EUR. `eur` / `usd` are accepted and uppercased. Anything else throws `CurrencyConfigError` (`currency_misconfigured`, HTTP 503) at boot and does not silently fall back. The client reads `currency` from `GET /api/auth/config` and fails closed to EUR if that value is missing or not on the allowlist. `GET /api/health` also returns `currency`. There is no picker and no FX. Numeric inputs stay dot-decimal major units; Dutch comma entry is Sprint 6.
 - **Outbound data.** Invoice and payment-run export JSON `currency` is the deployment code (it was hardcoded `USD`). The invoice CSV already had a `currency` column; the value follows `CURRENCY` and the column position is unchanged. The payment-run CSV gains `currency` as the last column. Webhook payloads that already include cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) gain `currency`. `receipt.posted` has no money fields and no `currency` field. The compliance verification JSON gains top-level `currency`; its CSV gains a trailing `currency` column. The audit-trail CSV header is unchanged. Cent field names and values are unchanged.
 - **Left alone.** SSO, session auth, append-only ledger triggers, integration route behavior, and the webhook outbox dispatcher/drain. No email sender exists to update.
+
+## Sprint 6 — Dutch (NL) i18n
+
+**Date:** 2026-10-07
+
+**Goal:** Make the user-facing UI Dutch (Netherlands) so an NL customer can work in the product, with a catalog the team can extend, and accept comma decimals on amount fields.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/52 (#52).
+
+**Merge SHA:** `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (squash-merged).
+
+**Status:** merged.
+
+### Done when
+
+- Login, navigation, dashboards, requisitions, approvals, purchase orders, receipts, invoices, payments, and the existing admin and settings screens are Dutch.
+- English is not the primary copy on those surfaces. Seed and demo names and emails stay. API machine codes stay English and the UI maps them to Dutch.
+- Strings live in a message catalog with `t()` and `useI18n()`. Default locale is `nl-NL`. There is no language picker.
+- Amount fields accept `1.295,50`. Stored values stay integer cents. `formatMoney` and `shared/currency.js` stay as Sprint 5 left them.
+- SSO, `pf_session`, the compliance ledger, integrations, and the Sprint 5 currency tests still pass. `npm test` is green.
+- This row points at the PR.
+
+### Decisions
+
+- **Catalog, not a framework.** The app had no i18n library. `client/src/i18n.js` loads `client/src/i18n/nl-NL.js` (merged from `client/src/i18n/parts/`). `t('key', { name })` replaces `{name}`. `useI18n()` subscribes to `setLocale` so a later locale can re-render. Only `nl-NL` is registered. An unknown locale falls back to `nl-NL`. `html lang` is `nl-NL`.
+- **What stays English.** Persona names, emails, document numbers, category and status values sent to the API, scope names, and text already stored in the database (audit details, justifications, seed descriptions). Actor-name fallbacks written onto the ledger stay the previous English strings so audit rows do not change shape.
+- **Errors.** `presentError` maps known API sentences and machine codes (`sso_not_configured`, `Invalid email or password`, and the same kind of message) to Dutch. Anything else becomes a Dutch fallback. The API response itself is unchanged.
+- **Notices.** Success banners and match findings the server still writes in English are translated on display by `presentNotice`. Unmapped text becomes a Dutch fallback. The stored sentence is not rewritten.
+- **Amounts.** `parseMajorAmount` / `toCents` on the client: comma is the decimal separator, dot is thousands (`1.295,50` → 129550 cents). A single dot with one or two fractional digits still parses (`749.00`) so a paste does not become zero. `1.295` is one thousand two hundred ninety-five. Empty or invalid text is 0, as before. `formatMajorInput` shows `1.295,50` in the field. Quantity, meter, and capacity inputs are not money and stay as they were. Server `toCents` and `shared/currency.js` are unchanged.
+- **Left alone.** SSO, session auth, the append-only ledger, integration routes, `CURRENCY`, webhook drain, and the Sprint 5 icon follow-ups.

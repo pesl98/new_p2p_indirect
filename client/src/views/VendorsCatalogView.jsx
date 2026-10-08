@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Store, BookOpen, Plus, Search, Star, Phone, Mail, MapPin, X, Pencil, Ban, RotateCcw } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, toCents, fromCents } from '../money';
+import { t, presentError, statusLabel, categoryLabel, paymentTermLabel } from '../i18n';
+import { formatMoney, toCents, formatMajorInput, moneyInputProps } from '../money';
 import { lineTypeFromCategory, lineTypeLabel, serviceBasisLabel } from '../lineType';
 
 const CATALOG_CATEGORIES = [
@@ -19,14 +20,9 @@ function StatusBadge({ status }) {
     inactive: 'bg-slate-200 text-slate-700',
     under_review: 'bg-amber-100 text-amber-800'
   };
-  const labels = {
-    active: 'Active',
-    inactive: 'Inactive',
-    under_review: 'Under review'
-  };
   return (
     <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${styles[value] || styles.inactive}`}>
-      {labels[value] || value}
+      {statusLabel(value)}
     </span>
   );
 }
@@ -35,6 +31,27 @@ function assignableSuppliers(suppliers, keepId) {
   return (suppliers || []).filter((s) => (
     s.status === 'active' || (keepId != null && Number(s.id) === Number(keepId))
   ));
+}
+
+function dayCount(n) {
+  const count = Number(n) || 0;
+  return count === 1 ? t('catalog.dayOne') : t('catalog.daysMany', { n: count });
+}
+
+function poCount(n) {
+  const count = Number(n) || 0;
+  return count === 1 ? t('suppliers.poOne') : t('suppliers.poMany', { n: count });
+}
+
+function presentSupplierWarning(message, fallbackKey) {
+  const match = String(message).match(/Supplier remains preferred on (\d+) active catalog item/);
+  if (match) {
+    const count = Number(match[1]);
+    return count === 1
+      ? t('catalog.preferredWarningOne')
+      : t('catalog.preferredWarningMany', { count });
+  }
+  return presentError(message, fallbackKey);
 }
 
 export default function VendorsCatalogView() {
@@ -133,7 +150,7 @@ export default function VendorsCatalogView() {
     setNewCategory(item.category || 'IT Hardware');
     setNewUnit(item.unit || 'each');
     setNewBasis(item.service_basis || '');
-    setNewPrice(item.unit_price != null ? String(fromCents(item.unit_price).toFixed(2)) : '');
+    setNewPrice(item.unit_price != null ? formatMajorInput(item.unit_price) : '');
     setNewSupplierId(item.preferred_supplier_id ? String(item.preferred_supplier_id) : '');
     setNewLeadDays(item.lead_time_days || 3);
     setShowCatalogModal(true);
@@ -159,7 +176,7 @@ export default function VendorsCatalogView() {
 
   const handleSaveCatalogItem = async () => {
     if (!newSKU || !newName || !newPrice) {
-      alert('Please provide SKU, item name, and price.');
+      alert(t('catalog.fieldsRequired'));
       return;
     }
     const payload = {
@@ -183,13 +200,13 @@ export default function VendorsCatalogView() {
       resetCatalogForm();
       loadData();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, editingCatalog ? 'errors.catalogUpdate' : 'errors.catalogCreate'));
     }
   };
 
   const handleSaveSupplier = async () => {
     if (!supName || (!editingSupplier && !supCode)) {
-      alert('Please provide supplier name and code.');
+      alert(t('suppliers.fieldsRequired'));
       return;
     }
     try {
@@ -204,7 +221,7 @@ export default function VendorsCatalogView() {
           status: supStatus
         });
         if (updated.warnings?.length) {
-          alert(updated.warnings.join('\n'));
+          alert(updated.warnings.map((warning) => presentSupplierWarning(warning, 'errors.supplierUpdate')).join('\n'));
         }
       } else {
         await api.createSupplier({
@@ -221,14 +238,14 @@ export default function VendorsCatalogView() {
       resetSupplierForm();
       loadData();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, editingSupplier ? 'errors.supplierUpdate' : 'errors.supplierCreate'));
     }
   };
 
   const handleCatalogStatus = async (item, nextStatus) => {
     if (nextStatus === 'inactive') {
       const ok = window.confirm(
-        `Deactivate ${item.sku} (${item.name})? It will be hidden from requisition browse. Existing PR/PO/invoice lines are kept.`
+        t('catalog.deactivateItem', { sku: item.sku, name: item.name })
       );
       if (!ok) return;
     }
@@ -236,25 +253,25 @@ export default function VendorsCatalogView() {
       await api.updateCatalogItemStatus(item.id, nextStatus);
       loadData();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.catalogStatus'));
     }
   };
 
   const handleSupplierStatus = async (sup, nextStatus) => {
     if (nextStatus === 'inactive') {
       const ok = window.confirm(
-        `Deactivate ${sup.name}? Existing PR/PO/invoice history is kept. Inactive suppliers cannot be newly selected in buyer flows.`
+        t('suppliers.deactivate', { name: sup.name })
       );
       if (!ok) return;
     }
     try {
       const updated = await api.updateSupplierStatus(sup.id, nextStatus);
       if (updated.warnings?.length) {
-        alert(updated.warnings.join('\n'));
+        alert(updated.warnings.map((warning) => presentSupplierWarning(warning, 'errors.supplierStatus')).join('\n'));
       }
       loadData();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.supplierStatus'));
     }
   };
 
@@ -262,9 +279,9 @@ export default function VendorsCatalogView() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Suppliers & Catalog Management</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('catalog.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Maintain approved supplier directories and pre-negotiated non-production item catalogs. Soft-deactivate only — history is never deleted.
+            {t('catalog.subtitle')}
           </p>
         </div>
 
@@ -275,7 +292,7 @@ export default function VendorsCatalogView() {
               className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-1.5"
             >
               <Plus className="w-4 h-4" />
-              <span>Add Catalog Item</span>
+              <span>{t('catalog.addItem')}</span>
             </button>
           ) : (
             <button
@@ -283,7 +300,7 @@ export default function VendorsCatalogView() {
               className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-1.5"
             >
               <Plus className="w-4 h-4" />
-              <span>Onboard Supplier</span>
+              <span>{t('catalog.addSupplier')}</span>
             </button>
           )}
         </div>
@@ -299,7 +316,7 @@ export default function VendorsCatalogView() {
           }`}
         >
           <BookOpen className="w-4 h-4" />
-          <span>Non-Production Catalog ({catalog.length})</span>
+          <span>{t('catalog.tabCatalog', { n: catalog.length })}</span>
         </button>
         <button
           onClick={() => setSubTab('suppliers')}
@@ -310,7 +327,7 @@ export default function VendorsCatalogView() {
           }`}
         >
           <Store className="w-4 h-4" />
-          <span>Approved Suppliers ({suppliers.length})</span>
+          <span>{t('catalog.tabSuppliers', { n: suppliers.length })}</span>
         </button>
       </div>
 
@@ -321,7 +338,7 @@ export default function VendorsCatalogView() {
               <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search catalog by SKU, product name, or description..."
+                placeholder={t('catalog.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-xs"
@@ -332,14 +349,14 @@ export default function VendorsCatalogView() {
               onChange={(e) => setCategory(e.target.value)}
               className="border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium"
             >
-              <option value="All">All Categories</option>
+              <option value="All">{categoryLabel('All')}</option>
               {CATALOG_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
+                <option key={cat} value={cat}>{categoryLabel(cat)}</option>
               ))}
             </select>
           </div>
 
-          {loading && <p className="text-xs text-slate-400">Loading catalog…</p>}
+          {loading && <p className="text-xs text-slate-400">{t('catalog.loading')}</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {catalog.map((item) => (
@@ -353,7 +370,7 @@ export default function VendorsCatalogView() {
                         {lineTypeLabel(item)}{serviceBasisLabel(item.service_basis) ? ` · ${serviceBasisLabel(item.service_basis)}` : ''}
                       </span>
                       <span className="bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded text-[10px]">
-                        {item.category}
+                        {categoryLabel(item.category)}
                       </span>
                     </span>
                   </div>
@@ -361,8 +378,8 @@ export default function VendorsCatalogView() {
                   <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">{item.description}</p>
                   {item.preferred_supplier_name && (
                     <p className="text-[11px] text-slate-500 mt-2">
-                      Preferred: {item.preferred_supplier_name}
-                      {item.preferred_supplier_status && item.preferred_supplier_status !== 'active' ? ` (${item.preferred_supplier_status})` : ''}
+                      {t('catalog.preferred', { name: item.preferred_supplier_name })}
+                      {item.preferred_supplier_status && item.preferred_supplier_status !== 'active' ? ` (${statusLabel(item.preferred_supplier_status)})` : ''}
                     </p>
                   )}
                 </div>
@@ -370,15 +387,15 @@ export default function VendorsCatalogView() {
                 <div className="pt-3 border-t border-slate-100 space-y-3">
                   <div className="flex items-center justify-between text-xs">
                     <div>
-                      <span className="text-[10px] text-slate-400 block">Negotiated Price</span>
+                      <span className="text-[10px] text-slate-400 block">{t('catalog.negotiatedPrice')}</span>
                       <div className="text-base font-extrabold text-emerald-700">
                         {formatMoney(item.unit_price)}
                         <span className="text-[10px] text-slate-400 font-normal"> / {item.unit}</span>
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className="text-[10px] text-slate-400 block">Lead Time</span>
-                      <span className="font-semibold text-slate-700">{item.lead_time_days} days</span>
+                      <span className="text-[10px] text-slate-400 block">{t('catalog.leadTime')}</span>
+                      <span className="font-semibold text-slate-700">{dayCount(item.lead_time_days)}</span>
                     </div>
                   </div>
                   <div className="flex items-center justify-end gap-2">
@@ -388,7 +405,7 @@ export default function VendorsCatalogView() {
                       className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1"
                     >
                       <Pencil className="w-3 h-3" />
-                      Edit
+                      {t('common.edit')}
                     </button>
                     {item.status === 'inactive' ? (
                       <button
@@ -397,7 +414,7 @@ export default function VendorsCatalogView() {
                         className="px-2.5 py-1.5 border border-emerald-200 text-emerald-800 rounded-lg text-[11px] font-semibold hover:bg-emerald-50 flex items-center gap-1"
                       >
                         <RotateCcw className="w-3 h-3" />
-                        Reactivate
+                        {t('catalog.reactivate')}
                       </button>
                     ) : (
                       <button
@@ -406,7 +423,7 @@ export default function VendorsCatalogView() {
                         className="px-2.5 py-1.5 border border-slate-200 text-slate-600 rounded-lg text-[11px] font-semibold hover:bg-slate-50 flex items-center gap-1"
                       >
                         <Ban className="w-3 h-3" />
-                        Deactivate
+                        {t('catalog.deactivate')}
                       </button>
                     )}
                   </div>
@@ -435,8 +452,8 @@ export default function VendorsCatalogView() {
                 <h3 className="text-base font-bold text-slate-900">{sup.name}</h3>
                 <div className="space-y-1 mt-2 text-xs text-slate-600">
                   <div className="flex items-center space-x-2">
-                    <span className="text-slate-400 font-medium">Contact:</span>
-                    <span>{sup.contact_person || 'Representative'}</span>
+                    <span className="text-slate-400 font-medium">{t('common.contact')}:</span>
+                    <span>{sup.contact_person || t('suppliers.contactFallback')}</span>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Mail className="w-3.5 h-3.5 text-slate-400" />
@@ -458,12 +475,12 @@ export default function VendorsCatalogView() {
               <div className="pt-3 border-t border-slate-100 space-y-3">
                 <div className="flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Standard Terms</span>
-                    <span className="font-semibold text-slate-800">{sup.payment_terms}</span>
+                    <span className="text-[10px] text-slate-400 block">{t('suppliers.standardTerms')}</span>
+                    <span className="font-semibold text-slate-800">{paymentTermLabel(sup.payment_terms)}</span>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block">PO Orders</span>
-                    <span className="font-bold text-indigo-700">{sup.total_pos || 0} POs</span>
+                    <span className="text-[10px] text-slate-400 block">{t('suppliers.poOrders')}</span>
+                    <span className="font-bold text-indigo-700">{poCount(sup.total_pos || 0)}</span>
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2">
@@ -473,7 +490,7 @@ export default function VendorsCatalogView() {
                     className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-[11px] font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1"
                   >
                     <Pencil className="w-3 h-3" />
-                    Edit
+                    {t('common.edit')}
                   </button>
                   {sup.status === 'inactive' ? (
                     <button
@@ -482,7 +499,7 @@ export default function VendorsCatalogView() {
                       className="px-2.5 py-1.5 border border-emerald-200 text-emerald-800 rounded-lg text-[11px] font-semibold hover:bg-emerald-50 flex items-center gap-1"
                     >
                       <RotateCcw className="w-3 h-3" />
-                      Reactivate
+                      {t('catalog.reactivate')}
                     </button>
                   ) : (
                     <button
@@ -491,7 +508,7 @@ export default function VendorsCatalogView() {
                       className="px-2.5 py-1.5 border border-slate-200 text-slate-600 rounded-lg text-[11px] font-semibold hover:bg-slate-50 flex items-center gap-1"
                     >
                       <Ban className="w-3 h-3" />
-                      Deactivate
+                      {t('catalog.deactivate')}
                     </button>
                   )}
                 </div>
@@ -506,7 +523,7 @@ export default function VendorsCatalogView() {
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex justify-between items-center pb-3 border-b border-slate-200">
               <h3 className="text-base font-bold text-slate-900">
-                {editingCatalog ? 'Edit Catalog Item' : 'Add Non-Production Item'}
+                {editingCatalog ? t('catalog.editItem') : t('catalog.addIndirect')}
               </h3>
               <button onClick={() => setShowCatalogModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -516,17 +533,17 @@ export default function VendorsCatalogView() {
             <div className="py-4 space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-slate-600 mb-1">SKU</label>
+                  <label className="block text-slate-600 mb-1">{t('catalog.sku')}</label>
                   <input
                     type="text"
-                    placeholder="e.g. SKU-HW-099"
+                    placeholder={t('catalog.skuPlaceholder')}
                     value={newSKU}
                     onChange={(e) => setNewSKU(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg font-mono text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Category</label>
+                  <label className="block text-slate-600 mb-1">{t('common.category')}</label>
                   <select
                     value={newCategory}
                     onChange={(e) => {
@@ -541,17 +558,17 @@ export default function VendorsCatalogView() {
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   >
                     {CATALOG_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>{cat === 'Consulting & Professional Services' ? 'Consulting' : cat}</option>
+                      <option key={cat} value={cat}>{cat === 'Consulting & Professional Services' ? t('category.consultingShort') : categoryLabel(cat)}</option>
                     ))}
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Item / Service Name</label>
+                <label className="block text-slate-600 mb-1">{t('catalog.itemName')}</label>
                 <input
                   type="text"
-                  placeholder="e.g. 27-inch 4K Monitor"
+                  placeholder={t('catalog.namePlaceholder')}
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -559,10 +576,10 @@ export default function VendorsCatalogView() {
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Description</label>
+                <label className="block text-slate-600 mb-1">{t('common.description')}</label>
                 <textarea
                   rows="2"
-                  placeholder="Detailed specifications..."
+                  placeholder={t('catalog.descPlaceholder')}
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -570,16 +587,16 @@ export default function VendorsCatalogView() {
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Preferred supplier</label>
+                <label className="block text-slate-600 mb-1">{t('catalog.preferredSupplier')}</label>
                 <select
                   value={newSupplierId}
                   onChange={(e) => setNewSupplierId(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                 >
-                  <option value="">No preferred supplier</option>
+                  <option value="">{t('catalog.noPreferred')}</option>
                   {catalogPreferredChoices.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name}{s.status !== 'active' ? ` (${s.status})` : ''}
+                      {s.name}{s.status !== 'active' ? ` (${statusLabel(s.status)})` : ''}
                     </option>
                   ))}
                 </select>
@@ -587,33 +604,33 @@ export default function VendorsCatalogView() {
 
               {lineTypeFromCategory(newCategory) === 'service' && (
                 <div>
-                  <label className="block text-slate-600 mb-1">Service basis</label>
+                  <label className="block text-slate-600 mb-1">{t('catalog.serviceBasis')}</label>
                   <select
                     value={newBasis}
                     onChange={(e) => setNewBasis(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   >
-                    <option value="">Unit quantity (seats, licenses)</option>
-                    <option value="lump_sum">Lump sum</option>
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
+                    <option value="">{t('catalog.unitQuantity')}</option>
+                    <option value="lump_sum">{serviceBasisLabel('lump_sum')}</option>
+                    <option value="hours">{serviceBasisLabel('hours')}</option>
+                    <option value="days">{serviceBasisLabel('days')}</option>
                   </select>
                 </div>
               )}
 
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-slate-600 mb-1">Unit price</label>
+                  <label className="block text-slate-600 mb-1">{t('common.unitPrice')}</label>
                   <input
-                    type="number"
-                    placeholder="499.00"
+                    {...moneyInputProps}
+                    placeholder={t('money.example')}
                     value={newPrice}
                     onChange={(e) => setNewPrice(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Unit</label>
+                  <label className="block text-slate-600 mb-1">{t('catalog.unit')}</label>
                   <input
                     type="text"
                     value={newUnit}
@@ -622,7 +639,7 @@ export default function VendorsCatalogView() {
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Lead Time (Days)</label>
+                  <label className="block text-slate-600 mb-1">{t('catalog.leadDays')}</label>
                   <input
                     type="number"
                     value={newLeadDays}
@@ -631,14 +648,15 @@ export default function VendorsCatalogView() {
                   />
                 </div>
               </div>
+              <p className="text-[10px] text-slate-400">{t('money.hint')}</p>
             </div>
 
             <div className="flex justify-end space-x-2 pt-3 border-t border-slate-200">
               <button onClick={() => setShowCatalogModal(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={handleSaveCatalogItem} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-semibold">
-                {editingCatalog ? 'Save Changes' : 'Save Item'}
+                {editingCatalog ? t('catalog.saveChanges') : t('catalog.saveItem')}
               </button>
             </div>
           </div>
@@ -650,7 +668,7 @@ export default function VendorsCatalogView() {
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <div className="flex justify-between items-center pb-3 border-b border-slate-200">
               <h3 className="text-base font-bold text-slate-900">
-                {editingSupplier ? 'Edit Supplier' : 'Onboard Approved Supplier'}
+                {editingSupplier ? t('suppliers.edit') : t('suppliers.onboard')}
               </h3>
               <button onClick={() => setShowSupplierModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -660,36 +678,36 @@ export default function VendorsCatalogView() {
             <div className="py-4 space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-slate-600 mb-1">Supplier Name</label>
+                  <label className="block text-slate-600 mb-1">{t('suppliers.name')}</label>
                   <input
                     type="text"
-                    placeholder="e.g. OfficePro Inc"
+                    placeholder={t('suppliers.namePlaceholder')}
                     value={supName}
                     onChange={(e) => setSupName(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Supplier Code</label>
+                  <label className="block text-slate-600 mb-1">{t('suppliers.code')}</label>
                   <input
                     type="text"
-                    placeholder="e.g. SUP-OPI"
+                    placeholder={t('suppliers.codePlaceholder')}
                     value={supCode}
                     onChange={(e) => setSupCode(e.target.value)}
                     disabled={Boolean(editingSupplier)}
                     className={`w-full p-2 border border-slate-300 rounded-lg font-mono text-xs ${editingSupplier ? 'bg-slate-50 text-slate-500' : ''}`}
                   />
                   {editingSupplier && (
-                    <p className="text-[10px] text-slate-400 mt-1">Code is immutable after onboard.</p>
+                    <p className="text-[10px] text-slate-400 mt-1">{t('suppliers.codeImmutable')}</p>
                   )}
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Contact Person</label>
+                <label className="block text-slate-600 mb-1">{t('suppliers.contactPerson')}</label>
                 <input
                   type="text"
-                  placeholder="Account Executive Name"
+                  placeholder={t('suppliers.contactPlaceholder')}
                   value={supContact}
                   onChange={(e) => setSupContact(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -698,20 +716,20 @@ export default function VendorsCatalogView() {
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-slate-600 mb-1">Email</label>
+                  <label className="block text-slate-600 mb-1">{t('common.email')}</label>
                   <input
                     type="email"
-                    placeholder="orders@supplier.com"
+                    placeholder={t('suppliers.emailPlaceholder')}
                     value={supEmail}
                     onChange={(e) => setSupEmail(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Phone</label>
+                  <label className="block text-slate-600 mb-1">{t('common.phone')}</label>
                   <input
                     type="text"
-                    placeholder="+1 555 123-4567"
+                    placeholder={t('suppliers.phonePlaceholder')}
                     value={supPhone}
                     onChange={(e) => setSupPhone(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -720,10 +738,10 @@ export default function VendorsCatalogView() {
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Address</label>
+                <label className="block text-slate-600 mb-1">{t('common.address')}</label>
                 <input
                   type="text"
-                  placeholder="Street, city, state"
+                  placeholder={t('suppliers.addressPlaceholder')}
                   value={supAddress}
                   onChange={(e) => setSupAddress(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -732,29 +750,29 @@ export default function VendorsCatalogView() {
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-slate-600 mb-1">Payment Terms</label>
+                  <label className="block text-slate-600 mb-1">{t('suppliers.paymentTerms')}</label>
                   <select
                     value={supTerms}
                     onChange={(e) => setSupTerms(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   >
-                    <option value="Net 15">Net 15</option>
-                    <option value="Net 30">Net 30</option>
-                    <option value="Net 45">Net 45</option>
-                    <option value="Net 60">Net 60</option>
+                    <option value="Net 15">{paymentTermLabel('Net 15')}</option>
+                    <option value="Net 30">{paymentTermLabel('Net 30')}</option>
+                    <option value="Net 45">{paymentTermLabel('Net 45')}</option>
+                    <option value="Net 60">{paymentTermLabel('Net 60')}</option>
                   </select>
                 </div>
                 {editingSupplier && (
                   <div>
-                    <label className="block text-slate-600 mb-1">Status</label>
+                    <label className="block text-slate-600 mb-1">{t('common.status')}</label>
                     <select
                       value={supStatus}
                       onChange={(e) => setSupStatus(e.target.value)}
                       className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                     >
-                      <option value="active">Active</option>
-                      <option value="under_review">Under review</option>
-                      <option value="inactive">Inactive</option>
+                      <option value="active">{statusLabel('active')}</option>
+                      <option value="under_review">{statusLabel('under_review')}</option>
+                      <option value="inactive">{statusLabel('inactive')}</option>
                     </select>
                   </div>
                 )}
@@ -763,10 +781,10 @@ export default function VendorsCatalogView() {
 
             <div className="flex justify-end space-x-2 pt-3 border-t border-slate-200">
               <button onClick={() => setShowSupplierModal(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button onClick={handleSaveSupplier} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold">
-                {editingSupplier ? 'Save Changes' : 'Save Supplier'}
+                {editingSupplier ? t('catalog.saveChanges') : t('suppliers.save')}
               </button>
             </div>
           </div>

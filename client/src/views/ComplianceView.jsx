@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Download, ScrollText, ShieldAlert } from 'lucide-react';
 import { api } from '../api';
+import { presentError, t } from '../i18n';
 
 const REPORTS = [
-  { id: 'audit-trail', label: 'Audit trail' },
-  { id: 'approval-policy', label: 'Approval & segregation' },
-  { id: 'payment-support', label: 'Paid without support' },
-  { id: 'verification', label: 'Verification' }
+  { id: 'audit-trail', labelKey: 'admin.compliance.auditTrail' },
+  { id: 'approval-policy', labelKey: 'admin.compliance.approvalPolicy' },
+  { id: 'payment-support', labelKey: 'admin.compliance.paymentSupport' },
+  { id: 'verification', labelKey: 'admin.compliance.verification' }
 ];
 
 const EMPTY_FILTERS = {
@@ -40,7 +41,7 @@ export default function ComplianceView({ currentUser }) {
       setReport(data);
     } catch (err) {
       setReport(null);
-      setError(err.message || 'Failed to load the report');
+      setError(presentError(err, 'errors.compliance'));
     } finally {
       setLoading(false);
     }
@@ -55,9 +56,9 @@ export default function ComplianceView({ currentUser }) {
     return (
       <div className="bg-white p-8 rounded-xl border border-slate-200/80 shadow-sm text-center">
         <ShieldAlert className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-        <h2 className="text-lg font-bold text-slate-900">Audit & compliance</h2>
+        <h2 className="text-lg font-bold text-slate-900">{t('admin.compliance.gatedTitle')}</h2>
         <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-          Admin and finance can read these reports. Other roles are refused.
+          {t('admin.compliance.gatedBody')}
         </p>
       </div>
     );
@@ -72,7 +73,7 @@ export default function ComplianceView({ currentUser }) {
     try {
       await api.exportComplianceCsv(reportId, reportId === 'audit-trail' ? applied : {});
     } catch (err) {
-      setError(err.message || 'Export failed');
+      setError(presentError(err, 'errors.exportFailed'));
     } finally {
       setExporting(false);
     }
@@ -85,12 +86,10 @@ export default function ComplianceView({ currentUser }) {
           <div>
             <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
               <ScrollText className="w-5 h-5 text-emerald-700" />
-              Audit & compliance
+              {t('admin.compliance.title')}
             </h2>
             <p className="text-xs text-slate-500 mt-1 max-w-3xl">
-              Read-only reports for admin and finance. The audit trail joins procurement
-              events, SSO evidence, and the hash-chained auth ledger. CSV export is itself
-              written to that ledger. Filters do not accept a persona id.
+              {t('admin.compliance.intro')}
             </p>
           </div>
           <button
@@ -100,7 +99,7 @@ export default function ComplianceView({ currentUser }) {
             className="inline-flex items-center space-x-1.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs font-semibold px-3 py-2 rounded-lg"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>{exporting ? 'Exporting…' : 'Export CSV'}</span>
+            <span>{exporting ? t('admin.compliance.exporting') : t('common.exportCsv')}</span>
           </button>
         </div>
 
@@ -116,7 +115,7 @@ export default function ComplianceView({ currentUser }) {
                   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
               }`}
             >
-              {item.label}
+              {t(item.labelKey)}
             </button>
           ))}
         </div>
@@ -130,7 +129,7 @@ export default function ComplianceView({ currentUser }) {
             }}
           >
             <label className="text-[11px] font-semibold text-slate-500">
-              From
+              {t('common.from')}
               <input
                 type="date"
                 value={filters.from}
@@ -139,7 +138,7 @@ export default function ComplianceView({ currentUser }) {
               />
             </label>
             <label className="text-[11px] font-semibold text-slate-500">
-              To
+              {t('common.to')}
               <input
                 type="date"
                 value={filters.to}
@@ -148,25 +147,25 @@ export default function ComplianceView({ currentUser }) {
               />
             </label>
             <label className="text-[11px] font-semibold text-slate-500">
-              Actor
+              {t('common.actor')}
               <input
                 value={filters.actor}
                 onChange={(event) => setFilters((prev) => ({ ...prev, actor: event.target.value }))}
-                placeholder="Name or user id"
+                placeholder={t('admin.compliance.actorPlaceholder')}
                 className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-800"
               />
             </label>
             <label className="text-[11px] font-semibold text-slate-500">
-              Entity
+              {t('common.entity')}
               <input
                 value={filters.entity_type}
                 onChange={(event) => setFilters((prev) => ({ ...prev, entity_type: event.target.value }))}
-                placeholder="invoice"
+                placeholder={t('admin.compliance.entityPlaceholder')}
                 className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-800"
               />
             </label>
             <label className="text-[11px] font-semibold text-slate-500">
-              Entity id
+              {t('admin.compliance.entityId')}
               <input
                 value={filters.entity_id}
                 onChange={(event) => setFilters((prev) => ({ ...prev, entity_id: event.target.value }))}
@@ -174,11 +173,11 @@ export default function ComplianceView({ currentUser }) {
               />
             </label>
             <label className="text-[11px] font-semibold text-slate-500">
-              Action
+              {t('common.action')}
               <input
                 value={filters.action}
                 onChange={(event) => setFilters((prev) => ({ ...prev, action: event.target.value }))}
-                placeholder="PAID"
+                placeholder={t('admin.compliance.actionPlaceholder')}
                 className="mt-1 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-800"
               />
             </label>
@@ -187,7 +186,7 @@ export default function ComplianceView({ currentUser }) {
                 type="submit"
                 className="text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg"
               >
-                Apply filters
+                {t('admin.compliance.apply')}
               </button>
             </div>
           </form>
@@ -202,10 +201,10 @@ export default function ComplianceView({ currentUser }) {
 
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 text-xs text-slate-500 flex justify-between">
-          <span>{loading ? 'Loading…' : `${rows.length} row${rows.length === 1 ? '' : 's'}`}</span>
-          {summary && <span>{summary.count} finding{summary.count === 1 ? '' : 's'}</span>}
+          <span>{loading ? t('common.loading') : t(rows.length === 1 ? 'admin.compliance.rowOne' : 'admin.compliance.rowMany', { count: rows.length })}</span>
+          {summary && <span>{t(summary.count === 1 ? 'admin.compliance.findingOne' : 'admin.compliance.findingMany', { count: summary.count })}</span>}
           {report?.total != null && reportId === 'audit-trail' && (
-            <span>{report.total} matching</span>
+            <span>{t(report.total === 1 ? 'admin.compliance.matchOne' : 'admin.compliance.matchMany', { count: report.total })}</span>
           )}
         </div>
         <div className="overflow-x-auto">
@@ -214,18 +213,18 @@ export default function ComplianceView({ currentUser }) {
               <tr>
                 {reportId === 'audit-trail' ? (
                   <>
-                    <th className="text-left font-semibold px-4 py-2">When</th>
-                    <th className="text-left font-semibold px-4 py-2">Source</th>
-                    <th className="text-left font-semibold px-4 py-2">Action</th>
-                    <th className="text-left font-semibold px-4 py-2">Actor</th>
-                    <th className="text-left font-semibold px-4 py-2">Entity</th>
-                    <th className="text-left font-semibold px-4 py-2">Details</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.when')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.source')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.action')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.actor')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.entity')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.details')}</th>
                   </>
                 ) : (
                   <>
-                    <th className="text-left font-semibold px-4 py-2">Code</th>
-                    <th className="text-left font-semibold px-4 py-2">Document</th>
-                    <th className="text-left font-semibold px-4 py-2">Message</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.code')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.document')}</th>
+                    <th className="text-left font-semibold px-4 py-2">{t('common.message')}</th>
                   </>
                 )}
               </tr>
@@ -234,7 +233,7 @@ export default function ComplianceView({ currentUser }) {
               {rows.length === 0 && !loading && (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                    Nothing to show for this report.
+                    {t('admin.compliance.empty')}
                   </td>
                 </tr>
               )}

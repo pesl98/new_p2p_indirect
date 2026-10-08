@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import { t } from '../i18n';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -28,9 +29,9 @@ import {
 } from 'lucide-react';
 
 function dbModeLabel(mode) {
-  if (mode === 'turso-http') return 'Turso (HTTP) active';
-  if (mode === 'sqlite') return 'SQLite (local) active';
-  return 'Database connected';
+  if (mode === 'turso-http') return t('shell.dbTurso');
+  if (mode === 'sqlite') return t('shell.dbSqlite');
+  return t('shell.dbConnected');
 }
 
 export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, paymentRunDraftCount, duplicateSuspectCount, currentUser }) {
@@ -49,168 +50,170 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
   const navItems = [
     {
       id: 'dashboard',
-      label: 'Dashboard & Spend',
+      label: t('shell.nav.dashboard'),
       icon: LayoutDashboard,
-      desc: 'KPIs, spend charts, budget health'
+      desc: t('shell.nav.dashboardDesc')
     },
     {
       id: 'requisitions',
-      label: 'Requisitions (PR)',
+      label: t('shell.nav.requisitions'),
       icon: FileText,
-      desc: 'Catalog orders & custom requests'
+      desc: t('shell.nav.requisitionsDesc')
     },
     {
       id: 'approvals',
-      label: 'Approvals Inbox',
+      label: t('shell.nav.approvals'),
       icon: CheckSquare,
       badge: pendingApprovalsCount > 0 ? pendingApprovalsCount : null,
       badgeColor: 'bg-amber-500 text-white',
-      desc: 'Multi-tier financial authorization'
+      desc: t('shell.nav.approvalsDesc')
     },
     ...(['approver', 'procurement', 'finance', 'admin'].includes(currentUser?.role)
       ? [{
           id: 'delegations',
-          label: 'Delegations',
+          label: t('shell.nav.delegations'),
           icon: UserCheck,
-          desc: 'Out-of-office substitute approvers'
+          desc: t('shell.nav.delegationsDesc')
         }]
       : []),
     {
       id: 'purchase_orders',
-      label: 'Purchase Orders (PO)',
+      label: t('shell.nav.purchaseOrders'),
       icon: ShoppingCart,
-      desc: 'Supplier orders & PDF view'
+      desc: t('shell.nav.purchaseOrdersDesc')
     },
     {
       id: 'goods_receipt',
-      label: 'Goods Receipt (GRN)',
+      label: t('shell.nav.goodsReceipt'),
       icon: PackageCheck,
-      desc: 'Physical receiving for goods lines'
+      desc: t('shell.nav.goodsReceiptDesc')
     },
     {
       id: 'consignment',
-      label: 'Consignment Stock',
+      label: t('shell.nav.consignment'),
       icon: Warehouse,
-      desc: 'Supplier-owned inventory at your site'
+      desc: t('shell.nav.consignmentDesc')
     },
     {
       id: 'utilities',
-      label: 'Metered Utilities',
+      label: t('shell.nav.utilities'),
       icon: Gauge,
-      desc: 'Water, electricity, and gas by consumption'
+      desc: t('shell.nav.utilitiesDesc')
     },
     {
       id: 'bulk',
-      label: 'Vendor-Managed Bulk',
+      label: t('shell.nav.bulk'),
       icon: Cylinder,
-      desc: 'Measured gas and fluid in a container or silo'
+      desc: t('shell.nav.bulkDesc')
     },
     {
       id: 'service_entry',
-      label: 'Service Entry (SES)',
+      label: t('shell.nav.serviceEntry'),
       icon: ClipboardCheck,
-      desc: 'Accept services; SES-backed 2-way match'
+      desc: t('shell.nav.serviceEntryDesc')
     },
     {
       id: 'invoices',
-      label: 'Invoices & Matching',
+      label: t('shell.nav.invoices'),
       icon: FileSpreadsheet,
-      badge: varianceInvoicesCount > 0 ? `${varianceInvoicesCount} Alert` : null,
+      badge: varianceInvoicesCount > 0
+        ? t(varianceInvoicesCount === 1 ? 'shell.alertBadge' : 'shell.alertBadgeMany', { count: varianceInvoicesCount })
+        : null,
       badgeColor: 'bg-rose-500 text-white',
-      desc: 'Automated 3-way reconciliation & AP'
+      desc: t('shell.nav.invoicesDesc')
     },
     {
       id: 'exception_workbench',
-      label: 'Exception Workbench',
+      label: t('shell.nav.exceptions'),
       icon: ShieldAlert,
       badge: varianceInvoicesCount > 0 ? varianceInvoicesCount : null,
       badgeColor: 'bg-rose-500 text-white',
-      desc: 'AP triage for dual-match failures'
+      desc: t('shell.nav.exceptionsDesc')
     },
     ...(['finance', 'admin'].includes(currentUser?.role)
       ? [{
           id: 'duplicate_suspects',
-          label: 'Duplicate Suspects',
+          label: t('shell.nav.duplicates'),
           icon: Copy,
           badge: duplicateSuspectCount > 0 ? duplicateSuspectCount : null,
           badgeColor: 'bg-amber-500 text-white',
-          desc: 'Likely-duplicate soft holds for AP'
+          desc: t('shell.nav.duplicatesDesc')
         }]
       : []),
     ...(currentUser?.role === 'requester'
       ? [{
           id: 'buyer_inbox',
-          label: 'Buyer Inbox',
+          label: t('shell.nav.buyerInbox'),
           icon: Inbox,
           badge: buyerInboxCount > 0 ? buyerInboxCount : null,
           badgeColor: 'bg-amber-500 text-white',
-          desc: 'Invoices AP returned to the requester'
+          desc: t('shell.nav.buyerInboxDesc')
         }]
       : []),
     ...(['finance', 'admin'].includes(currentUser?.role)
       ? [{
           id: 'ap_aging',
-          label: 'AP Aging',
+          label: t('shell.nav.apAging'),
           icon: CalendarClock,
           badge: apAgingOverdueCount > 0 ? apAgingOverdueCount : null,
           badgeColor: 'bg-rose-500 text-white',
-          desc: 'Approved payables by due date'
+          desc: t('shell.nav.apAgingDesc')
         }, {
           id: 'payment_runs',
-          label: 'Payment Runs',
+          label: t('shell.nav.paymentRuns'),
           icon: Banknote,
           badge: paymentRunDraftCount > 0 ? paymentRunDraftCount : null,
           badgeColor: 'bg-indigo-500 text-white',
-          desc: 'Batch ACH payment proposals'
+          desc: t('shell.nav.paymentRunsDesc')
         }, {
           id: 'compliance',
-          label: 'Audit & Compliance',
+          label: t('shell.nav.compliance'),
           icon: ScrollText,
-          desc: 'Trail, segregation of duties, and verification'
+          desc: t('shell.nav.complianceDesc')
         }]
       : []),
     {
       id: 'document_trail',
-      label: 'Document trail',
+      label: t('shell.nav.trail'),
       icon: GitBranch,
-      desc: 'Full PR → PO → GRN/SES → invoice chain'
+      desc: t('shell.nav.trailDesc')
     },
     {
       id: 'budgets',
-      label: 'Budgets & Cost Centers',
+      label: t('shell.nav.budgets'),
       icon: Landmark,
-      desc: 'Department spend allocation'
+      desc: t('shell.nav.budgetsDesc')
     },
     {
       id: 'contracts',
-      label: 'Contracts & Renewals',
+      label: t('shell.nav.contracts'),
       icon: FileCheck,
-      desc: 'Vendor agreements & renewal hub'
+      desc: t('shell.nav.contractsDesc')
     },
     {
       id: 'catalog',
-      label: 'Suppliers & Catalog',
+      label: t('shell.nav.catalog'),
       icon: Store,
-      desc: 'Approved vendor repository'
+      desc: t('shell.nav.catalogDesc')
     },
   ];
 
   const adminItems = currentUser?.role === 'admin'
     ? [{
         id: 'org_admin',
-        label: 'Department Approvers',
+        label: t('shell.nav.deptApprovers'),
         icon: UserCog,
-        desc: 'Assign step-1 department heads'
+        desc: t('shell.nav.deptApproversDesc')
       }, {
         id: 'user_admin',
-        label: 'Users',
+        label: t('shell.nav.users'),
         icon: Users,
-        desc: 'Create, edit, and deactivate users'
+        desc: t('shell.nav.usersDesc')
       }, {
         id: 'integrations',
-        label: 'Integrations',
+        label: t('shell.nav.integrations'),
         icon: KeyRound,
-        desc: 'API keys and webhook outbox'
+        desc: t('shell.nav.integrationsDesc')
       }]
     : [];
 
@@ -219,7 +222,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       {/* Workflow Navigation */}
       <div className="p-4">
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">
-          P2P Purchasing Process
+          {t('shell.navPurchasing')}
         </div>
         <nav className="space-y-1">
           {navItems.map((item, index) => {
@@ -254,7 +257,7 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       {adminItems.length > 0 && (
         <div className="px-4 pb-2">
           <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">
-            Administration
+            {t('shell.navAdmin')}
           </div>
           <nav className="space-y-1">
             {adminItems.map((item) => {
@@ -285,11 +288,11 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
       <div className="mt-auto p-4 border-t border-slate-800/80">
         <div className="bg-slate-800/60 rounded-xl p-3 border border-slate-700/60 text-xs">
           <div className="font-semibold text-slate-200 mb-1 flex items-center justify-between">
-            <span>Procure-to-Pay Flow</span>
-            <span className="text-[10px] text-emerald-400 font-mono">100% Traceable</span>
+            <span>{t('shell.flowTitle')}</span>
+            <span className="text-[10px] text-emerald-400 font-mono">{t('shell.flowTraceable')}</span>
           </div>
           <p className="text-[11px] text-slate-400 leading-relaxed mb-2.5">
-            PR ➔ Approval ➔ PO ➔ GRN / SES ➔ Match ➔ Exception ➔ Duplicates ➔ Aging ➔ Payment Run
+            {t('shell.flowSteps')}
           </p>
           <div className="flex items-center space-x-1 text-[10px] text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>

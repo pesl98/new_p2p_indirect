@@ -1,20 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Ban, KeyRound, Pencil, Plus, RotateCcw, Users } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, toCents, fromCents } from '../money';
+import { presentError, roleLabel, statusLabel, t } from '../i18n';
+import { formatMajorInput, formatMoney, moneyInputProps, toCents } from '../money';
 
 const ROLES = ['requester', 'approver', 'procurement', 'finance', 'admin'];
-
-function roleLabel(role) {
-  switch (role) {
-    case 'requester': return 'Requester';
-    case 'approver': return 'Approver / Dept Head';
-    case 'procurement': return 'Procurement';
-    case 'finance': return 'Finance';
-    case 'admin': return 'Admin / CFO';
-    default: return role || '';
-  }
-}
 
 function emptyForm() {
   return {
@@ -52,7 +42,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
       setUsers(Array.isArray(list) ? list : []);
       setDepartments(Array.isArray(depts) ? depts : []);
     } catch (err) {
-      setError(err.message || 'Failed to load users');
+      setError(presentError(err, 'errors.users'));
     } finally {
       setLoading(false);
     }
@@ -79,7 +69,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
       role: user.role || 'requester',
       department_id: user.department_id == null ? '' : String(user.department_id),
       title: user.title || '',
-      approval_limit_dollars: user.approval_limit ? String(fromCents(user.approval_limit)) : '',
+      approval_limit_dollars: user.approval_limit ? formatMajorInput(user.approval_limit) : '',
       password: ''
     });
     setModal({ type: 'edit', user });
@@ -111,7 +101,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
       setModal(null);
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to save user');
+      setError(presentError(err, 'errors.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -119,14 +109,14 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
 
   const toggleStatus = async (user) => {
     const next = user.status === 'inactive' ? 'active' : 'inactive';
-    const label = next === 'inactive' ? 'Deactivate' : 'Reactivate';
-    if (!window.confirm(`${label} ${user.name}? Historical PRs/POs keep their user FKs.`)) return;
+    const label = next === 'inactive' ? t('admin.users.confirmDeactivate', { name: user.name }) : t('admin.users.confirmReactivate', { name: user.name });
+    if (!window.confirm(label)) return;
     setError('');
     try {
       await api.updateUserStatus(user.id, next);
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to update status');
+      setError(presentError(err, 'errors.userStatus'));
     }
   };
 
@@ -140,7 +130,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
       setNewPassword('');
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to set password');
+      setError(presentError(err, 'errors.password'));
     } finally {
       setSaving(false);
     }
@@ -150,9 +140,9 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
     return (
       <div className="bg-white p-8 rounded-xl border border-slate-200/80 shadow-sm text-center">
         <Users className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-        <h2 className="text-lg font-bold text-slate-900">User administration</h2>
+        <h2 className="text-lg font-bold text-slate-900">{t('admin.users.gatedTitle')}</h2>
         <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-          Only the admin persona can open this screen. Sign in as an admin to create and edit users.
+          {t('admin.users.gatedBody')}
         </p>
       </div>
     );
@@ -163,11 +153,9 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
       <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Users</h2>
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('admin.users.title')}</h2>
             <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
-              Create employees in this customer database (name, unique email, role, department, title,
-              approval limit in cents). Soft-deactivate instead of delete. Passwords are hashed; they
-              never appear in API responses.
+              {t('admin.users.intro')}
             </p>
           </div>
           <button
@@ -177,17 +165,18 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
             className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-semibold px-3 py-2 rounded-lg"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>New user</span>
+            <span>{t('admin.users.new')}</span>
           </button>
         </div>
         {!canMutate && (
           <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
-            Sign in as an admin to create or edit users. Mutating <span className="font-mono">/api/users</span> routes
-            require a session admin (<span className="font-mono">req.user</span>), not the header persona switcher.
+            {t('admin.users.sessionBefore')} <span className="font-mono">/api/users</span>
+            {t('admin.users.sessionMid')}<span className="font-mono">req.user</span>
+            {t('admin.users.sessionAfter')}
           </p>
         )}
         {inactiveCount > 0 && (
-          <p className="text-[11px] text-slate-400 mt-2">{inactiveCount} inactive user{inactiveCount === 1 ? '' : 's'} listed below.</p>
+          <p className="text-[11px] text-slate-400 mt-2">{t(inactiveCount === 1 ? 'admin.users.inactiveOne' : 'admin.users.inactiveMany', { count: inactiveCount })}</p>
         )}
       </div>
 
@@ -199,18 +188,18 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
 
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         {loading ? (
-          <div className="py-12 text-center text-slate-400 text-xs">Loading users…</div>
+          <div className="py-12 text-center text-slate-400 text-xs">{t('admin.users.loading')}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                 <tr>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Department</th>
-                  <th className="px-4 py-3">Limit</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">{t('common.name')}</th>
+                  <th className="px-4 py-3">{t('common.email')}</th>
+                  <th className="px-4 py-3">{t('common.role')}</th>
+                  <th className="px-4 py-3">{t('common.department')}</th>
+                  <th className="px-4 py-3">{t('admin.users.limit')}</th>
+                  <th className="px-4 py-3">{t('common.status')}</th>
                   <th className="px-4 py-3 w-48"></th>
                 </tr>
               </thead>
@@ -234,10 +223,10 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
                       <span className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${
                         user.status === 'inactive' ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-800'
                       }`}>
-                        {user.status === 'inactive' ? 'Inactive' : 'Active'}
+                        {statusLabel(user.status === 'inactive' ? 'inactive' : 'active')}
                       </span>
                       {Number(user.has_password) === 1 && (
-                        <span className="ml-1 text-[10px] text-slate-400">pw</span>
+                        <span className="ml-1 text-[10px] text-slate-400">{t('admin.users.passwordMarker')}</span>
                       )}
                     </td>
                     <td className="px-4 py-3.5">
@@ -249,7 +238,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
                           className="inline-flex items-center space-x-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                         >
                           <Pencil className="w-3 h-3" />
-                          <span>Edit</span>
+                          <span>{t('common.edit')}</span>
                         </button>
                         <button
                           type="button"
@@ -258,7 +247,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
                           className="inline-flex items-center space-x-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                         >
                           <KeyRound className="w-3 h-3" />
-                          <span>Password</span>
+                          <span>{t('common.password')}</span>
                         </button>
                         <button
                           type="button"
@@ -267,7 +256,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
                           className="inline-flex items-center space-x-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                         >
                           {user.status === 'inactive' ? <RotateCcw className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
-                          <span>{user.status === 'inactive' ? 'Reactivate' : 'Deactivate'}</span>
+                          <span>{user.status === 'inactive' ? t('admin.users.reactivate') : t('admin.users.deactivate')}</span>
                         </button>
                       </div>
                     </td>
@@ -283,31 +272,31 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
         <div className="fixed inset-0 z-40 bg-slate-900/40 flex items-center justify-center p-4">
           <form onSubmit={saveModal} className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-3">
             <h3 className="text-base font-bold text-slate-900">
-              {modal === 'create' ? 'Create user' : `Edit ${modal.user.name}`}
+              {modal === 'create' ? t('admin.users.createTitle') : t('admin.users.editTitle', { name: modal.user.name })}
             </h3>
             <label className="block text-xs">
-              <span className="font-semibold text-slate-600">Name</span>
+              <span className="font-semibold text-slate-600">{t('common.name')}</span>
               <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
             </label>
             <label className="block text-xs">
-              <span className="font-semibold text-slate-600">Email</span>
+              <span className="font-semibold text-slate-600">{t('common.email')}</span>
               <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-xs">
-                <span className="font-semibold text-slate-600">Role</span>
+                <span className="font-semibold text-slate-600">{t('common.role')}</span>
                 <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
                   className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
                   {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
                 </select>
               </label>
               <label className="block text-xs">
-                <span className="font-semibold text-slate-600">Department</span>
+                <span className="font-semibold text-slate-600">{t('common.department')}</span>
                 <select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}
                   className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-                  <option value="">— None —</option>
+                  <option value="">— {t('common.none')} —</option>
                   {departments.map((d) => (
                     <option key={d.id} value={d.id}>{d.code} · {d.name}</option>
                   ))}
@@ -315,20 +304,23 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
               </label>
             </div>
             <label className="block text-xs">
-              <span className="font-semibold text-slate-600">Title</span>
+              <span className="font-semibold text-slate-600">{t('admin.users.titleField')}</span>
               <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
             </label>
             <label className="block text-xs">
-              <span className="font-semibold text-slate-600">Approval limit</span>
-              <input type="number" min="0" step="0.01" value={form.approval_limit_dollars}
+              <span className="font-semibold text-slate-600">{t('admin.users.approvalLimit')}</span>
+              <input
+                {...moneyInputProps}
+                placeholder={t('money.example')}
+                value={form.approval_limit_dollars}
                 onChange={(e) => setForm({ ...form, approval_limit_dollars: e.target.value })}
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-              <span className="text-[10px] text-slate-400">Stored as integer cents.</span>
+              <span className="text-[10px] text-slate-400">{t('money.hint')}</span>
             </label>
             {modal === 'create' && (
               <label className="block text-xs">
-                <span className="font-semibold text-slate-600">Password (optional)</span>
+                <span className="font-semibold text-slate-600">{t('common.password')} ({t('common.optional')})</span>
                 <input type="password" minLength={8} value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                   className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
@@ -336,10 +328,10 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
             )}
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setModal(null)} className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button type="submit" disabled={saving} className="text-xs font-semibold px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:bg-emerald-400">
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t('common.saving') : t('common.save')}
               </button>
             </div>
           </form>
@@ -349,7 +341,7 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
       {passwordUser && (
         <div className="fixed inset-0 z-40 bg-slate-900/40 flex items-center justify-center p-4">
           <form onSubmit={savePassword} className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3">
-            <h3 className="text-base font-bold text-slate-900">Set password for {passwordUser.name}</h3>
+            <h3 className="text-base font-bold text-slate-900">{t('admin.users.setPasswordFor', { name: passwordUser.name })}</h3>
             <input
               type="password"
               required
@@ -361,10 +353,10 @@ export default function AdminUsersView({ currentUser, sessionUser }) {
             />
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setPasswordUser(null)} className="text-xs font-semibold px-3 py-2 rounded-lg border border-slate-200">
-                Cancel
+                {t('common.cancel')}
               </button>
               <button type="submit" disabled={saving} className="text-xs font-semibold px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:bg-emerald-400">
-                {saving ? 'Saving…' : 'Set password'}
+                {saving ? t('common.saving') : t('admin.users.setPassword')}
               </button>
             </div>
           </form>

@@ -16,9 +16,17 @@ import {
   Copy
 } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, fromCents, toCents } from '../money';
+import { formatMoney, formatMajorInput, moneyInputProps, toCents } from '../money';
+import { t, presentError, presentNotice, statusLabel } from '../i18n';
 import { isServiceLine, lineTypeLabel, receiptBasisLabel } from '../lineType';
 import { formatStoredQuantity, isScaledQuantity, measuredLineTotalCents } from '../measuredQty';
+
+function dispositionLabel(value) {
+  if (value === 'accept_variance') return t('payables.exceptions.disposition.accept');
+  if (value === 'reject_invoice') return t('payables.exceptions.disposition.reject');
+  if (value === 'buyer_response') return t('payables.exceptions.disposition.buyerResponse');
+  return statusLabel(value);
+}
 
 export default function InvoicesMatchingView({ currentUser, onDataChanged, onNavigate, focusId }) {
   const [invoices, setInvoices] = useState([]);
@@ -102,7 +110,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
         quantity_invoiced: Number(item.quantity_scale) === 1000
           ? (Number(item.quantity) / 1000).toFixed(3)
           : item.quantity,
-        unit_price: fromCents(item.unit_price) // billed price input is major units (dot decimal)
+        unit_price: formatMajorInput(item.unit_price)
       }));
       setInvoiceLines(lines);
     } catch (err) {
@@ -112,7 +120,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
 
   const handleLineChange = (index, field, value) => {
     const updated = [...invoiceLines];
-    if (field === 'quantity_invoiced' && isScaledQuantity(updated[index])) {
+    if (field === 'unit_price' || (field === 'quantity_invoiced' && isScaledQuantity(updated[index]))) {
       updated[index][field] = value;
     } else {
       updated[index][field] = Number(value);
@@ -131,7 +139,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
 
   const handleSubmitInvoice = async () => {
     if (!invoiceNumber || invoiceLines.length === 0) {
-      alert('Please fill in invoice details and at least one line item.');
+      alert(t('payables.invoices.needLines'));
       return;
     }
 
@@ -161,11 +169,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
       await loadData();
       if (onDataChanged) onDataChanged();
       if (result.duplicate_status === 'suspect') {
-        alert(result.message || 'Invoice flagged as a likely duplicate. Approve for Payment is blocked until AP clears it in Duplicate Suspects.');
+        alert(presentError(result.message, 'payables.invoices.duplicateSuspectAlert'));
       }
       handleOpenDetail(result.invoiceId);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.invoiceCreate'));
     }
   };
 
@@ -178,7 +186,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
       if (onDataChanged) onDataChanged();
       handleOpenDetail(invId);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.invoiceApprove'));
     }
   };
 
@@ -192,7 +200,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
       if (onDataChanged) onDataChanged();
       handleOpenDetail(invId);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.invoicePaid'));
     }
   };
 
@@ -202,54 +210,54 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
         return (
           <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1">
             <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-            <span>Exact Match</span>
+            <span>{statusLabel('perfect_match')}</span>
           </span>
         );
       case 'tolerated_match':
         return (
           <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1">
             <AlertTriangle className="w-3.5 h-3.5 mr-1" />
-            <span>Tolerated Variance</span>
+            <span>{statusLabel('tolerated_match')}</span>
           </span>
         );
       case 'price_variance':
         return (
           <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1">
             <XCircle className="w-3.5 h-3.5 mr-1" />
-            <span>Price Discrepancy</span>
+            <span>{statusLabel('price_variance')}</span>
           </span>
         );
       case 'quantity_variance':
         return (
           <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1">
             <XCircle className="w-3.5 h-3.5 mr-1" />
-            <span>Quantity Variance</span>
+            <span>{statusLabel('quantity_variance')}</span>
           </span>
         );
       case 'total_variance':
         return (
           <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1">
             <ShieldAlert className="w-3.5 h-3.5 mr-1" />
-            <span>Multiple Variances</span>
+            <span>{statusLabel('total_variance')}</span>
           </span>
         );
       default:
-        return <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">Pending Match</span>;
+        return <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">{t('payables.invoices.matchPending')}</span>;
     }
   };
 
   const getStatusBadge = (status) => {
     switch (status) {
       case 'approved_for_payment':
-        return <span className="bg-indigo-100 text-indigo-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Approved for Payment</span>;
+        return <span className="bg-indigo-100 text-indigo-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('approved_for_payment')}</span>;
       case 'paid':
-        return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">Paid</span>;
+        return <span className="bg-emerald-100 text-emerald-800 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('paid')}</span>;
       case 'variance_flagged':
-        return <span className="bg-rose-100 text-rose-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">Discrepancy Flagged</span>;
+        return <span className="bg-rose-100 text-rose-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('variance_flagged')}</span>;
       case 'rejected':
-        return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">Rejected</span>;
+        return <span className="bg-slate-800 text-white text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel('rejected')}</span>;
       default:
-        return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{status}</span>;
+        return <span className="bg-slate-100 text-slate-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">{statusLabel(status)}</span>;
     }
   };
 
@@ -258,9 +266,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Invoices & Matching</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('payables.invoices.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Goods: 3-way PO vs GRN vs invoice. Services: SES-backed 2-way (PO vs accepted SES vs invoice). Mixed POs combine both.
+            {t('payables.invoices.subtitle')}
           </p>
         </div>
 
@@ -270,7 +278,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-2"
           >
             <Plus className="w-4 h-4" />
-            <span>Enter Vendor Invoice</span>
+            <span>{t('payables.invoices.enter')}</span>
           </button>
         </div>
       </div>
@@ -281,24 +289,24 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">Invoice #</th>
-                <th className="py-3 px-4">Supplier</th>
-                <th className="py-3 px-4">PO Reference</th>
-                <th className="py-3 px-4">Billed Amount</th>
-                <th className="py-3 px-4">Match Audit</th>
-                <th className="py-3 px-4">Invoice Status</th>
-                <th className="py-3 px-4">Due Date</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">{t('payables.invoices.colNumber')}</th>
+                <th className="py-3 px-4">{t('common.supplier')}</th>
+                <th className="py-3 px-4">{t('payables.invoices.colPo')}</th>
+                <th className="py-3 px-4">{t('payables.invoices.colBilled')}</th>
+                <th className="py-3 px-4">{t('payables.invoices.colMatch')}</th>
+                <th className="py-3 px-4">{t('payables.invoices.colStatus')}</th>
+                <th className="py-3 px-4">{t('payables.invoices.colDue')}</th>
+                <th className="py-3 px-4 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading invoices...</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('common.loading')}</td>
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">No invoices entered yet.</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('payables.invoices.empty')}</td>
                 </tr>
               ) : (
                 invoices.map((inv) => (
@@ -311,7 +319,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                             ? 'bg-amber-100 text-amber-900'
                             : 'bg-slate-800 text-white'
                         }`}>
-                          {inv.duplicate_status === 'suspect' ? 'Duplicate suspect' : 'Confirmed duplicate'}
+                          {inv.duplicate_status === 'suspect' ? t('payables.invoices.suspect') : statusLabel('confirmed_duplicate')}
                         </span>
                       )}
                     </td>
@@ -325,7 +333,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       <div>{formatMoney(inv.total_amount)}</div>
                       {inv.payable_total_cents != null && (
                         <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
-                          Pay {formatMoney(inv.payable_total_cents)}
+                          {t('payables.shared.pay', { amount: formatMoney(inv.payable_total_cents) })}
                         </div>
                       )}
                     </td>
@@ -344,7 +352,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                         className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded font-semibold text-[11px] inline-flex items-center space-x-1 shadow-sm"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5" />
-                        <span>Match Matrix</span>
+                        <span>{t('payables.invoices.matchMatrix')}</span>
                       </button>
                     </td>
                   </tr>
@@ -361,8 +369,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Enter Supplier Vendor Invoice</h3>
-                <p className="text-xs text-slate-500">Input the vendor invoice. Goods lines match against GRN; service lines match against accepted SES.</p>
+                <h3 className="text-base font-bold text-slate-900">{t('payables.invoices.enter')}</h3>
+                <p className="text-xs text-slate-500">{t('payables.invoices.enterHelp')}</p>
               </div>
               <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -371,16 +379,16 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
 
             <div className="py-4 space-y-4 text-xs overflow-y-auto flex-1">
               <div>
-                <label className="block text-slate-700 font-semibold mb-1">Select Associated Purchase Order</label>
+                <label className="block text-slate-700 font-semibold mb-1">{t('payables.invoices.selectPo')}</label>
                 <select
                   value={selectedPOId}
                   onChange={(e) => handleSelectPO(e.target.value)}
                   className="w-full p-2.5 border border-slate-300 rounded-lg text-xs font-medium"
                 >
-                  <option value="">-- Choose Purchase Order --</option>
+                  <option value="">{t('payables.invoices.choosePo')}</option>
                   {activePOs.map(po => (
                     <option key={po.id} value={po.id}>
-                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{po.status}]
+                      {po.po_number} - {po.supplier_name} ({formatMoney(po.total_amount)}) [{statusLabel(po.status)}]
                     </option>
                   ))}
                 </select>
@@ -390,7 +398,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Vendor Invoice #</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('payables.invoices.vendorNumber')}</label>
                       <input
                         type="text"
                         value={invoiceNumber}
@@ -399,7 +407,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Invoice Date</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('payables.invoices.invoiceDate')}</label>
                       <input
                         type="date"
                         value={invoiceDate}
@@ -408,7 +416,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-500 text-[11px] mb-1">Payment Due Date</label>
+                      <label className="block text-slate-500 text-[11px] mb-1">{t('payables.invoices.dueDate')}</label>
                       <input
                         type="date"
                         value={dueDate}
@@ -422,10 +430,10 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   <div>
                     <div className="flex justify-between items-center mb-2">
                       <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px]">
-                        Invoice Line Items (Billed Values)
+                        {t('payables.invoices.lineItems')}
                       </span>
                       <span className="text-emerald-700 font-bold">
-                        Calculated Subtotal: {formatMoney(calculateSubtotalCents())}
+                        {t('payables.invoices.subtotal', { amount: formatMoney(calculateSubtotalCents()) })}
                       </span>
                     </div>
 
@@ -433,13 +441,13 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       <table className="w-full text-left text-xs">
                         <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-semibold text-[11px]">
                           <tr>
-                            <th className="py-2.5 px-3">Description</th>
-                            <th className="py-2.5 px-3 text-center">Type</th>
-                            <th className="py-2.5 px-3 text-center">PO Price</th>
-                            <th className="py-2.5 px-3 text-center">Receipt Basis</th>
-                            <th className="py-2.5 px-3 text-center w-28">Billed Qty</th>
-                            <th className="py-2.5 px-3 text-center w-28">Billed Price</th>
-                            <th className="py-2.5 px-3 text-right">Line Total</th>
+                            <th className="py-2.5 px-3">{t('common.description')}</th>
+                            <th className="py-2.5 px-3 text-center">{t('common.type')}</th>
+                            <th className="py-2.5 px-3 text-center">{t('payables.invoices.colPoPrice')}</th>
+                            <th className="py-2.5 px-3 text-center">{t('payables.invoices.colReceipt')}</th>
+                            <th className="py-2.5 px-3 text-center w-28">{t('payables.invoices.colBilledQty')}</th>
+                            <th className="py-2.5 px-3 text-center w-28">{t('payables.invoices.colBilledPrice')}</th>
+                            <th className="py-2.5 px-3 text-right">{t('common.total')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -456,9 +464,9 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                                 {isServiceLine(line)
                                   ? `${line.po_quantity_accepted} SES`
                                   : isScaledQuantity(line)
-                                    ? `${formatStoredQuantity(line.po_quantity_consumed, line)} consumed`
+                                    ? t('payables.invoices.consumed', { qty: formatStoredQuantity(line.po_quantity_consumed, line) })
                                     : line.receipt_basis === 'consignment'
-                                      ? `${line.po_quantity_consumed} drawn`
+                                      ? t('payables.invoices.drawn', { qty: line.po_quantity_consumed })
                                       : `${line.po_quantity_received} GRN`}
                               </td>
                               <td className="py-2.5 px-3 text-center">
@@ -473,8 +481,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                               </td>
                               <td className="py-2.5 px-3 text-center">
                                 <input
-                                  type="number"
-                                  step="0.01"
+                                  {...moneyInputProps}
                                   value={line.unit_price}
                                   onChange={(e) => handleLineChange(idx, 'unit_price', e.target.value)}
                                   className="w-24 text-center p-1.5 border border-slate-300 rounded font-semibold"
@@ -489,7 +496,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                       </table>
                     </div>
                     <p className="text-[11px] text-slate-400 mt-1.5">
-                      Tip: Edit billed price or quantity to see match exceptions. Service lines need an accepted SES; owned goods need a GRN; consignment lines match the drawn quantity; utility and bulk lines match the measured consumption.
+                      {t('payables.invoices.tip')}
                     </p>
                   </div>
                 </>
@@ -501,7 +508,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 onClick={() => setShowCreateModal(false)}
                 className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 disabled={!targetPOData}
@@ -509,7 +516,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
               >
                 <FileCheck className="w-4 h-4" />
-                <span>Submit & Run Match</span>
+                <span>{t('payables.invoices.submitMatch')}</span>
               </button>
             </div>
           </div>
@@ -528,12 +535,15 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   {getStatusBadge(selectedInvoice.status)}
                   {selectedInvoice.payable_total_cents != null && (
                     <span className="bg-amber-100 text-amber-900 text-[11px] font-semibold px-2 py-0.5 rounded-full">
-                      Billed {formatMoney(selectedInvoice.total_amount)} → Pay {formatMoney(selectedInvoice.payable_total_cents)}
+                      {t('payables.shared.billedPay', {
+                        billed: formatMoney(selectedInvoice.total_amount),
+                        pay: formatMoney(selectedInvoice.payable_total_cents)
+                      })}
                     </span>
                   )}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Vendor: <strong>{selectedInvoice.supplier_name}</strong> • Against <strong>{selectedInvoice.po_number}</strong>
+                  {t('common.supplier')}: <strong>{selectedInvoice.supplier_name}</strong> • {t('payables.invoices.against')} <strong>{selectedInvoice.po_number}</strong>
                 </p>
               </div>
               <button onClick={() => setSelectedInvoice(null)} className="text-slate-400 hover:text-slate-700">
@@ -545,22 +555,22 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
             <div className="py-4 space-y-5 text-xs overflow-y-auto flex-1">
               <div>
                 <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-2 flex items-center space-x-2">
-                  <span>Line Reconciliation Matrix</span>
-                  <span className="text-slate-400 font-normal">(Goods: PO vs GRN vs invoice · Consignment: PO vs draw-down vs invoice · Utility/bulk: PO vs measured consumption vs invoice · Services: PO vs SES vs invoice)</span>
+                  <span>{t('payables.invoices.matrixTitle')}</span>
+                  <span className="text-slate-400 font-normal">{t('payables.invoices.matrixHint')}</span>
                 </h4>
 
                 <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold uppercase text-[10px]">
                       <tr>
-                        <th className="py-2.5 px-3">Item Description</th>
-                        <th className="py-2.5 px-3 text-center bg-blue-50/70 text-blue-900">1. PO Ordered</th>
-                        <th className="py-2.5 px-3 text-center bg-blue-50/70 text-blue-900">PO Unit Price</th>
-                        <th className="py-2.5 px-3 text-center">Type</th>
-                        <th className="py-2.5 px-3 text-center bg-amber-50/70 text-amber-900">2. Receipt (GRN / SES)</th>
-                        <th className="py-2.5 px-3 text-center bg-purple-50/70 text-purple-900">3. Invoiced Qty</th>
-                        <th className="py-2.5 px-3 text-center bg-purple-50/70 text-purple-900">Invoiced Price</th>
-                        <th className="py-2.5 px-3 text-center">3-Way Match Status</th>
+                        <th className="py-2.5 px-3">{t('payables.invoices.colItem')}</th>
+                        <th className="py-2.5 px-3 text-center bg-blue-50/70 text-blue-900">{t('payables.invoices.colOrdered')}</th>
+                        <th className="py-2.5 px-3 text-center bg-blue-50/70 text-blue-900">{t('payables.invoices.colPoUnit')}</th>
+                        <th className="py-2.5 px-3 text-center">{t('common.type')}</th>
+                        <th className="py-2.5 px-3 text-center bg-amber-50/70 text-amber-900">{t('payables.invoices.colReceiptPair')}</th>
+                        <th className="py-2.5 px-3 text-center bg-purple-50/70 text-purple-900">{t('payables.invoices.colInvQty')}</th>
+                        <th className="py-2.5 px-3 text-center bg-purple-50/70 text-purple-900">{t('payables.invoices.colInvPrice')}</th>
+                        <th className="py-2.5 px-3 text-center">{t('payables.invoices.colMatchStatus')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -588,17 +598,17 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                               {isFail ? (
                                 <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center">
                                   <XCircle className="w-3 h-3 mr-1" />
-                                  Fail Discrepancy
+                                  {t('payables.invoices.fail')}
                                 </span>
                               ) : isWarning ? (
                                 <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center">
                                   <AlertTriangle className="w-3 h-3 mr-1" />
-                                  Warning
+                                  {t('payables.invoices.warning')}
                                 </span>
                               ) : (
                                 <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center">
                                   <CheckCircle2 className="w-3 h-3 mr-1" />
-                                  100% Match
+                                  {t('payables.invoices.fullMatch')}
                                 </span>
                               )}
                             </td>
@@ -615,11 +625,11 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                 <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-rose-900 space-y-2">
                   <div className="font-bold flex items-center space-x-1.5 text-xs">
                     <AlertTriangle className="w-4 h-4 text-rose-600" />
-                    <span>Automated Engine Findings & Discrepancy Analysis:</span>
+                    <span>{t('payables.invoices.findings')}</span>
                   </div>
                   <ul className="list-disc list-inside text-[11px] space-y-1">
                     {selectedInvoice.match_results?.filter(r => r.status !== 'pass').map((r, i) => (
-                      <li key={i}>{r.message}</li>
+                      <li key={i}>{presentNotice(r.message, 'payables.invoices.findings')}</li>
                     ))}
                   </ul>
                 </div>
@@ -627,34 +637,34 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
 
               {selectedInvoice.service_entry_sheets?.length > 0 && (
                 <div className="text-[11px] text-slate-600">
-                  <span className="font-bold text-slate-700 uppercase tracking-wider">Service Entry Sheets: </span>
-                  {selectedInvoice.service_entry_sheets.map((ses) => `${ses.ses_number} (${ses.status})`).join(' · ')}
+                  <span className="font-bold text-slate-700 uppercase tracking-wider">{t('payables.invoices.ses')} </span>
+                  {selectedInvoice.service_entry_sheets.map((ses) => `${ses.ses_number} (${statusLabel(ses.status)})`).join(' · ')}
                 </div>
               )}
 
               {/* Financial Totals */}
               <div className="grid grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
-                  <span className="text-slate-500 text-[11px]">Authorized PO Value:</span>
+                  <span className="text-slate-500 text-[11px]">{t('payables.invoices.poValue')}</span>
                   <div className="font-bold text-slate-900 text-sm">
                     {formatMoney(selectedInvoice.po_total_amount)}
                   </div>
                 </div>
                 <div>
-                  <span className="text-slate-500 text-[11px]">Billed Total (With Tax):</span>
+                  <span className="text-slate-500 text-[11px]">{t('payables.invoices.billedWithTax')}</span>
                   <div className="font-bold text-slate-900 text-sm">
                     {formatMoney(selectedInvoice.total_amount)}
                   </div>
                   {selectedInvoice.payable_total_cents != null && (
                     <div className="text-[11px] font-semibold text-amber-800 mt-1">
-                      Pay {formatMoney(selectedInvoice.payable_total_cents)} (short pay)
+                      {t('payables.invoices.shortPayOf', { amount: formatMoney(selectedInvoice.payable_total_cents) })}
                     </div>
                   )}
                 </div>
                 <div>
-                  <span className="text-slate-500 text-[11px]">Department Cost Center:</span>
+                  <span className="text-slate-500 text-[11px]">{t('payables.invoices.costCenter')}</span>
                   <div className="font-bold text-slate-900 text-sm">
-                    {selectedInvoice.department_name || 'Corporate'}
+                    {selectedInvoice.department_name || t('payables.invoices.corporate')}
                   </div>
                 </div>
               </div>
@@ -662,7 +672,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
               {selectedInvoice.exception && (
                 <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 text-indigo-950 space-y-1">
                   <div className="font-bold text-xs">
-                    Exception disposition: <span className="capitalize">{String(selectedInvoice.exception.disposition).replace(/_/g, ' ')}</span>
+                    {t('payables.invoices.exceptionDisposition')} <span className="capitalize">{dispositionLabel(selectedInvoice.exception.disposition)}</span>
                   </div>
                   <div className="text-[11px]">
                     {selectedInvoice.exception.actor_name} — {selectedInvoice.exception.reason}
@@ -670,10 +680,15 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   {selectedInvoice.exception.accepted_total_cents != null && (
                     <div className="text-[11px]">
                       {selectedInvoice.exception.disposition === 'short_pay'
-                        ? `Billed ${formatMoney(selectedInvoice.exception.billed_total_cents ?? selectedInvoice.total_amount)} → Pay ${formatMoney(selectedInvoice.exception.accepted_total_cents)}`
-                        : `Recorded billed total ${formatMoney(selectedInvoice.exception.accepted_total_cents)}`}
+                        ? t('payables.shared.billedPay', {
+                          billed: formatMoney(selectedInvoice.exception.billed_total_cents ?? selectedInvoice.total_amount),
+                          pay: formatMoney(selectedInvoice.exception.accepted_total_cents)
+                        })
+                        : t('payables.invoices.recordedBilled', {
+                          amount: formatMoney(selectedInvoice.exception.accepted_total_cents)
+                        })}
                       {selectedInvoice.exception.accepted_match_status
-                        ? ` · ${selectedInvoice.exception.accepted_match_status.replace(/_/g, ' ')}`
+                        ? ` · ${statusLabel(selectedInvoice.exception.accepted_match_status)}`
                         : ''}
                     </div>
                   )}
@@ -686,14 +701,14 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     <Copy className="w-4 h-4" />
                     <span>
                       {selectedInvoice.duplicate_status === 'suspect'
-                        ? 'Likely duplicate — approve and pay are blocked'
-                        : 'Confirmed duplicate — this invoice was voided'}
+                        ? t('payables.invoices.likelyBlocked')
+                        : t('payables.invoices.confirmedVoided')}
                     </span>
                   </div>
                   <p className="text-[11px]">
                     {selectedInvoice.duplicate_status === 'suspect'
-                      ? 'Same supplier + billed amount + near invoice date, and/or same PO + billed amount. Clear or confirm in Duplicate Suspects. Dual match is unchanged.'
-                      : 'AP confirmed this invoice as a duplicate. Status is rejected; approve and pay stay blocked.'}
+                      ? t('payables.invoices.likelyHelp')
+                      : t('payables.invoices.confirmedHelp')}
                   </p>
                   {selectedInvoice.duplicate_suspects?.length > 0 && (
                     <ul className="list-disc list-inside text-[11px] space-y-0.5">
@@ -712,17 +727,16 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1"
                   >
                     <Copy className="w-3.5 h-3.5" />
-                    <span>Open Duplicate Suspects</span>
+                    <span>{t('payables.invoices.openDuplicates')}</span>
                   </button>
                 </div>
               )}
 
               {selectedInvoice.status === 'variance_flagged' && (
                 <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 text-rose-900 space-y-2">
-                  <div className="font-bold text-xs">Hard exception — approve and pay are blocked</div>
+                  <div className="font-bold text-xs">{t('payables.invoices.hardBlocked')}</div>
                   <p className="text-[11px]">
-                    Free-text override on this screen no longer unlocks payment. Take a structured
-                    disposition (accept variance, short pay, reject, or return to buyer) in the Exception Workbench.
+                    {t('payables.invoices.hardHelp')}
                   </p>
                   <button
                     onClick={() => {
@@ -732,14 +746,14 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     className="px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-lg text-[11px] font-semibold inline-flex items-center space-x-1"
                   >
                     <ShieldAlert className="w-3.5 h-3.5" />
-                    <span>Open Exception Workbench</span>
+                    <span>{t('payables.invoices.openWorkbench')}</span>
                   </button>
                 </div>
               )}
 
               {selectedInvoice.status === 'rejected' && (
                 <div className="bg-slate-800 text-white rounded-xl p-3.5 text-xs">
-                  This invoice was rejected in the Exception Workbench and cannot be approved or paid.
+                  {t('payables.invoices.rejectedHelp')}
                 </div>
               )}
             </div>
@@ -748,7 +762,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
             <div className="flex items-center justify-between pt-4 border-t border-slate-200">
               <div className="text-slate-500 text-xs">
                 {selectedInvoice.payment_reference && (
-                  <span>Payment Ref: <strong className="font-mono text-emerald-700">{selectedInvoice.payment_reference}</strong></span>
+                  <span>{t('payables.invoices.paymentRef')} <strong className="font-mono text-emerald-700">{selectedInvoice.payment_reference}</strong></span>
                 )}
               </div>
 
@@ -757,7 +771,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                   onClick={() => setSelectedInvoice(null)}
                   className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold"
                 >
-                  Close
+                  {t('common.close')}
                 </button>
 
                 {selectedInvoice.status === 'matched' && !['suspect', 'confirmed_duplicate'].includes(selectedInvoice.duplicate_status) && (
@@ -768,8 +782,8 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     <CheckCircle2 className="w-4 h-4" />
                     <span>
                       {selectedInvoice.payable_total_cents != null
-                        ? `Approve ${formatMoney(selectedInvoice.payable_total_cents)} (short pay)`
-                        : 'Approve for Payment'}
+                        ? t('payables.invoices.approveShort', { amount: formatMoney(selectedInvoice.payable_total_cents) })
+                        : t('payables.invoices.approve')}
                     </span>
                   </button>
                 )}
@@ -780,7 +794,7 @@ export default function InvoicesMatchingView({ currentUser, onDataChanged, onNav
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm"
                   >
                     <CreditCard className="w-4 h-4" />
-                    <span>Execute ACH Payment</span>
+                    <span>{t('payables.invoices.executeAch')}</span>
                   </button>
                 )}
               </div>

@@ -12,7 +12,8 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, toCents } from '../money';
+import { t, presentError, statusLabel, categoryLabel } from '../i18n';
+import { formatMoney, toCents, parseMajorAmount, moneyInputProps } from '../money';
 
 const RENEWABLE = new Set(['active', 'expiring_soon']);
 
@@ -77,15 +78,15 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
   const handleCreateContract = async (e) => {
     e.preventDefault();
     if (!title.trim()) {
-      alert('Please provide a contract title.');
+      alert(t('contracts.titleRequired'));
       return;
     }
     if (!supplierId || !deptId) {
-      alert('Supplier and department are required.');
+      alert(t('contracts.supplierDeptRequired'));
       return;
     }
-    if (annualValue === '' || Number.isNaN(Number(annualValue))) {
-      alert('Please provide an annual value.');
+    if (annualValue === '' || parseMajorAmount(annualValue) == null) {
+      alert(t('contracts.annualRequired'));
       return;
     }
 
@@ -111,13 +112,16 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       await loadData();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.contractCreate'));
     }
   };
 
   const handleRenewPR = async (contract) => {
     if (!RENEWABLE.has(contract.status)) {
-      alert(`Contract ${contract.contract_number} cannot be renewed while ${contract.status}.`);
+      alert(t('contracts.cannotRenew', {
+        number: contract.contract_number,
+        status: statusLabel(contract.status)
+      }));
       return;
     }
     setRenewingId(contract.id);
@@ -125,13 +129,13 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       const result = await api.renewContractPr(contract.id, {
         requester_id: currentUser?.id,
         actor_name: currentUser?.name,
-        notes: `Generated via Contract Renewal Hub for FY 2027 cycle.`
+        notes: t('contracts.renewNotes')
       });
       setRenewSuccess(result);
       await loadData();
       if (onDataChanged) onDataChanged();
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.contractRenew'));
     } finally {
       setRenewingId(null);
     }
@@ -142,7 +146,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       const detail = await api.getContractDetail(contract.id);
       setSelectedContract(detail);
     } catch (err) {
-      alert(err.message);
+      alert(presentError(err, 'errors.requestRejected'));
     }
   };
 
@@ -151,15 +155,15 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
   const getStatusBadge = (status) => {
     switch (status) {
       case 'expiring_soon':
-        return <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1"><AlertTriangle className="w-3.5 h-3.5 mr-1 text-amber-600" />Expiring Soon</span>;
+        return <span className="bg-amber-100 text-amber-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1"><AlertTriangle className="w-3.5 h-3.5 mr-1 text-amber-600" />{statusLabel('expiring_soon')}</span>;
       case 'active':
-        return <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1"><CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-600" />Active</span>;
+        return <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1"><CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-600" />{statusLabel('active')}</span>;
       case 'expired':
-        return <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold">Expired</span>;
+        return <span className="bg-rose-100 text-rose-800 text-xs px-2.5 py-1 rounded-full font-bold">{statusLabel('expired')}</span>;
       case 'cancelled':
-        return <span className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-full font-bold">Cancelled</span>;
+        return <span className="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-full font-bold">{statusLabel('cancelled')}</span>;
       default:
-        return <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">{status}</span>;
+        return <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">{statusLabel(status)}</span>;
     }
   };
 
@@ -168,10 +172,10 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       onClick={() => handleRenewPR(contract)}
       disabled={renewingId === contract.id || !RENEWABLE.has(contract.status)}
       className={className}
-      title={RENEWABLE.has(contract.status) ? 'Generate Renewal Purchase Requisition' : 'Only active or expiring contracts can be renewed'}
+      title={RENEWABLE.has(contract.status) ? t('contracts.renewTitle') : t('contracts.renewDisabled')}
     >
       <RefreshCw className={`w-3 h-3 ${renewingId === contract.id ? 'animate-spin' : ''}`} />
-      <span>{renewingId === contract.id ? 'Creating...' : 'Renew PR'}</span>
+      <span>{renewingId === contract.id ? t('contracts.creating') : t('contracts.renew')}</span>
     </button>
   );
 
@@ -181,11 +185,11 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         <div>
           <div className="flex items-center space-x-2 text-indigo-600 text-xs font-bold uppercase tracking-wider mb-0.5">
             <FileCheck className="w-4 h-4" />
-            <span>Indirect Contract Management</span>
+            <span>{t('contracts.kicker')}</span>
           </div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">SaaS & Vendor Contracts Hub</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('contracts.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Monitor recurring subscriptions, prevent unwanted auto-renewals, and execute 1-click renewal purchase requisitions.
+            {t('contracts.subtitle')}
           </p>
         </div>
 
@@ -195,7 +199,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
             className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-sm transition-all flex items-center space-x-1.5"
           >
             <Plus className="w-4 h-4" />
-            <span>Register Contract</span>
+            <span>{t('contracts.register')}</span>
           </button>
         </div>
       </div>
@@ -206,16 +210,18 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
             <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wider">
-                Renewal Action Required ({expiringContracts.length} contract{expiringContracts.length > 1 ? 's' : ''} within notice window)
+                {expiringContracts.length === 1
+                  ? t('contracts.renewalOne')
+                  : t('contracts.renewalMany', { n: expiringContracts.length })}
               </h3>
               <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
-                The following non-production contracts are approaching expiration or auto-renewal deadlines. Generate renewal requisitions now to ensure uninterrupted service:
+                {t('contracts.renewalBody')}
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {expiringContracts.map((c) => (
                   <div key={c.id} className="bg-white/90 border border-amber-200 px-3 py-1.5 rounded-lg text-xs flex items-center space-x-2 shadow-xs">
                     <span className="font-bold text-slate-900">{c.title}</span>
-                    <span className="text-amber-700 font-mono font-bold">({c.days_until_expiry}d left)</span>
+                    <span className="text-amber-700 font-mono font-bold">({t('contracts.daysLeft', { n: c.days_until_expiry })})</span>
                     {renewButton(c, 'px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded text-[10px] font-bold inline-flex items-center space-x-1')}
                   </div>
                 ))}
@@ -230,9 +236,12 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
           <div className="flex items-center space-x-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             <div className="text-xs">
-              <strong className="text-emerald-900 font-bold block">{renewSuccess.message}</strong>
+              <strong className="text-emerald-900 font-bold block">{t('contracts.renewCreated', { number: renewSuccess.pr_number })}</strong>
               <span className="text-emerald-800">
-                Requisition <strong>{renewSuccess.pr_number}</strong> created with sequential approval routing for {formatMoney(renewSuccess.total_amount_cents)}.
+                {t('contracts.renewDetail', {
+                  number: renewSuccess.pr_number,
+                  amount: formatMoney(renewSuccess.total_amount_cents)
+                })}
               </span>
             </div>
           </div>
@@ -241,7 +250,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
               onClick={() => onNavigate('requisitions')}
               className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold flex items-center space-x-1"
             >
-              <span>View in Requisitions</span>
+              <span>{t('contracts.viewRequisitions')}</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
             <button
@@ -259,7 +268,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
           <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
           <input
             type="text"
-            placeholder="Search contracts by title, supplier, or contract #..."
+            placeholder={t('contracts.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-xs"
@@ -270,11 +279,11 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
           onChange={(e) => setCategory(e.target.value)}
           className="border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium"
         >
-          <option value="All">All Categories</option>
-          <option value="Software & Cloud">Software & Cloud</option>
-          <option value="Consulting & Professional Services">Consulting & Professional Services</option>
-          <option value="Facilities & MRO">Facilities & MRO</option>
-          <option value="Marketing & Events">Marketing & Events</option>
+          <option value="All">{categoryLabel('All')}</option>
+          <option value="Software & Cloud">{categoryLabel('Software & Cloud')}</option>
+          <option value="Consulting & Professional Services">{categoryLabel('Consulting & Professional Services')}</option>
+          <option value="Facilities & MRO">{categoryLabel('Facilities & MRO')}</option>
+          <option value="Marketing & Events">{categoryLabel('Marketing & Events')}</option>
         </select>
         <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg">
           {['all', 'expiring_soon', 'active', 'expired'].map((st) => (
@@ -285,7 +294,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                 statusFilter === st ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
               }`}
             >
-              {st.replace(/_/g, ' ')}
+              {statusLabel(st)}
             </button>
           ))}
         </div>
@@ -296,24 +305,24 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="py-3 px-4">Contract #</th>
-                <th className="py-3 px-4">Title & Supplier</th>
-                <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4">Cost Center</th>
-                <th className="py-3 px-4">Annual Value (ACV)</th>
-                <th className="py-3 px-4">End Date / Notice</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4">{t('contracts.number')}</th>
+                <th className="py-3 px-4">{t('contracts.titleSupplier')}</th>
+                <th className="py-3 px-4">{t('common.category')}</th>
+                <th className="py-3 px-4">{t('common.costCenter')}</th>
+                <th className="py-3 px-4">{t('contracts.annualValue')}</th>
+                <th className="py-3 px-4">{t('contracts.endNotice')}</th>
+                <th className="py-3 px-4">{t('common.status')}</th>
+                <th className="py-3 px-4 text-right">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">Loading vendor contracts...</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('contracts.loading')}</td>
                 </tr>
               ) : contracts.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-8 text-center text-slate-400">No contracts found.</td>
+                  <td colSpan="8" className="py-8 text-center text-slate-400">{t('contracts.empty')}</td>
                 </tr>
               ) : (
                 contracts.map((c) => (
@@ -327,7 +336,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     </td>
                     <td className="py-3 px-4">
                       <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium">
-                        {c.category}
+                        {categoryLabel(c.category)}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-slate-700 font-semibold">
@@ -335,12 +344,16 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                     </td>
                     <td className="py-3 px-4 font-extrabold text-slate-900 text-sm">
                       {formatMoney(c.annual_value_cents)}
-                      <span className="text-[10px] text-slate-400 font-normal"> / yr</span>
+                      <span className="text-[10px] text-slate-400 font-normal"> {t('contracts.perYear')}</span>
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-semibold text-slate-800">{c.end_date}</div>
                       <div className="text-[10px] text-slate-500">
-                        {c.days_until_expiry > 0 ? `${c.days_until_expiry} days remaining` : 'Passed expiration'}
+                        {c.days_until_expiry > 0
+                          ? (Number(c.days_until_expiry) === 1
+                            ? t('contracts.daysRemainingOne')
+                            : t('contracts.daysRemainingMany', { n: c.days_until_expiry }))
+                          : t('contracts.passedExpiration')}
                       </div>
                     </td>
                     <td className="py-3 px-4">
@@ -350,7 +363,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                       <button
                         onClick={() => openDetail(c)}
                         className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded text-[11px] font-semibold"
-                        title="View Details"
+                        title={t('contracts.viewDetails')}
                       >
                         <Eye className="w-3.5 h-3.5 inline" />
                       </button>
@@ -373,7 +386,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                   <h3 className="text-base font-bold text-slate-900">{selectedContract.title}</h3>
                   {getStatusBadge(selectedContract.status)}
                 </div>
-                <div className="text-slate-500 font-mono mt-0.5">Contract #{selectedContract.contract_number}</div>
+                <div className="text-slate-500 font-mono mt-0.5">{t('contracts.contractNumber', { number: selectedContract.contract_number })}</div>
               </div>
               <button onClick={() => setSelectedContract(null)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
@@ -382,27 +395,32 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
             <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
               <div>
-                <span className="text-slate-400 block text-[10px]">Supplier:</span>
+                <span className="text-slate-400 block text-[10px]">{t('common.supplier')}:</span>
                 <span className="font-bold text-slate-900 text-sm">{selectedContract.supplier_name}</span>
                 <div className="text-slate-500">{selectedContract.supplier_email}</div>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px]">Cost Center:</span>
+                <span className="text-slate-400 block text-[10px]">{t('common.costCenter')}:</span>
                 <span className="font-bold text-slate-900">{selectedContract.department_name} ({selectedContract.department_code})</span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px]">Contract Duration:</span>
+                <span className="text-slate-400 block text-[10px]">{t('contracts.duration')}:</span>
                 <span className="font-semibold text-slate-800">{selectedContract.start_date} ➔ {selectedContract.end_date}</span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[10px]">Notice Window / Deadline:</span>
-                <span className="font-semibold text-slate-800">{selectedContract.notice_period_days} days (Notice by {selectedContract.notice_deadline})</span>
+                <span className="text-slate-400 block text-[10px]">{t('contracts.notice')}:</span>
+                <span className="font-semibold text-slate-800">
+                  {t(
+                    Number(selectedContract.notice_period_days) === 1 ? 'contracts.noticeOne' : 'contracts.noticeMany',
+                    { days: selectedContract.notice_period_days, date: selectedContract.notice_deadline }
+                  )}
+                </span>
               </div>
             </div>
 
             {selectedContract.terms && (
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-slate-700">
-                <strong className="block text-[10px] text-slate-400 uppercase mb-1">Contract Terms & Renewal Clause:</strong>
+                <strong className="block text-[10px] text-slate-400 uppercase mb-1">{t('contracts.termsHeading')}:</strong>
                 {selectedContract.terms}
               </div>
             )}
@@ -412,10 +430,10 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                 <table className="w-full text-left">
                   <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
                     <tr>
-                      <th className="py-2 px-3">Line</th>
-                      <th className="py-2 px-3">Qty</th>
-                      <th className="py-2 px-3">Unit price</th>
-                      <th className="py-2 px-3 text-right">Total</th>
+                      <th className="py-2 px-3">{t('common.line')}</th>
+                      <th className="py-2 px-3">{t('common.qty')}</th>
+                      <th className="py-2 px-3">{t('common.unitPrice')}</th>
+                      <th className="py-2 px-3 text-right">{t('common.total')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -434,11 +452,11 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
             <div className="flex justify-between items-center pt-3 border-t border-slate-200">
               <div className="text-emerald-700 font-extrabold text-sm">
-                Annual ACV: {formatMoney(selectedContract.annual_value_cents)}
+                {t('contracts.annualLabel')}: {formatMoney(selectedContract.annual_value_cents)}
               </div>
               <div className="flex space-x-2">
                 <button onClick={() => setSelectedContract(null)} className="px-4 py-2 border border-slate-300 rounded-lg font-semibold">
-                  Close
+                  {t('common.close')}
                 </button>
                 <button
                   onClick={() => {
@@ -449,7 +467,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg font-bold flex items-center space-x-1"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate Renewal PR</span>
+                  <span>{t('contracts.generateRenewal')}</span>
                 </button>
               </div>
             </div>
@@ -461,7 +479,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <form onSubmit={handleCreateContract} className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-xs">
             <div className="flex justify-between items-center pb-3 border-b border-slate-200">
-              <h3 className="text-base font-bold text-slate-900">Register Vendor Contract / SaaS Agreement</h3>
+              <h3 className="text-base font-bold text-slate-900">{t('contracts.createTitle')}</h3>
               <button type="button" onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-700">
                 <X className="w-5 h-5" />
               </button>
@@ -469,10 +487,10 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
             <div className="space-y-3">
               <div>
-                <label className="block text-slate-600 mb-1 font-semibold">Contract Title</label>
+                <label className="block text-slate-600 mb-1 font-semibold">{t('contracts.contractTitle')}</label>
                 <input
                   type="text"
-                  placeholder="e.g. GitHub Enterprise Annual Cloud Seat Agreement"
+                  placeholder={t('contracts.titlePlaceholder')}
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -482,28 +500,28 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 mb-1">Supplier</label>
+                  <label className="block text-slate-600 mb-1">{t('common.supplier')}</label>
                   <select
                     value={supplierId}
                     onChange={(e) => setSupplierId(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-medium"
                     required
                   >
-                    <option value="">Select supplier</option>
+                    <option value="">{t('contracts.selectSupplier')}</option>
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Department</label>
+                  <label className="block text-slate-600 mb-1">{t('common.department')}</label>
                   <select
                     value={deptId}
                     onChange={(e) => setDeptId(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs font-medium"
                     required
                   >
-                    <option value="">Select department</option>
+                    <option value="">{t('contracts.selectDepartment')}</option>
                     {departments.map((d) => (
                       <option key={d.id} value={d.id}>{d.name} ({d.code})</option>
                     ))}
@@ -513,55 +531,54 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 mb-1">Category</label>
+                  <label className="block text-slate-600 mb-1">{t('common.category')}</label>
                   <select
                     value={contractCat}
                     onChange={(e) => setContractCat(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
                   >
-                    <option value="Software & Cloud">Software & Cloud</option>
-                    <option value="Consulting & Professional Services">Consulting/Services</option>
-                    <option value="Facilities & MRO">Facilities & MRO</option>
-                    <option value="Office Supplies">Office Supplies</option>
-                    <option value="Marketing & Events">Marketing & Events</option>
-                    <option value="IT Hardware">IT Hardware</option>
+                    <option value="Software & Cloud">{categoryLabel('Software & Cloud')}</option>
+                    <option value="Consulting & Professional Services">{t('category.consultingServices')}</option>
+                    <option value="Facilities & MRO">{categoryLabel('Facilities & MRO')}</option>
+                    <option value="Office Supplies">{categoryLabel('Office Supplies')}</option>
+                    <option value="Marketing & Events">{categoryLabel('Marketing & Events')}</option>
+                    <option value="IT Hardware">{categoryLabel('IT Hardware')}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Annual value</label>
+                  <label className="block text-slate-600 mb-1">{t('contracts.annualValue')}</label>
                   <input
-                    type="number"
-                    min="0"
-                    step="0.01"
+                    {...moneyInputProps}
                     value={annualValue}
                     onChange={(e) => setAnnualValue(e.target.value)}
                     className="w-full p-2 border border-slate-300 rounded-lg text-xs"
-                    placeholder="5400.00"
+                    placeholder={t('money.annualExample')}
                     required
                   />
                 </div>
               </div>
+              <p className="text-[10px] text-slate-400">{t('money.hint')}</p>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-slate-600 mb-1">Start</label>
+                  <label className="block text-slate-600 mb-1">{t('contracts.start')}</label>
                   <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" required />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">End</label>
+                  <label className="block text-slate-600 mb-1">{t('contracts.end')}</label>
                   <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" required />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Notice (days)</label>
+                  <label className="block text-slate-600 mb-1">{t('contracts.noticeDays')}</label>
                   <input type="number" min="0" step="1" value={noticeDays} onChange={(e) => setNoticeDays(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg text-xs" required />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Terms / Renewal Clause</label>
+                <label className="block text-slate-600 mb-1">{t('contracts.termsLabel')}</label>
                 <textarea
                   rows="2"
-                  placeholder="e.g. Renews automatically for 12 months unless notice given 30 days prior..."
+                  placeholder={t('contracts.termsPlaceholder')}
                   value={terms}
                   onChange={(e) => setTerms(e.target.value)}
                   className="w-full p-2 border border-slate-300 rounded-lg text-xs"
@@ -577,7 +594,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                   className="rounded text-indigo-600 focus:ring-indigo-500"
                 />
                 <label htmlFor="autoRenew" className="text-slate-700 font-medium">
-                  Contract includes auto-renewal clause by default
+                  {t('contracts.autoRenew')}
                 </label>
               </div>
             </div>
@@ -588,13 +605,13 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
                 onClick={() => setShowCreateModal(false)}
                 className="px-4 py-2 border border-slate-300 rounded-lg font-semibold"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold"
               >
-                Save Contract
+                {t('contracts.save')}
               </button>
             </div>
           </form>

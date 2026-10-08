@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Ban, CalendarRange, Shield, UserCheck } from 'lucide-react';
 import { api } from '../api';
+import { presentError, roleLabel, t } from '../i18n';
 
 export const DELEGATION_ROLES = ['approver', 'procurement', 'finance', 'admin'];
 
 function formatWindow(starts, ends) {
-  if (!starts && !ends) return 'Open-ended while active';
-  const startLabel = starts ? String(starts).slice(0, 10) : 'Open start';
-  const endLabel = ends ? String(ends).slice(0, 10) : 'Open end';
+  if (!starts && !ends) return t('admin.delegations.openEnded');
+  const startLabel = starts ? String(starts).slice(0, 10) : t('admin.delegations.openStart');
+  const endLabel = ends ? String(ends).slice(0, 10) : t('admin.delegations.openEnd');
   return `${startLabel} → ${endLabel}`;
 }
 
@@ -15,27 +16,27 @@ function statusBadge(row) {
   if (Number(row.active) !== 1) {
     return (
       <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
-        Revoked
+        {t('admin.delegations.revoked')}
       </span>
     );
   }
   if (Number(row.covering_now) === 1) {
     return (
       <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
-        Active now
+        {t('admin.delegations.activeNow')}
       </span>
     );
   }
   if (row.starts_at && String(row.starts_at) > new Date().toISOString()) {
     return (
       <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
-        Scheduled
+        {t('admin.delegations.scheduled')}
       </span>
     );
   }
   return (
     <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
-      Expired
+      {t('status.expired')}
     </span>
   );
 }
@@ -73,7 +74,7 @@ export default function DelegationsView({ currentUser }) {
       setUsers(Array.isArray(userList) ? userList : []);
       setRows(Array.isArray(delegations) ? delegations : []);
     } catch (err) {
-      setError(err.message || 'Failed to load delegations');
+      setError(presentError(err, 'errors.delegations'));
     } finally {
       setLoading(false);
     }
@@ -108,7 +109,7 @@ export default function DelegationsView({ currentUser }) {
     e.preventDefault();
     const fromId = isAdmin ? delegatorId : currentUser?.id;
     if (!fromId || !delegateId) {
-      setError('Pick a delegator and a substitute approver.');
+      setError(t('admin.delegations.pickBoth'));
       return;
     }
     setSaving(true);
@@ -130,14 +131,14 @@ export default function DelegationsView({ currentUser }) {
       if (isAdmin) setDelegatorId('');
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to create delegation');
+      setError(presentError(err, 'errors.delegationCreate'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleRevoke = async (row) => {
-    if (!window.confirm(`Revoke ${row.delegator_name} → ${row.delegate_name}? Pending steps return to the mapped approver only.`)) {
+    if (!window.confirm(t('admin.delegations.confirmRevoke', { from: row.delegator_name, to: row.delegate_name }))) {
       return;
     }
     setRevokingId(row.id);
@@ -149,7 +150,7 @@ export default function DelegationsView({ currentUser }) {
       });
       await loadData();
     } catch (err) {
-      setError(err.message || 'Failed to revoke delegation');
+      setError(presentError(err, 'errors.delegationRevoke'));
     } finally {
       setRevokingId(null);
     }
@@ -160,20 +161,17 @@ export default function DelegationsView({ currentUser }) {
       <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Approval Delegations</h2>
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('admin.delegations.title')}</h2>
             <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
-              Assign a temporary substitute so sequential approval steps do not stall while the
-              mapped head is away. The stored step approver is unchanged — the delegate sees the
-              pending inbox item and may decide it. Waiting steps stay waiting.
+              {t('admin.delegations.intro')}
             </p>
           </div>
           <span className="text-[10px] font-semibold uppercase tracking-wider bg-violet-50 text-violet-800 border border-violet-200 px-2.5 py-1 rounded-full whitespace-nowrap">
-            Out of office
+            {t('admin.delegations.ooo')}
           </span>
         </div>
         <p className="text-[11px] text-slate-400 mt-3">
-          Demo auth is the header switcher only (no JWT). Create for yourself as delegator;
-          Elena can manage any pair. Soft-revoke keeps history — no hard delete.
+          {t('admin.delegations.demoAuth')}
         </p>
       </div>
 
@@ -181,9 +179,9 @@ export default function DelegationsView({ currentUser }) {
         <div className="bg-violet-50 border border-violet-200 text-violet-900 text-xs rounded-xl px-4 py-3 flex items-start space-x-2">
           <UserCheck className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <span>
-            You are covering for{' '}
-            <strong>{incomingCovering.map((row) => row.delegator_name).join(', ')}</strong>.
-            Their current pending steps appear in your Approvals Inbox with a “Delegated from” badge.
+            {t('admin.delegations.coveringBefore')}{' '}
+            <strong>{incomingCovering.map((row) => row.delegator_name).join(', ')}</strong>
+            {t('admin.delegations.coveringAfter')}
           </span>
         </div>
       )}
@@ -197,39 +195,39 @@ export default function DelegationsView({ currentUser }) {
       <form onSubmit={handleCreate} className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-5 space-y-4">
         <div className="flex items-center space-x-2 text-sm font-semibold text-slate-900">
           <CalendarRange className="w-4 h-4 text-slate-400" />
-          <span>{isAdmin ? 'Create a delegation (any pair)' : 'Delegate my approvals'}</span>
+          <span>{isAdmin ? t('admin.delegations.createAny') : t('admin.delegations.delegateMine')}</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
           {isAdmin && (
             <label className="block text-slate-700 font-medium">
-              Delegator (away)
+              {t('admin.delegations.delegatorAway')}
               <select
                 value={delegatorId}
                 onChange={(e) => setDelegatorId(e.target.value)}
                 className="mt-1 w-full bg-white border border-slate-300 rounded-lg py-1.5 px-2 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="">— Select person —</option>
+                <option value="">{t('admin.delegations.selectPerson')}</option>
                 {users.map((u) => (
-                  <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                  <option key={u.id} value={u.id}>{u.name} ({roleLabel(u.role)})</option>
                 ))}
               </select>
             </label>
           )}
           <label className="block text-slate-700 font-medium">
-            Substitute approver
+            {t('admin.delegations.substitute')}
             <select
               value={delegateId}
               onChange={(e) => setDelegateId(e.target.value)}
               className="mt-1 w-full bg-white border border-slate-300 rounded-lg py-1.5 px-2 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="">— Select delegate —</option>
+              <option value="">{t('admin.delegations.selectDelegate')}</option>
               {delegateChoices.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                <option key={u.id} value={u.id}>{u.name} ({roleLabel(u.role)})</option>
               ))}
             </select>
           </label>
           <label className="block text-slate-700 font-medium">
-            Starts (optional)
+            {t('admin.delegations.startsOptional')}
             <input
               type="date"
               value={startsAt}
@@ -238,7 +236,7 @@ export default function DelegationsView({ currentUser }) {
             />
           </label>
           <label className="block text-slate-700 font-medium">
-            Ends (optional)
+            {t('admin.delegations.endsOptional')}
             <input
               type="date"
               value={endsAt}
@@ -247,12 +245,12 @@ export default function DelegationsView({ currentUser }) {
             />
           </label>
           <label className="block text-slate-700 font-medium md:col-span-2">
-            Reason (optional)
+            {t('common.reason')} ({t('common.optional')})
             <input
               type="text"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Out of office, travel, coverage…"
+              placeholder={t('admin.delegations.reasonPlaceholder')}
               className="mt-1 w-full bg-white border border-slate-300 rounded-lg py-1.5 px-2 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500"
             />
           </label>
@@ -263,7 +261,7 @@ export default function DelegationsView({ currentUser }) {
             disabled={saving}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm disabled:opacity-60"
           >
-            {saving ? 'Saving…' : 'Create delegation'}
+            {saving ? t('common.saving') : t('admin.delegations.create')}
           </button>
         </div>
       </form>
@@ -271,26 +269,26 @@ export default function DelegationsView({ currentUser }) {
       <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-sm font-bold text-slate-900">
-            {isAdmin ? 'All delegations' : 'My delegations'}
+            {isAdmin ? t('admin.delegations.all') : t('admin.delegations.mine')}
           </h3>
-          <span className="text-[11px] text-slate-400">{rows.length} record{rows.length === 1 ? '' : 's'}</span>
+          <span className="text-[11px] text-slate-400">{t(rows.length === 1 ? 'admin.delegations.recordOne' : 'admin.delegations.recordMany', { count: rows.length })}</span>
         </div>
         {loading ? (
-          <div className="py-12 text-center text-slate-400 text-xs">Loading delegations…</div>
+          <div className="py-12 text-center text-slate-400 text-xs">{t('admin.delegations.loading')}</div>
         ) : rows.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs">
-            No delegations yet. Create one above so a substitute can clear your pending step.
+            {t('admin.delegations.empty')}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
                 <tr>
-                  <th className="px-4 py-3">Delegator</th>
-                  <th className="px-4 py-3">Delegate</th>
-                  <th className="px-4 py-3">Window</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Reason</th>
+                  <th className="px-4 py-3">{t('admin.delegations.delegator')}</th>
+                  <th className="px-4 py-3">{t('admin.delegations.delegate')}</th>
+                  <th className="px-4 py-3">{t('admin.delegations.window')}</th>
+                  <th className="px-4 py-3">{t('common.status')}</th>
+                  <th className="px-4 py-3">{t('common.reason')}</th>
                   <th className="px-4 py-3 w-28"></th>
                 </tr>
               </thead>
@@ -299,11 +297,11 @@ export default function DelegationsView({ currentUser }) {
                   <tr key={row.id} className="hover:bg-slate-50/80">
                     <td className="px-4 py-3.5">
                       <div className="font-semibold text-slate-900">{row.delegator_name}</div>
-                      <div className="text-[10px] text-slate-400">{row.delegator_title || row.delegator_role}</div>
+                      <div className="text-[10px] text-slate-400">{row.delegator_title || roleLabel(row.delegator_role)}</div>
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="font-semibold text-slate-900">{row.delegate_name}</div>
-                      <div className="text-[10px] text-slate-400">{row.delegate_title || row.delegate_role}</div>
+                      <div className="text-[10px] text-slate-400">{row.delegate_title || roleLabel(row.delegate_role)}</div>
                     </td>
                     <td className="px-4 py-3.5 text-slate-600">{formatWindow(row.starts_at, row.ends_at)}</td>
                     <td className="px-4 py-3.5">{statusBadge(row)}</td>
@@ -317,10 +315,10 @@ export default function DelegationsView({ currentUser }) {
                           className="inline-flex items-center space-x-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-50"
                         >
                           <Ban className="w-3.5 h-3.5" />
-                          <span>{revokingId === row.id ? 'Revoking…' : 'Revoke'}</span>
+                          <span>{revokingId === row.id ? t('admin.delegations.revoking') : t('admin.delegations.revoke')}</span>
                         </button>
                       ) : Number(row.active) === 1 ? (
-                        <span className="text-[10px] text-slate-400">Incoming</span>
+                        <span className="text-[10px] text-slate-400">{t('admin.delegations.incoming')}</span>
                       ) : null}
                     </td>
                   </tr>
@@ -334,8 +332,7 @@ export default function DelegationsView({ currentUser }) {
       <div className="bg-slate-50 border border-slate-200 text-slate-600 text-[11px] rounded-xl px-4 py-3 flex items-start space-x-2">
         <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
         <span>
-          Fail-closed: cannot delegate to yourself, both users must exist, and revoke only works on an
-          active row. Expired or revoked windows are ignored by the inbox and decide API.
+          {t('admin.delegations.failClosed')}
         </span>
       </div>
     </div>

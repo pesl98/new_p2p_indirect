@@ -1,11 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { Gauge, Plus, X } from 'lucide-react';
 import { api } from '../api';
-import { formatMoney, toCents } from '../money';
+import { t, presentError, presentNotice } from '../i18n';
+import { formatMoney, moneyInputProps, toCents } from '../money';
 import { UTILITY_UNITS, formatMeasured } from '../measuredQty';
 
 const EMPTY = { arrangements: [], consumptions: [] };
-const UTILITY_LABEL = { water: 'Water', electricity: 'Electricity', gas: 'Gas' };
+
+function utilityLabel(type) {
+  if (type === 'electricity') return t('receiving.utility.electricity');
+  if (type === 'water') return t('receiving.utility.water');
+  if (type === 'gas') return t('receiving.utility.gas');
+  return type || t('receiving.utility.fallback');
+}
+
+function usageRecordTitle(type) {
+  if (type === 'electricity') return t('receiving.utility.recordElectricity');
+  if (type === 'water') return t('receiving.utility.recordWater');
+  if (type === 'gas') return t('receiving.utility.recordGas');
+  return t('receiving.utility.recordFallback');
+}
 
 export default function UtilitiesView({ currentUser, onNavigate }) {
   const [overview, setOverview] = useState(EMPTY);
@@ -26,7 +40,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
       setSuppliers(Array.isArray(supplierRows) ? supplierRows : []);
     } catch (err) {
       console.error(err);
-      setBanner({ tone: 'error', text: err.message || 'Failed to load utility arrangements.' });
+      setBanner({ tone: 'error', text: presentError(err, 'errors.utilities') });
     } finally {
       setLoading(false);
     }
@@ -40,10 +54,9 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Metered Utilities</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t('receiving.utility.title')}</h2>
           <p className="text-xs text-slate-500 mt-0.5 max-w-2xl">
-            Water, electricity, and gas are billed by measured consumption against a supply arrangement.
-            Recording a reading opens a payable purchase order. It does not post a goods receipt.
+            {t('receiving.utility.intro')}
           </p>
         </div>
         <button
@@ -52,7 +65,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
           className="px-3 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm"
         >
           <Plus className="w-4 h-4" />
-          Open arrangement
+          {t('receiving.utility.open')}
         </button>
       </div>
 
@@ -66,7 +79,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
           </div>
           {banner.poId && (
             <button type="button" onClick={() => onNavigate?.('purchase_orders', { focusId: banner.poId })} className="mt-2 text-xs font-semibold underline">
-              Open {banner.poNumber}
+              {t('receiving.openPo', { number: banner.poNumber })}
             </button>
           )}
         </div>
@@ -75,29 +88,29 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
       <section className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
           <Gauge className="w-4 h-4 text-sky-700" />
-          <h3 className="text-sm font-bold text-slate-900">Supply arrangements</h3>
+          <h3 className="text-sm font-bold text-slate-900">{t('receiving.utility.arrangements')}</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
               <tr>
-                <th className="py-2.5 px-4">Arrangement</th>
-                <th className="py-2.5 px-4">Supplier</th>
-                <th className="py-2.5 px-4">Meter</th>
-                <th className="py-2.5 px-4 text-right">Price</th>
+                <th className="py-2.5 px-4">{t('receiving.utility.arrangement')}</th>
+                <th className="py-2.5 px-4">{t('common.supplier')}</th>
+                <th className="py-2.5 px-4">{t('receiving.utility.meter')}</th>
+                <th className="py-2.5 px-4 text-right">{t('common.price')}</th>
                 <th className="py-2.5 px-4" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan="5" className="py-8 text-center text-slate-400">Loading utilities…</td></tr>
+                <tr><td colSpan="5" className="py-8 text-center text-slate-400">{t('receiving.utility.loading')}</td></tr>
               ) : overview.arrangements.length === 0 ? (
-                <tr><td colSpan="5" className="py-8 text-center text-slate-400">No utility arrangements yet.</td></tr>
+                <tr><td colSpan="5" className="py-8 text-center text-slate-400">{t('receiving.utility.emptyArrangements')}</td></tr>
               ) : overview.arrangements.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-50/80">
                   <td className="py-3 px-4">
                     <div className="font-semibold text-slate-900">{row.name}</div>
-                    <div className="text-[10px] text-slate-400 font-mono">{row.arrangement_number} · {UTILITY_LABEL[row.utility_type] || row.utility_type}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{row.arrangement_number} · {utilityLabel(row.utility_type)}</div>
                   </td>
                   <td className="py-3 px-4 text-slate-700">{row.supplier_name}</td>
                   <td className="py-3 px-4 text-slate-600">{row.meter_label}</td>
@@ -109,7 +122,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
                       onClick={() => { setBanner(null); setRecordArrangement(row); }}
                       className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white rounded font-semibold text-[11px]"
                     >
-                      Record usage
+                      {t('receiving.utility.recordUsage')}
                     </button>
                   </td>
                 </tr>
@@ -121,24 +134,24 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
 
       <section className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100">
-          <h3 className="text-sm font-bold text-slate-900">Recorded consumption</h3>
-          <p className="text-[11px] text-slate-500">Each row is a payable. Match the supplier invoice to this quantity. No goods receipt.</p>
+          <h3 className="text-sm font-bold text-slate-900">{t('receiving.utility.consumptionTitle')}</h3>
+          <p className="text-[11px] text-slate-500">{t('receiving.utility.consumptionHint')}</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px]">
               <tr>
-                <th className="py-2.5 px-4">Number</th>
-                <th className="py-2.5 px-4">Arrangement</th>
-                <th className="py-2.5 px-4">Period</th>
-                <th className="py-2.5 px-4 text-right">Usage</th>
-                <th className="py-2.5 px-4 text-right">Amount</th>
-                <th className="py-2.5 px-4">Payable</th>
+                <th className="py-2.5 px-4">{t('common.number')}</th>
+                <th className="py-2.5 px-4">{t('receiving.utility.arrangement')}</th>
+                <th className="py-2.5 px-4">{t('common.period')}</th>
+                <th className="py-2.5 px-4 text-right">{t('receiving.utility.usage')}</th>
+                <th className="py-2.5 px-4 text-right">{t('common.amount')}</th>
+                <th className="py-2.5 px-4">{t('common.payable')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {overview.consumptions.length === 0 ? (
-                <tr><td colSpan="6" className="py-8 text-center text-slate-400">No consumption recorded yet.</td></tr>
+                <tr><td colSpan="6" className="py-8 text-center text-slate-400">{t('receiving.utility.emptyConsumption')}</td></tr>
               ) : overview.consumptions.map((row) => (
                 <tr key={row.id}>
                   <td className="py-3 px-4 font-mono font-semibold">{row.consumption_number}</td>
@@ -165,7 +178,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
           onClose={() => setShowOpen(false)}
           onSaved={async (result) => {
             setShowOpen(false);
-            setBanner({ tone: 'ok', text: result.message });
+            setBanner({ tone: 'ok', text: presentNotice(result.message) });
             await load();
           }}
         />
@@ -177,7 +190,7 @@ export default function UtilitiesView({ currentUser, onNavigate }) {
           onClose={() => setRecordArrangement(null)}
           onSaved={async (result) => {
             setRecordArrangement(null);
-            setBanner({ tone: 'ok', text: result.message, poId: result.poId, poNumber: result.poNumber });
+            setBanner({ tone: 'ok', text: presentNotice(result.message), poId: result.poId, poNumber: result.poNumber });
             await load();
           }}
         />
@@ -192,7 +205,7 @@ function OpenModal({ suppliers, currentUser, onClose, onSaved }) {
   const [name, setName] = useState('');
   const [meterLabel, setMeterLabel] = useState('');
   const [unitOfMeasure, setUnitOfMeasure] = useState('kWh');
-  const [unitPrice, setUnitPrice] = useState('0.18');
+  const [unitPrice, setUnitPrice] = useState('0,18');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -219,51 +232,51 @@ function OpenModal({ suppliers, currentUser, onClose, onSaved }) {
       });
       await onSaved(result);
     } catch (err) {
-      setError(err.message || 'Failed to open the arrangement.');
+      setError(presentError(err, 'errors.utilityOpen'));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal title="Open a utility arrangement" subtitle="Standing metered supply. Does not create a purchase order until you record usage." onClose={onClose}>
+    <Modal title={t('receiving.utility.openTitle')} subtitle={t('receiving.utility.openSubtitle')} onClose={onClose}>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <Field label="Supplier">
+        <Field label={t('common.supplier')}>
           <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg">
             {suppliers.map((supplier) => (
               <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
             ))}
           </select>
         </Field>
-        <Field label="Utility">
+        <Field label={t('receiving.utility.type')}>
           <select value={utilityType} onChange={(e) => setUtilityType(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg">
-            <option value="electricity">Electricity</option>
-            <option value="water">Water</option>
-            <option value="gas">Gas</option>
+            <option value="electricity">{t('receiving.utility.electricity')}</option>
+            <option value="water">{t('receiving.utility.water')}</option>
+            <option value="gas">{t('receiving.utility.gas')}</option>
           </select>
         </Field>
-        <Field label="Name">
-          <input value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder="HQ campus electricity" />
+        <Field label={t('common.name')}>
+          <input value={name} onChange={(e) => setName(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder={t('receiving.utility.namePlaceholder')} />
         </Field>
-        <Field label="Meter">
-          <input value={meterLabel} onChange={(e) => setMeterLabel(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder="E-104" />
+        <Field label={t('receiving.utility.meter')}>
+          <input value={meterLabel} onChange={(e) => setMeterLabel(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" placeholder={t('receiving.utility.meterPlaceholder')} />
         </Field>
-        <Field label="Unit of measure">
+        <Field label={t('receiving.unitOfMeasure')}>
           <select value={unitOfMeasure} onChange={(e) => setUnitOfMeasure(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg">
             {(UTILITY_UNITS[utilityType] || []).map((unit) => (
               <option key={unit} value={unit}>{unit}</option>
             ))}
           </select>
         </Field>
-        <Field label="Price per unit">
-          <input type="number" min="0" step="0.01" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
+        <Field label={t('common.unitPrice')}>
+          <input {...moneyInputProps} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Notes">
+        <Field label={t('common.notes')}>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
       </div>
       {error && <p className="text-xs text-rose-700 mt-3">{error}</p>}
-      <ModalActions saving={saving} label="Open arrangement" onClose={onClose} onSubmit={submit} />
+      <ModalActions saving={saving} label={t('receiving.utility.open')} onClose={onClose} onSubmit={submit} />
     </Modal>
   );
 }
@@ -307,7 +320,7 @@ function RecordModal({ arrangement, currentUser, onClose, onSaved }) {
       const result = await api.recordUtilityConsumption(body);
       await onSaved(result);
     } catch (err) {
-      setError(err.message || 'Failed to record consumption.');
+      setError(presentError(err, 'errors.utilityUse'));
     } finally {
       setSaving(false);
     }
@@ -315,47 +328,62 @@ function RecordModal({ arrangement, currentUser, onClose, onSaved }) {
 
   return (
     <Modal
-      title={`Record ${UTILITY_LABEL[arrangement.utility_type] || 'utility'} usage`}
-      subtitle={`${arrangement.name} · ${arrangement.meter_label} · ${formatMoney(arrangement.unit_price)} / ${arrangement.unit_of_measure}. Opens a payable. No goods receipt.`}
+      title={usageRecordTitle(arrangement.utility_type)}
+      subtitle={t('receiving.utility.recordSubtitle', {
+        name: arrangement.name,
+        meter: arrangement.meter_label,
+        price: formatMoney(arrangement.unit_price),
+        unit: arrangement.unit_of_measure
+      })}
       onClose={onClose}
     >
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <Field label="How is usage known?">
+        <Field label={t('receiving.utility.howKnown')}>
           <select value={mode} onChange={(e) => setMode(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg">
-            <option value="readings">Meter readings</option>
-            <option value="quantity">Billed quantity</option>
+            <option value="readings">{t('receiving.utility.readings')}</option>
+            <option value="quantity">{t('receiving.utility.billedQuantity')}</option>
           </select>
         </Field>
-        <Field label="Period start">
+        <Field label={t('receiving.utility.periodStart')}>
           <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
-        <Field label="Period end">
+        <Field label={t('receiving.utility.periodEnd')}>
           <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
         {mode === 'readings' ? (
           <>
-            <Field label={`Previous reading (${arrangement.unit_of_measure})`}>
+            <Field label={t('receiving.utility.previousReading', { unit: arrangement.unit_of_measure })}>
               <input type="number" min="0" step="0.001" value={previous} onChange={(e) => setPrevious(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
             </Field>
-            <Field label={`Current reading (${arrangement.unit_of_measure})`}>
+            <Field label={t('receiving.utility.currentReading', { unit: arrangement.unit_of_measure })}>
               <input type="number" min="0" step="0.001" value={current} onChange={(e) => setCurrent(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
             </Field>
           </>
         ) : (
-          <Field label={`Billed quantity (${arrangement.unit_of_measure})`}>
+          <Field label={t('receiving.utility.billedQuantityUnit', { unit: arrangement.unit_of_measure })}>
             <input type="number" min="0" step="0.001" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
           </Field>
         )}
-        <Field label="Notes">
+        <Field label={t('common.notes')}>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full p-2 border border-slate-300 rounded-lg" />
         </Field>
       </div>
       <p className="text-xs text-slate-600 mt-3">
-        Usage {Number.isFinite(usage) ? usage.toFixed(3) : '—'} {arrangement.unit_of_measure}
-        {amount > 0 ? ` · payable about ${formatMoney(amount)}` : ''}. Price shown is {formatMoney(arrangement.unit_price)} per {arrangement.unit_of_measure}.
+        {amount > 0
+          ? t('receiving.utility.usageLinePayable', {
+              usage: Number.isFinite(usage) ? usage.toFixed(3) : '—',
+              unit: arrangement.unit_of_measure,
+              amount: formatMoney(amount),
+              price: formatMoney(arrangement.unit_price)
+            })
+          : t('receiving.utility.usageLine', {
+              usage: Number.isFinite(usage) ? usage.toFixed(3) : '—',
+              unit: arrangement.unit_of_measure,
+              price: formatMoney(arrangement.unit_price)
+            })}
       </p>
       {error && <p className="text-xs text-rose-700 mt-3">{error}</p>}
-      <ModalActions saving={saving} label="Record usage and open payable" onClose={onClose} onSubmit={submit} />
+      <ModalActions saving={saving} label={t('receiving.utility.recordPayable')} onClose={onClose} onSubmit={submit} />
     </Modal>
   );
 }
@@ -391,9 +419,9 @@ function Field({ label, children }) {
 function ModalActions({ saving, label, onClose, onSubmit }) {
   return (
     <div className="flex justify-end gap-2 pt-4 mt-4 border-t border-slate-200">
-      <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
+      <button type="button" onClick={onClose} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold">{t('common.cancel')}</button>
       <button type="button" disabled={saving} onClick={onSubmit} className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold">
-        {saving ? 'Saving…' : label}
+        {saving ? t('common.saving') : label}
       </button>
     </div>
   );

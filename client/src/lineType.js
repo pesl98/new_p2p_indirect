@@ -1,3 +1,5 @@
+import { t } from './i18n';
+
 export const SERVICE_CATEGORIES = [
   'Consulting & Professional Services',
   'Software & Cloud',
@@ -26,33 +28,33 @@ export function isMeasuredSettlement(item) {
   return item?.settlement_kind === 'utility' || item?.settlement_kind === 'bulk';
 }
 
-/** Short receipt-basis label for match and invoice lines. */
+/** Short receipt-basis label for match and invoice lines. GRN and SES stay document codes. */
 export function receiptBasisLabel(item) {
   if (!item) return 'GRN';
   if (item.line_type === 'service' || item.po_line_type === 'service') return 'SES';
-  if (item.settlement_kind === 'utility') return 'utility';
-  if (item.settlement_kind === 'bulk') return 'bulk';
-  if (item.receipt_basis === 'consignment') return 'consignment';
+  if (item.settlement_kind === 'utility') return t('line.utility');
+  if (item.settlement_kind === 'bulk') return t('line.bulk');
+  if (item.receipt_basis === 'consignment') return t('line.consignment');
   return 'GRN';
 }
 
 export function lineTypeLabel(itemOrType) {
   const type = typeof itemOrType === 'string' ? itemOrType : lineTypeOf(itemOrType);
-  return type === 'service' ? 'Service' : 'Goods';
+  return type === 'service' ? t('line.service') : t('line.goods');
 }
 
 export const SERVICE_BASES = ['lump_sum', 'hours', 'days'];
 
 export function serviceBasisLabel(basis) {
-  if (basis === 'lump_sum') return 'Lump sum';
-  if (basis === 'hours') return 'Hours';
-  if (basis === 'days') return 'Days';
+  if (basis === 'lump_sum') return t('line.lumpSum');
+  if (basis === 'hours') return t('line.hours');
+  if (basis === 'days') return t('line.days');
   return null;
 }
 
 export function lineTypeWithBasisLabel(item) {
-  if (item?.settlement_kind === 'utility') return 'Utility';
-  if (item?.settlement_kind === 'bulk') return 'Bulk';
+  if (item?.settlement_kind === 'utility') return t('line.utility');
+  if (item?.settlement_kind === 'bulk') return t('line.bulk');
   const type = lineTypeLabel(item);
   const basis = serviceBasisLabel(item?.service_basis);
   return basis ? `${type} · ${basis}` : type;
@@ -71,15 +73,15 @@ export function formatLineQuantity(item) {
   const qty = item?.quantity ?? item?.quantity_accepted ?? item?.ordered_qty;
   const n = Number(qty);
   const basis = item?.service_basis;
-  if (basis === 'hours') return n === 1 ? '1 hour' : `${n} hours`;
-  if (basis === 'days') return n === 1 ? '1 day' : `${n} days`;
-  if (basis === 'lump_sum') return n === 1 ? '1 lump sum' : `${n} lump sums`;
+  if (basis === 'hours') return n === 1 ? t('line.hourOne') : t('line.hoursMany', { n });
+  if (basis === 'days') return n === 1 ? t('line.dayOne') : t('line.daysMany', { n });
+  if (basis === 'lump_sum') return n === 1 ? t('line.lumpOne') : t('line.lumpMany', { n });
   return String(qty ?? '');
 }
 
 export function serviceRateLabel(basis) {
-  if (basis === 'hours') return 'per hour';
-  if (basis === 'days') return 'per day';
-  if (basis === 'lump_sum') return 'lump sum';
+  if (basis === 'hours') return t('line.perHour');
+  if (basis === 'days') return t('line.perDay');
+  if (basis === 'lump_sum') return t('line.lumpSumRate');
   return null;
 }
