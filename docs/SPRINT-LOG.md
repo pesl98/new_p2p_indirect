@@ -71,7 +71,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | `91f7e541e8a9e9a6e7972dd3ab6fee7c26dc3ddf` | merged |
 | 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | `cdefb448106f0c5a52d583e9abe69f02facc8802` | merged |
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
-| 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | | Sprint 8a — Data model and buyer RFQ authoring | | in progress |
+| 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) (draft, base `main`) | Sprint 8a — Data model and buyer RFQ authoring | | in progress |
 | 8b | | Supplier portal: magic links, sealed bids, copy-link delivery | | Sprint 8b — Supplier portal and sealed bids | | planned |
 | 8c | | Comparison, scoring, award requisition, SoD, and POs | | Sprint 8c — Comparison, scoring, award, and POs | | planned |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
@@ -404,11 +404,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Procurement can create, edit, and cancel RFQ drafts from scratch or from an approved requisition. Drafts hold lines, buyer PDFs, invitees (no links yet), weights, and evaluators. Nothing is visible to suppliers yet.
 
-**PR:**
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/56 (#56, draft). Base is `main` at `ca4eb1372ffee56215726b30d4a53a2acb020603`. Do not merge until the Architect reviews and Peter OKs.
 
 **Merge SHA:**
 
-**Status:** in progress. Draft PR, not merged. The Architect reviews, Peter OKs, the Architect merges.
+**Status:** in progress.
 
 ### Done when
 
