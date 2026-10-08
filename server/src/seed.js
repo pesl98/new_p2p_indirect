@@ -22,6 +22,8 @@ const db = await getDb();
 console.log('🌱 Seeding Non-Production Procurement Database...');
 
 const allTables = [
+  'invoice_proposal_files',
+  'invoice_proposals',
   'integration_idempotency',
   'api_key_rate_windows',
   'integration_invoice_links',

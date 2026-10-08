@@ -103,7 +103,9 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `INVOICE_OCR_MODEL` | With the gateway provider | AI Gateway model id, for example a current Gemini flash model that accepts PDFs. |
 | `AI_GATEWAY_API_KEY` | Off Vercel | Gateway credential. On Vercel, OIDC is enough. Never commit it. |
 | `INVOICE_PDF_MAX_BYTES` | No | Optional cap at or below 4194304 (4 MiB). Invalid values use 4 MiB. |
-| `INVOICE_PROPOSAL_SOD` | No | `enforce` (default) or `off`. `enforce` blocks the uploading user from posting their own proposal. |
+| `INVOICE_OCR_TIMEOUT_MS` | No | OCR attempt timeout. Default 20000. Integer 1000–50000. One retry. |
+| `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` | No | Signed-in PDF uploads per user. Default 10. Integer 1–600. |
+| `INVOICE_PROPOSAL_SOD` | No | `enforce` (default) or `off`. `enforce` blocks the uploader and the API-key creator. `off` is for a single-person tenant. |
 
 ### 2.1 SSO (OIDC or SAML) per customer
 

@@ -1,6 +1,6 @@
 import express from 'express';
 import { AP_ROLES, requireRole, sessionActor } from '../requestActor.js';
-import { pdfUploadMiddleware, safePdfFilename } from '../invoicePdf.js';
+import { contentDispositionInline, filenameFromRequest, pdfUploadMiddleware } from '../invoicePdf.js';
 import { maxPdfBytes } from '../invoicePdf.js';
 import { LOW_CONFIDENCE_THRESHOLD } from '../../../shared/invoiceConfidence.js';
 import {
@@ -59,10 +59,11 @@ router.get('/options', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const proposals = await listInvoiceProposals(req.db, {
-      status: req.query.status ? String(req.query.status) : 'proposed'
-    });
-    res.json({ proposals });
+    res.json(await listInvoiceProposals(req.db, {
+      status: req.query.status ? String(req.query.status) : 'proposed',
+      limit: req.query.limit,
+      offset: req.query.offset
+    }));
   } catch (error) {
     sendError(res, error);
   }
@@ -72,7 +73,7 @@ router.post('/', pdfUploadMiddleware, async (req, res) => {
   try {
     const proposal = await uploadInvoiceProposal(req.db, {
       pdf: req.body,
-      filename: req.headers['x-filename'],
+      filename: filenameFromRequest(req.headers),
       actor: actor(req)
     });
     res.status(201).json({ proposal });
@@ -84,9 +85,8 @@ router.post('/', pdfUploadMiddleware, async (req, res) => {
 router.get('/:id/pdf', async (req, res) => {
   try {
     const file = await readProposalPdf(req.db, req.params.id);
-    const filename = safePdfFilename(file.filename).replace(/"/g, '');
     res.set('Content-Type', 'application/pdf');
-    res.set('Content-Disposition', `inline; filename="${filename}"`);
+    res.set('Content-Disposition', contentDispositionInline(file.filename));
     res.set('Cache-Control', 'private, no-store');
     res.set('X-Content-Type-Options', 'nosniff');
     res.send(file.bytes);
@@ -110,7 +110,11 @@ router.post('/:id/preview', async (req, res) => {
     if (proposal.status !== 'proposed') {
       throw new InvoiceProposalError('This proposal is already closed', 409, 'proposal_not_open');
     }
-    res.json({ preview: await previewProposal(req.db, proposal.id, working) });
+    res.json({
+      preview: await previewProposal(req.db, proposal.id, working, {
+        overrideReason: req.body?.override_reason
+      })
+    });
   } catch (error) {
     sendError(res, error);
   }
@@ -118,7 +122,13 @@ router.post('/:id/preview', async (req, res) => {
 
 router.post('/:id/approve', async (req, res) => {
   try {
-    const result = await approveInvoiceProposal(req.db, req.params.id, actor(req));
+    const result = await approveInvoiceProposal(
+      req.db,
+      req.params.id,
+      actor(req),
+      new Date(),
+      req.body?.override_reason
+    );
     res.status(201).json(result);
   } catch (error) {
     sendError(res, error);

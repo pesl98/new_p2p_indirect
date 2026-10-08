@@ -1,6 +1,7 @@
 /**
  * Vision extraction through the Vercel AI Gateway (AI SDK).
- * Loaded only when INVOICE_OCR_PROVIDER=gateway. Tests do not import this.
+ * Loaded only when INVOICE_OCR_PROVIDER=gateway.
+ * Tests may import ocrCallLimits. They must not call extractWithGateway.
  *
  * Model id is INVOICE_OCR_MODEL, a gateway string such as google/gemini-2.5-flash.
  * Auth is AI_GATEWAY_API_KEY, or Vercel OIDC when the function runs on Vercel.
@@ -16,6 +17,13 @@ const PROMPT = [
   'Lines are the billed rows: description, quantity, and unit price in cents.',
   'Do not invent a vendor, invoice number, or PO number that is not on the page.'
 ].join(' ');
+
+/** One retry. The timeout is per attempt. vercel.json maxDuration is 60s. */
+export function ocrCallLimits(env = process.env) {
+  const raw = Number(env.INVOICE_OCR_TIMEOUT_MS);
+  const timeoutMs = Number.isInteger(raw) && raw >= 1000 && raw <= 50000 ? raw : 20000;
+  return { timeoutMs, maxRetries: 1 };
+}
 
 function unavailable(message) {
   const error = new Error(message);
@@ -68,34 +76,52 @@ export async function extractWithGateway(pdf, env = process.env) {
     }))
   });
 
-  const { output } = await generateText({
-    model: modelId,
-    output: Output.object({
-      schema,
-      name: 'SupplierInvoice',
-      description: 'Fields read from one supplier invoice PDF'
-    }),
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: PROMPT },
+  const limits = ocrCallLimits(env);
+  let lastError = null;
+  for (let attempt = 0; attempt <= limits.maxRetries; attempt += 1) {
+    try {
+      const { output } = await generateText({
+        model: modelId,
+        maxRetries: 0,
+        abortSignal: AbortSignal.timeout(limits.timeoutMs),
+        output: Output.object({
+          schema,
+          name: 'SupplierInvoice',
+          description: 'Fields read from one supplier invoice PDF'
+        }),
+        messages: [
           {
-            type: 'file',
-            mediaType: 'application/pdf',
-            filename: 'invoice.pdf',
-            data: pdf
+            role: 'user',
+            content: [
+              { type: 'text', text: PROMPT },
+              {
+                type: 'file',
+                mediaType: 'application/pdf',
+                filename: 'invoice.pdf',
+                data: pdf
+              }
+            ]
           }
         ]
+      });
+      if (!output || typeof output !== 'object') {
+        const error = new Error('Invoice OCR returned no structured fields');
+        error.statusCode = 502;
+        error.code = 'ocr_failed';
+        throw error;
       }
-    ]
-  });
-
-  if (!output || typeof output !== 'object') {
-    const error = new Error('Invoice OCR returned no structured fields');
-    error.statusCode = 502;
-    error.code = 'ocr_failed';
-    throw error;
+      return output;
+    } catch (error) {
+      if (error?.code === 'ocr_failed' || error?.code === 'ocr_provider_unavailable') throw error;
+      lastError = error;
+      const retryable = error?.name === 'AbortError'
+        || error?.name === 'TimeoutError'
+        || /timeout|network|fetch|ECONN|429|502|503/i.test(String(error?.message || ''));
+      if (!retryable || attempt >= limits.maxRetries) break;
+    }
   }
-  return output;
+  const failed = new Error(lastError?.message || 'Invoice OCR failed');
+  failed.statusCode = 502;
+  failed.code = 'ocr_failed';
+  throw failed;
 }

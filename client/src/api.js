@@ -678,11 +678,14 @@ export const api = {
       proposalJson(r, t('errors.proposalLoad'))
     ),
   uploadInvoiceProposal: async (file) => {
+    const original = file.name || 'invoice.pdf';
+    const ascii = original.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'invoice.pdf';
     const r = await apiFetch(`${API_BASE}/invoice-proposals`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/pdf',
-        'X-Filename': file.name || 'invoice.pdf'
+        'Content-Disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(original)}`,
+        'X-Filename': ascii
       },
       body: await file.arrayBuffer()
     });
@@ -696,8 +699,12 @@ export const api = {
     });
     return proposalJson(r, t('errors.proposalPreview'));
   },
-  approveInvoiceProposal: async (id) => {
-    const r = await apiFetch(`${API_BASE}/invoice-proposals/${id}/approve`, { method: 'POST' });
+  approveInvoiceProposal: async (id, overrideReason) => {
+    const r = await apiFetch(`${API_BASE}/invoice-proposals/${id}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrideReason ? { override_reason: overrideReason } : {})
+    });
     return proposalJson(r, t('errors.proposalPost'));
   },
   postInvoiceProposal: async (id, data) => {

@@ -1,7 +1,12 @@
 import { describe, test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
-import { createMemoryDatabase } from './db.js';
+import os from 'node:os';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { createMemoryDatabase, applySchema } from './db.js';
+import { SqliteAdapter } from './sqliteAdapter.js';
 import { createApp } from './app.js';
 import { loadDbConfig } from './dbConfig.js';
 import { withCookie } from './testSession.js';
@@ -10,6 +15,13 @@ import {
   normalizeExtraction,
   setInvoiceOcrProviderForTests
 } from './invoiceOcr.js';
+import { ocrCallLimits } from './invoiceOcrGateway.js';
+import {
+  approveInvoiceProposal,
+  rejectInvoiceProposal,
+  sessionProposalActor,
+  uploadInvoiceProposal
+} from './invoiceProposalsService.js';
 import { isLowConfidence } from '../../shared/invoiceConfidence.js';
 
 function withServer(app, fn) {
@@ -154,6 +166,8 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
     setInvoiceOcrProviderForTests(null);
     delete process.env.INVOICE_PDF_MAX_BYTES;
     delete process.env.INVOICE_PROPOSAL_SOD;
+    delete process.env.INVOICE_PROPOSAL_UPLOADS_PER_MINUTE;
+    delete process.env.INVOICE_OCR_TIMEOUT_MS;
     delete process.env.INVOICE_OCR_PROVIDER;
     delete process.env.INVOICE_OCR_MODEL;
   });
@@ -170,7 +184,23 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
     assert.equal(mapped.currency.value, 'EUR');
     assert.equal(mapped.currency.confidence, 0.5);
     assert.equal(mapped.invoice_date.value, null);
-    assert.equal(mapped.net_cents.value, null);
+      assert.equal(mapped.net_cents.value, null);
+    const unsafe = normalizeExtraction({
+      net_cents: { value: 1e20, confidence: 0.99 },
+      vat_cents: { value: -5, confidence: 0.99 },
+      gross_cents: { value: 149800, confidence: 0.9 }
+    });
+    assert.equal(unsafe.net_cents.value, null);
+    assert.equal(unsafe.net_cents.confidence, 0);
+    assert.equal(unsafe.vat_cents.value, null);
+    assert.equal(unsafe.gross_cents.value, 149800);
+  });
+
+  test('ocr limits default to 20s and one retry', () => {
+    assert.deepEqual(ocrCallLimits({}), { timeoutMs: 20000, maxRetries: 1 });
+    assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: '5000' }).timeoutMs, 5000);
+    assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: '10' }).timeoutMs, 20000);
+    assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: 'nope' }).timeoutMs, 20000);
   });
 
   test('fake provider maps fields, highlights low confidence, and previews a match', async () => {
@@ -231,8 +261,8 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
       assert.equal(invoice.invoice_number, 'INV-2001');
       assert.equal(invoice.status, 'matched');
       assert.equal(invoice.match_status, 'perfect_match');
-      const hooks = await db.prepare(`SELECT event_type FROM webhook_outbox`).all();
-      assert.deepEqual(hooks.map((row) => row.event_type), []);
+      const hooks = await db.prepare(`SELECT event_type FROM webhook_outbox ORDER BY id`).all();
+      assert.deepEqual(hooks.map((row) => row.event_type), ['invoice.created', 'invoice_proposal.posted']);
       const posted = await db.prepare(`
         SELECT action FROM compliance_audit_events
         WHERE entity_type = 'invoice_proposal' AND action = 'INVOICE_PROPOSAL_POSTED' AND entity_id = ?
@@ -453,4 +483,204 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
       assert.equal(approved.status, 201, JSON.stringify(approved.body));
     });
   });
+
+  test('PDF bytes stay off the proposal row and a non-ASCII name round-trips', async () => {
+    installFake();
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const created = await upload(base, 5, extraction({ invoice_number: { value: 'INV-NAME', confidence: 0.95 } }), {
+        'Content-Disposition': "attachment; filename*=UTF-8''factuur-caf%C3%A9.pdf"
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      assert.equal(created.body.proposal.filename, 'factuur-café.pdf');
+      assert.equal(JSON.stringify(created.body).includes('%PDF-'), false);
+      assert.throws(() => db.prepare('SELECT pdf_bytes FROM invoice_proposals').get());
+      const stored = await db.prepare(
+        'SELECT pdf_bytes FROM invoice_proposal_files WHERE proposal_id = ?'
+      ).get(created.body.proposal.id);
+      assert.equal(Buffer.from(stored.pdf_bytes).subarray(0, 5).toString('ascii'), '%PDF-');
+      const list = await json(await fetch(`${base}/api/invoice-proposals?limit=1&offset=0`, withCookie(5)));
+      assert.equal(list.status, 200);
+      assert.equal(list.body.limit, 1);
+      assert.equal(list.body.offset, 0);
+      assert.equal(list.body.proposals.length, 1);
+      assert.equal(JSON.stringify(list.body).includes('%PDF-'), false);
+      const pdf = await fetch(`${base}/api/invoice-proposals/${created.body.proposal.id}/pdf`, withCookie(5));
+      assert.match(pdf.headers.get('content-disposition'), /filename\*=UTF-8''factuur-caf%C3%A9\.pdf/);
+    });
+  });
+
+  test('a guessed vendor is not bound and needs a choice', async () => {
+    installFake();
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const created = await upload(base, 5, extraction({
+        vendor_name: { value: 'TechSupply', confidence: 0.92 },
+        invoice_number: { value: 'INV-GUESS', confidence: 0.95 }
+      }));
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const proposal = created.body.proposal;
+      assert.equal(proposal.vendor_match.status, 'suggested');
+      assert.equal(proposal.working.supplier_id, null);
+      assert.equal(proposal.preview.ready, false);
+      assert.ok(proposal.preview.blockers.includes('vendor_unmatched'));
+      assert.ok(proposal.low_confidence_fields.includes('supplier_id'));
+    });
+  });
+
+  test('totals that do not reconcile block post until an audited reason is given', async () => {
+    installFake();
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const created = await upload(base, 4, extraction({
+        invoice_number: { value: 'INV-TOTALS', confidence: 0.95 },
+        net_cents: { value: 100, confidence: 0.9 },
+        vat_cents: { value: 0, confidence: 0.9 },
+        gross_cents: { value: 100, confidence: 0.9 }
+      }));
+      const id = created.body.proposal.id;
+      assert.ok(created.body.proposal.preview.blockers.includes('lines_net_mismatch'));
+      const blocked = await json(await fetch(`${base}/api/invoice-proposals/${id}/approve`, withCookie(5, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      })));
+      assert.equal(blocked.status, 400);
+      assert.equal(blocked.body.code, 'proposal_not_ready');
+      const posted = await json(await fetch(`${base}/api/invoice-proposals/${id}/approve`, withCookie(5, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override_reason: 'Papieren factuur telt korting buiten de regels' })
+      })));
+      assert.equal(posted.status, 201, JSON.stringify(posted.body));
+      const audit = await db.prepare(`
+        SELECT details FROM compliance_audit_events
+        WHERE entity_type = 'invoice_proposal' AND action = 'INVOICE_PROPOSAL_POSTED' AND entity_id = ?
+      `).get(id);
+      assert.equal(JSON.parse(audit.details).totals_override, 'Papieren factuur telt korting buiten de regels');
+    });
+  });
+
+  test('the person who created the uploading API key cannot approve', async () => {
+    installFake();
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const key = await issueKey(base, ['invoices:write']);
+      const pdf = pdfOf(extraction({ invoice_number: { value: 'INV-SOD-KEY', confidence: 0.96 } }));
+      const created = await json(await fetch(`${base}/api/integrations/invoice-proposals`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key.key}`,
+          'Content-Type': 'application/pdf',
+          'X-Filename': 'scan.pdf',
+          'Idempotency-Key': 'sod-key-1'
+        },
+        body: pdf
+      }));
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const id = created.body.proposal.id;
+      const creator = await json(await fetch(`${base}/api/invoice-proposals/${id}/approve`, withCookie(5, {
+        method: 'POST'
+      })));
+      assert.equal(creator.status, 403);
+      assert.equal(creator.body.code, 'sod_violation');
+      const other = await json(await fetch(`${base}/api/invoice-proposals/${id}/approve`, withCookie(4, {
+        method: 'POST'
+      })));
+      assert.equal(other.status, 201, JSON.stringify(other.body));
+    });
+  });
+
+  test('UI uploads are limited per user per minute', async () => {
+    installFake();
+    process.env.INVOICE_PROPOSAL_UPLOADS_PER_MINUTE = '1';
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const first = await upload(base, 4, extraction({ invoice_number: { value: 'INV-RATE-1', confidence: 0.95 } }));
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      const second = await upload(base, 4, extraction({ invoice_number: { value: 'INV-RATE-2', confidence: 0.95 } }));
+      assert.equal(second.status, 429);
+      assert.equal(second.body.code, 'rate_limited');
+    });
+  });
+
+  test('approve versus approve, and approve versus reject, change the row once', async () => {
+    installFake();
+    const file = path.join(os.tmpdir(), `pf-proposal-race-${Date.now()}-${Math.random().toString(16).slice(2)}.db`);
+    const left = await openProposalFile(file);
+    const right = await openProposalFile(file);
+    try {
+      await seedProposalFile(left);
+      const david = sessionProposalActor({ id: 4, name: 'David Miller', role: 'finance' });
+      const elena = sessionProposalActor({ id: 5, name: 'Elena Rostova', role: 'admin' });
+      const first = await uploadInvoiceProposal(left, {
+        pdf: pdfOf(extraction({ invoice_number: { value: 'INV-RACE-A', confidence: 0.95 } })),
+        filename: 'factuur.pdf',
+        actor: david
+      });
+      const doubled = await Promise.allSettled([
+        approveInvoiceProposal(left, first.id, elena),
+        approveInvoiceProposal(right, first.id, elena)
+      ]);
+      assert.equal(doubled.filter((row) => row.status === 'fulfilled').length, 1);
+      const lost = doubled.find((row) => row.status === 'rejected');
+      assert.equal(lost.reason.code, 'proposal_not_open');
+      assert.equal(Number(left.prepare('SELECT COUNT(*) AS n FROM invoices').get().n), 1);
+
+      const second = await uploadInvoiceProposal(left, {
+        pdf: pdfOf(extraction({ invoice_number: { value: 'INV-RACE-B', confidence: 0.95 } })),
+        filename: 'factuur.pdf',
+        actor: david
+      });
+      const mixed = await Promise.allSettled([
+        approveInvoiceProposal(left, second.id, elena),
+        rejectInvoiceProposal(right, second.id, elena, 'Dubbel ontvangen')
+      ]);
+      assert.equal(mixed.filter((row) => row.status === 'fulfilled').length, 1);
+      const other = mixed.find((row) => row.status === 'rejected');
+      assert.equal(other.reason.code, 'proposal_not_open');
+      const row = left.prepare('SELECT status, posted_invoice_id FROM invoice_proposals WHERE id = ?').get(second.id);
+      const invoices = Number(left.prepare('SELECT COUNT(*) AS n FROM invoices').get().n);
+      if (row.status === 'posted') {
+        assert.ok(row.posted_invoice_id);
+        assert.equal(invoices, 2);
+      } else {
+        assert.equal(row.status, 'rejected');
+        assert.equal(invoices, 1);
+      }
+    } finally {
+      try { left.close(); } catch { /* closed */ }
+      try { right.close(); } catch { /* closed */ }
+      fs.rmSync(file, { force: true });
+      for (const suffix of ['-wal', '-shm']) fs.rmSync(file + suffix, { force: true });
+    }
+  });
 });
+
+async function openProposalFile(file) {
+  const raw = new Database(file, { timeout: 8000 });
+  raw.pragma('journal_mode = WAL');
+  raw.pragma('busy_timeout = 8000');
+  const db = new SqliteAdapter(raw);
+  await applySchema(db);
+  return db;
+}
+
+async function seedProposalFile(db) {
+  await db.exec(`
+    INSERT INTO departments (id, code, name) VALUES (1, 'ADM', 'Finance');
+    INSERT INTO users (id, name, email, role, department_id, status) VALUES
+      (4, 'David Miller', 'david@example.com', 'finance', 1, 'active'),
+      (5, 'Elena Rostova', 'elena@example.com', 'admin', 1, 'active');
+    INSERT INTO suppliers (id, name, code, status) VALUES
+      (1, 'TechSupply Global', 'SUP-TSG', 'active');
+    INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
+      VALUES (1, 2026, 50000000, 0, 0);
+  `);
+  await insertPo(db);
+}

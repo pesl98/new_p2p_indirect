@@ -335,7 +335,7 @@ A perfect match is **201** with `invoice.status` `matched` and `invoice.match_st
 
 Finance and admin upload one or more supplier-invoice PDFs in **Financiële inbox**. Recognition does not post an invoice. It stores a proposal. The reviewer sees the PDF next to the fields, with low-confidence fields highlighted, plus a preview of the 3-way match and the duplicate check. **Goedkeuren en boeken** posts through the same pipeline as a screen invoice. **Bewerk en boek** keeps the OCR values and the edited values. **Afwijzen** needs a reason, keeps the PDF, and posts nothing.
 
-The original PDF stays in this customer’s database. It is not a public URL. Download is `GET /api/invoice-proposals/:id/pdf` and requires a finance or admin session.
+The original PDF stays in `invoice_proposal_files` in this customer’s database. List and detail queries do not read those bytes. It is not a public URL. Download is `GET /api/invoice-proposals/:id/pdf` and requires a finance or admin session. A guessed vendor or PO is highlighted and is not chosen until someone confirms it. Posting writes `invoice.created` and `invoice_proposal.posted`. Rejecting writes `invoice_proposal.rejected`. The uploader, and the user who created the uploading API key, cannot post while `INVOICE_PROPOSAL_SOD` is on (the default). `off` is for a single-person tenant.
 
 `POST /api/integrations/invoice-proposals` accepts one raw `application/pdf` body with scope `invoices:write`, the same API key, rate limit, and `Idempotency-Key` as the JSON invoice route. The key is the uploader. A person still approves in the inbox.
 

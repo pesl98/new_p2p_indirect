@@ -17,7 +17,7 @@ import {
   upsertCatalogItem,
   upsertVendor
 } from '../integrationConnectors.js';
-import { pdfUploadMiddleware, safePdfFilename, sha256Pdf } from '../invoicePdf.js';
+import { filenameFromRequest, pdfUploadMiddleware, sha256Pdf } from '../invoicePdf.js';
 import {
   compileInvoiceProposal,
   integrationProposalActor,
@@ -160,7 +160,7 @@ router.post('/invoices', requireMachine('invoices:write'), async (req, res) => {
 
 router.post('/invoice-proposals', requireMachine('invoices:write'), pdfUploadMiddleware, async (req, res) => {
   try {
-    const filename = safePdfFilename(req.headers['x-filename']);
+    const filename = filenameFromRequest(req.headers);
     const fingerprint = {
       pdf_sha256: sha256Pdf(req.body),
       filename,

@@ -27,8 +27,38 @@ export function sha256Pdf(buffer) {
 
 export function safePdfFilename(name) {
   const base = String(name || 'invoice.pdf').split(/[/\\]/).pop() || 'invoice.pdf';
-  const cleaned = base.replace(/[^\w.\- ()]/g, '_').replace(/^\.+/, '').slice(0, 180);
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/["\\]/g, '_')
+    .replace(/^\.+/, '')
+    .slice(0, 180);
   return cleaned || 'invoice.pdf';
+}
+
+/** RFC 5987 filename* plus an ASCII fallback for the download response. */
+export function contentDispositionInline(filename) {
+  const safe = safePdfFilename(filename);
+  const ascii = safe.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '') || 'invoice.pdf';
+  return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
+}
+
+function decodeStar(value) {
+  const text = String(value || '').trim().replace(/^"(.*)"$/, '$1');
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Prefer RFC 5987 filename* so a non-ASCII PDF name survives the header. */
+export function filenameFromRequest(headers = {}) {
+  const disposition = String(headers['content-disposition'] || '');
+  const star = /filename\*\s*=\s*(?:UTF-8''|utf-8'')?([^;]+)/i.exec(disposition);
+  if (star) return safePdfFilename(decodeStar(star[1]));
+  const plain = /filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;]+)/i.exec(disposition);
+  if (plain) return safePdfFilename(plain[1] || plain[2]);
+  return safePdfFilename(headers['x-filename']);
 }
 
 function tooLarge(res, limit) {

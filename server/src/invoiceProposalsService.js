@@ -25,7 +25,10 @@ export class InvoiceProposalError extends Error {
   }
 }
 
-/** Default enforce. Only the exact value `off` lets the uploader post their own proposal. */
+/**
+ * Default enforce. Only the exact value `off` disables the check.
+ * `off` is for a single-person tenant, where the same user uploads and posts.
+ */
 export function invoiceProposalSodEnforced(env = process.env) {
   return String(env.INVOICE_PROPOSAL_SOD ?? 'enforce').trim().toLowerCase() !== 'off';
 }
@@ -203,7 +206,49 @@ function inboundBody(proposalId, working) {
   return body;
 }
 
-export async function previewProposal(db, proposalId, working) {
+const TOTALS_BLOCKERS = new Set(['lines_net_mismatch', 'gross_mismatch']);
+
+function totalsBlockers(working) {
+  const blockers = [];
+  const lines = Array.isArray(working?.lines) ? working.lines : [];
+  let lineNet = 0;
+  let linesOk = lines.length > 0;
+  for (const line of lines) {
+    const qty = Number(line?.quantity);
+    const price = Number(line?.unit_price_cents);
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isSafeInteger(price) || price < 0) {
+      linesOk = false;
+      break;
+    }
+    const total = qty * price;
+    if (!Number.isSafeInteger(total)) {
+      linesOk = false;
+      break;
+    }
+    lineNet += total;
+  }
+  if (!linesOk || (working?.net_cents != null && Number(working.net_cents) !== lineNet)) {
+    blockers.push('lines_net_mismatch');
+  }
+  const net = Number(working?.net_cents);
+  const vat = working?.vat_cents == null || working?.vat_cents === '' ? 0 : Number(working.vat_cents);
+  const gross = working?.gross_cents == null || working?.gross_cents === '' ? null : Number(working.gross_cents);
+  if (gross != null && Number.isSafeInteger(net) && Number.isSafeInteger(vat) && net + vat !== gross) {
+    blockers.push('gross_mismatch');
+  }
+  return blockers;
+}
+
+function withTotalsOverride(blockers, overrideReason) {
+  const reason = String(overrideReason || '').trim();
+  if (!blockers.length) return { ready: true, blockers, override: null };
+  if (reason.length > 0 && reason.length <= 500 && blockers.every((code) => TOTALS_BLOCKERS.has(code))) {
+    return { ready: true, blockers, override: reason };
+  }
+  return { ready: false, blockers, override: null };
+}
+
+export async function previewProposal(db, proposalId, working, { overrideReason = '' } = {}) {
   const blockers = [];
   if (!working?.supplier_id) blockers.push('vendor_unmatched');
   if (!working?.po_id) blockers.push('po_unmatched');
@@ -232,9 +277,11 @@ export async function previewProposal(db, proposalId, working) {
       dryRun: true
     });
     const gross = working.gross_cents == null ? null : Number(working.gross_cents);
+    const totals = withTotalsOverride(totalsBlockers(working), overrideReason);
     return {
-      ready: true,
-      blockers: [],
+      ready: totals.ready,
+      blockers: totals.blockers,
+      totals_override: totals.override,
       match: {
         match_status: dry.matchOutcome.overallMatchStatus,
         status: dry.matchOutcome.invoiceStatus
@@ -332,11 +379,26 @@ function workingFromExtraction(extraction, vendor, po, lines) {
   };
 }
 
+function unboundGuess(match, idKey) {
+  if (match.status === 'exact') return match;
+  return { ...match, [idKey]: null };
+}
+
 async function resolveExtraction(db, extraction) {
-  let vendor = await matchVendor(db, extraction.vendor_name.value);
-  const po = await matchPurchaseOrder(db, extraction.po_number.value, vendor.supplier_id);
-  if (!vendor.supplier_id && po.supplier_id && po.status === 'exact') {
-    vendor = { ...vendor, supplier_id: po.supplier_id, status: 'from_po' };
+  const vendorMatch = await matchVendor(db, extraction.vendor_name.value);
+  const vendorForPo = vendorMatch.status === 'exact' ? vendorMatch.supplier_id : null;
+  const poMatch = await matchPurchaseOrder(db, extraction.po_number.value, vendorForPo);
+  let vendor = unboundGuess(vendorMatch, 'supplier_id');
+  const po = unboundGuess(poMatch, 'po_id');
+  if (vendor.status === 'unmatched' && po.status === 'exact' && po.supplier_id) {
+    const supplier = await db.prepare(
+      `SELECT id, name, code FROM suppliers WHERE id = ?`
+    ).get(po.supplier_id);
+    vendor = {
+      status: 'from_po',
+      supplier_id: null,
+      suggestions: supplier ? [pubSupplier(supplier)] : vendor.suggestions
+    };
   }
   const lines = await mapLines(db, extraction.lines, po.po_id);
   const working = workingFromExtraction(extraction, vendor, po, lines);
@@ -395,6 +457,11 @@ async function presentRow(db, row, { livePreview = false } = {}) {
   const preview = livePreview && row.status === 'proposed'
     ? await previewProposal(db, row.id, working)
     : parseJson(row.preview_json, { ready: false, blockers: [] });
+  const vendorMatch = parseJson(row.vendor_match_json, {});
+  const poMatch = parseJson(row.po_match_json, {});
+  const low = lowConfidenceFieldNames(ocr);
+  if (['suggested', 'from_po', 'ambiguous'].includes(vendorMatch.status)) low.push('supplier_id');
+  if (['suggested', 'ambiguous'].includes(poMatch.status)) low.push('po_id');
   const fields = {};
   for (const name of [...TEXT_FIELDS, ...MONEY_FIELDS]) {
     fields[name] = presentScored(ocr[name]);
@@ -418,11 +485,11 @@ async function presentRow(db, row, { livePreview = false } = {}) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     fields,
-    low_confidence_fields: lowConfidenceFieldNames(ocr),
+    low_confidence_fields: low,
     baseline,
     working,
-    vendor_match: parseJson(row.vendor_match_json, {}),
-    po_match: parseJson(row.po_match_json, {}),
+    vendor_match: vendorMatch,
+    po_match: poMatch,
     preview,
     posted_invoice_id: row.posted_invoice_id == null ? null : Number(row.posted_invoice_id),
     rejected_reason: row.rejected_reason,
@@ -486,18 +553,17 @@ async function storeInvoiceProposal(db, draft, actor, now) {
   const id = await db.transaction(async () => {
     const inserted = await db.prepare(`
       INSERT INTO invoice_proposals (
-        status, pdf_filename, pdf_sha256, pdf_size, pdf_bytes, ocr_json, baseline_json,
+        status, pdf_filename, pdf_sha256, pdf_size, ocr_json, baseline_json,
         working_json, vendor_match_json, po_match_json, preview_json,
         uploaded_by_user_id, uploaded_by_name, uploaded_by_role, api_key_id, source,
         created_at, updated_at
       ) VALUES (
-        'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       draft.filename,
       draft.digest,
       draft.pdf.length,
-      draft.pdf,
       JSON.stringify(draft.extraction),
       JSON.stringify(draft.resolved.working),
       JSON.stringify(draft.resolved.working),
@@ -513,6 +579,9 @@ async function storeInvoiceProposal(db, draft, actor, now) {
       stamp
     );
     const proposalId = Number(inserted.lastInsertRowid);
+    await db.prepare(`
+      INSERT INTO invoice_proposal_files (proposal_id, pdf_bytes) VALUES (?, ?)
+    `).run(proposalId, draft.pdf);
     const actorDetails = {
       filename: draft.filename,
       sha256: draft.digest,
@@ -538,22 +607,53 @@ async function storeInvoiceProposal(db, draft, actor, now) {
   return presentRow(db, await loadRow(db, id), { livePreview: true });
 }
 
+function uploadLimitPerMinute(env = process.env) {
+  const raw = Number(env.INVOICE_PROPOSAL_UPLOADS_PER_MINUTE);
+  if (Number.isInteger(raw) && raw >= 1 && raw <= 600) return raw;
+  return 10;
+}
+
+async function assertUiUploadRate(db, actor, now) {
+  if (actor?.source !== 'ui' || actor.userId == null) return;
+  const since = utcTimestamp(new Date(now.getTime() - 60_000));
+  const row = await db.prepare(`
+    SELECT COUNT(*) AS n FROM invoice_proposals
+    WHERE uploaded_by_user_id = ? AND created_at >= ?
+  `).get(actor.userId, since);
+  if (Number(row?.n || 0) >= uploadLimitPerMinute()) {
+    throw new InvoiceProposalError('Too many invoice uploads. Try again in a minute.', 429, 'rate_limited');
+  }
+}
+
 export async function uploadInvoiceProposal(db, { pdf, filename, actor, now = new Date(), draft = null } = {}) {
+  await assertUiUploadRate(db, actor, now);
   const compiled = draft || await compileInvoiceProposal(db, { pdf, filename });
   return storeInvoiceProposal(db, compiled, actor, now);
 }
 
-export async function listInvoiceProposals(db, { status = 'proposed' } = {}) {
+function pageBounds(limit, offset) {
+  const cap = Number(limit);
+  const skip = Number(offset);
+  return {
+    limit: Number.isInteger(cap) && cap >= 1 && cap <= 100 ? cap : 50,
+    offset: Number.isInteger(skip) && skip >= 0 ? skip : 0
+  };
+}
+
+export async function listInvoiceProposals(db, { status = 'proposed', limit, offset } = {}) {
   const allowed = new Set(['proposed', 'posted', 'rejected', 'all']);
   const filter = allowed.has(status) ? status : 'proposed';
+  const page = pageBounds(limit, offset);
   const rows = filter === 'all'
-    ? await db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM invoice_proposals ORDER BY id DESC`).all()
+    ? await db.prepare(
+      `SELECT ${PROPOSAL_COLUMNS} FROM invoice_proposals ORDER BY id DESC LIMIT ? OFFSET ?`
+    ).all(page.limit, page.offset)
     : await db.prepare(
-      `SELECT ${PROPOSAL_COLUMNS} FROM invoice_proposals WHERE status = ? ORDER BY id DESC`
-    ).all(filter);
+      `SELECT ${PROPOSAL_COLUMNS} FROM invoice_proposals WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?`
+    ).all(filter, page.limit, page.offset);
   const proposals = [];
-  for (const row of rows) proposals.push(await presentRow(db, row, { livePreview: filter === 'proposed' }));
-  return proposals;
+  for (const row of rows) proposals.push(await presentRow(db, row, { livePreview: false }));
+  return { proposals, limit: page.limit, offset: page.offset };
 }
 
 export async function getInvoiceProposal(db, rawId) {
@@ -563,9 +663,12 @@ export async function getInvoiceProposal(db, rawId) {
 
 export async function readProposalPdf(db, rawId) {
   const id = requireProposalId(rawId);
-  const row = await db.prepare(
-    `SELECT pdf_bytes, pdf_filename FROM invoice_proposals WHERE id = ?`
-  ).get(id);
+  const row = await db.prepare(`
+    SELECT f.pdf_bytes, p.pdf_filename
+    FROM invoice_proposal_files f
+    JOIN invoice_proposals p ON p.id = f.proposal_id
+    WHERE f.proposal_id = ?
+  `).get(id);
   if (!row) throw new InvoiceProposalError('Invoice proposal not found', 404, 'proposal_not_found');
   const bytes = Buffer.isBuffer(row.pdf_bytes) ? row.pdf_bytes : Buffer.from(row.pdf_bytes);
   return { bytes, filename: safePdfFilename(row.pdf_filename) };
@@ -603,19 +706,30 @@ export async function listProposalOptions(db) {
   };
 }
 
-function assertCanDecide(row, actor) {
+function sodError(message) {
+  return new InvoiceProposalError(message, 403, 'sod_violation');
+}
+
+async function assertCanDecide(db, row, actor) {
   if (row.status !== 'proposed') {
     throw new InvoiceProposalError('This proposal is already closed', 409, 'proposal_not_open');
   }
   if (!invoiceProposalSodEnforced()) return;
-  if (row.uploaded_by_user_id == null) return;
-  if (Number(row.uploaded_by_user_id) === Number(actor.userId)) {
-    throw new InvoiceProposalError(
-      'The uploader cannot post this proposal. Another finance user must approve it.',
-      403,
-      'sod_violation'
-    );
+  if (row.uploaded_by_user_id != null && Number(row.uploaded_by_user_id) === Number(actor.userId)) {
+    throw sodError('The uploader cannot post this proposal. Another finance user must approve it.');
   }
+  if (row.api_key_id != null) {
+    const key = await db.prepare(
+      `SELECT created_by_user_id FROM api_keys WHERE id = ?`
+    ).get(row.api_key_id);
+    if (key && Number(key.created_by_user_id) === Number(actor.userId)) {
+      throw sodError('The person who created the uploading API key cannot post this proposal.');
+    }
+  }
+}
+
+function closedProposal() {
+  return new InvoiceProposalError('This proposal is already closed', 409, 'proposal_not_open');
 }
 
 function isUniqueConstraint(error) {
@@ -624,12 +738,50 @@ function isUniqueConstraint(error) {
     || /UNIQUE constraint failed/i.test(error.message || '');
 }
 
-async function postWorking(db, rawId, actor, working, { edited, now }) {
+function isSnapshotConflict(error) {
+  const code = String(error?.code || '');
+  return code === 'SQLITE_BUSY_SNAPSHOT'
+    || code === 'SQLITE_BUSY'
+    || /SQLITE_BUSY/i.test(String(error?.message || ''));
+}
+
+function proposalTransaction(db) {
+  return typeof db.immediateTransaction === 'function'
+    ? db.immediateTransaction.bind(db)
+    : db.transaction.bind(db);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Retry a lost write lock. Local SQLite returns SQLITE_BUSY at once so this
+ * process can finish the writer that already holds the lock.
+ */
+async function runProposalWrite(fn) {
+  let last;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      last = error;
+      if (!isSnapshotConflict(error) || attempt === 7) throw error;
+      await wait(25);
+    }
+  }
+  throw last;
+}
+
+async function postWorking(db, rawId, actor, working, { edited, now, overrideReason = '' }) {
   const id = requireProposalId(rawId);
-  const outcome = await db.transaction(async () => {
+  const nested = Boolean(db.inTransaction?.());
+  const outcome = await runProposalWrite(() => proposalTransaction(db)(async () => {
     const row = await loadRow(db, id);
-    assertCanDecide(row, actor);
-    const preview = await previewProposal(db, id, working);
+    await assertCanDecide(db, row, actor);
+    const preview = await previewProposal(db, id, working, { overrideReason });
     if (!preview.ready) {
       throw new InvoiceProposalError(
         'The proposal is not ready to post',
@@ -643,6 +795,13 @@ async function postWorking(db, rawId, actor, working, { edited, now }) {
     if (diffs.length) {
       await audit(db, actor, 'INVOICE_PROPOSAL_EDITED', id, { diffs }, now);
     }
+    const stamp = utcTimestamp(now);
+    const claimed = await db.prepare(`
+      UPDATE invoice_proposals
+      SET status = 'posted', working_json = ?, updated_at = ?
+      WHERE id = ? AND status = 'proposed'
+    `).run(JSON.stringify(working), stamp, id);
+    if (!claimed.changes) throw closedProposal();
     const prepared = await prepareInboundInvoice(db, inboundBody(id, working));
     let created;
     try {
@@ -663,13 +822,12 @@ async function postWorking(db, rawId, actor, working, { edited, now }) {
       }
       throw error;
     }
-    const stamp = utcTimestamp(now);
     await db.prepare(`
       UPDATE invoice_proposals
-      SET status = 'posted', working_json = ?, preview_json = ?, posted_invoice_id = ?, updated_at = ?
-      WHERE id = ?
-    `).run(JSON.stringify(working), JSON.stringify(preview), created.invoiceId, stamp, id);
-    await audit(db, actor, 'INVOICE_PROPOSAL_POSTED', id, {
+      SET preview_json = ?, posted_invoice_id = ?, updated_at = ?
+      WHERE id = ? AND status = 'posted'
+    `).run(JSON.stringify(preview), created.invoiceId, stamp, id);
+    const postedDetails = {
       invoice_id: Number(created.invoiceId),
       match_status: created.matchOutcome.overallMatchStatus,
       status: created.matchOutcome.invoiceStatus,
@@ -677,7 +835,27 @@ async function postWorking(db, rawId, actor, working, { edited, now }) {
       exception_queued: created.exception.queued,
       api_key_id: row.api_key_id == null ? null : Number(row.api_key_id),
       source: row.source
-    }, now);
+    };
+    if (preview.totals_override) postedDetails.totals_override = preview.totals_override;
+    await audit(db, actor, 'INVOICE_PROPOSAL_POSTED', id, postedDetails, now);
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.INVOICE_PROPOSAL_POSTED,
+      entityType: 'invoice_proposal',
+      entityId: id,
+      data: withDeploymentCurrency({
+        proposal_id: id,
+        status: 'posted',
+        invoice_id: Number(created.invoiceId),
+        invoice_number: working.invoice_number,
+        supplier_id: working.supplier_id,
+        po_id: working.po_id,
+        extracted_currency: working.currency,
+        source: row.source,
+        match_status: created.matchOutcome.overallMatchStatus,
+        totals_override: preview.totals_override || null
+      }),
+      now
+    });
     return {
       invoiceId: Number(created.invoiceId),
       match_status: created.matchOutcome.overallMatchStatus,
@@ -685,19 +863,28 @@ async function postWorking(db, rawId, actor, working, { edited, now }) {
       duplicate_status: created.duplicate_status,
       exception: created.exception
     };
-  })();
+  })());
+  if (!nested) kickWebhookDispatch(db);
   const proposal = await getInvoiceProposal(db, id);
   return { proposal, invoice: outcome };
 }
 
-export async function approveInvoiceProposal(db, rawId, actor, now = new Date()) {
+export async function approveInvoiceProposal(db, rawId, actor, now = new Date(), overrideReason = '') {
   const row = await loadRow(db, requireProposalId(rawId));
-  return postWorking(db, row.id, actor, parseJson(row.working_json, {}), { edited: false, now });
+  return postWorking(db, row.id, actor, parseJson(row.working_json, {}), {
+    edited: false,
+    now,
+    overrideReason
+  });
 }
 
 export async function editAndPostInvoiceProposal(db, rawId, actor, body, now = new Date()) {
   const working = parseWorkingCopy(body);
-  return postWorking(db, rawId, actor, working, { edited: true, now });
+  return postWorking(db, rawId, actor, working, {
+    edited: true,
+    now,
+    overrideReason: body?.override_reason ?? ''
+  });
 }
 
 export async function rejectInvoiceProposal(db, rawId, actor, reason, now = new Date()) {
@@ -706,17 +893,16 @@ export async function rejectInvoiceProposal(db, rawId, actor, reason, now = new 
     throw new InvoiceProposalError('A rejection reason is required', 400, 'rejection_reason_required');
   }
   const id = requireProposalId(rawId);
-  await db.transaction(async () => {
+  const nested = Boolean(db.inTransaction?.());
+  await runProposalWrite(() => proposalTransaction(db)(async () => {
     const row = await loadRow(db, id);
-    if (row.status !== 'proposed') {
-      throw new InvoiceProposalError('This proposal is already closed', 409, 'proposal_not_open');
-    }
     const stamp = utcTimestamp(now);
-    await db.prepare(`
+    const updated = await db.prepare(`
       UPDATE invoice_proposals
       SET status = 'rejected', rejected_reason = ?, rejected_by_user_id = ?, updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND status = 'proposed'
     `).run(text, actor.userId ?? null, stamp, id);
+    if (!updated.changes) throw closedProposal();
     await audit(db, actor, 'INVOICE_PROPOSAL_REJECTED', id, { reason: text }, now);
     const working = parseJson(row.working_json, {});
     await enqueueWebhook(db, {
@@ -735,8 +921,8 @@ export async function rejectInvoiceProposal(db, rawId, actor, reason, now = new 
       }),
       now
     });
-  })();
-  kickWebhookDispatch(db);
+  })());
+  if (!nested) kickWebhookDispatch(db);
   return getInvoiceProposal(db, id);
 }
 

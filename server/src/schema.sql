@@ -874,15 +874,14 @@ CREATE INDEX IF NOT EXISTS webhook_outbox_pending
   ON webhook_outbox (status, next_attempt_at);
 
 -- Sprint 7b. One row per uploaded supplier-invoice PDF. The bytes live in
--- this customer database (not a public URL). OCR fills the proposal; a
--- person posts it later through the same invoice pipeline as the UI.
+-- invoice_proposal_files so list and detail queries never read the blob.
+-- Only the session download route selects that table.
 CREATE TABLE IF NOT EXISTS invoice_proposals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'posted', 'rejected')),
   pdf_filename TEXT NOT NULL,
   pdf_sha256 TEXT NOT NULL,
   pdf_size INTEGER NOT NULL,
-  pdf_bytes BLOB NOT NULL,
   ocr_json TEXT NOT NULL,
   baseline_json TEXT NOT NULL,
   working_json TEXT NOT NULL,
@@ -906,4 +905,10 @@ CREATE TABLE IF NOT EXISTS invoice_proposals (
 
 CREATE INDEX IF NOT EXISTS invoice_proposals_status
   ON invoice_proposals (status, id);
+
+CREATE TABLE IF NOT EXISTS invoice_proposal_files (
+  proposal_id INTEGER PRIMARY KEY,
+  pdf_bytes BLOB NOT NULL,
+  FOREIGN KEY (proposal_id) REFERENCES invoice_proposals(id)
+);
 

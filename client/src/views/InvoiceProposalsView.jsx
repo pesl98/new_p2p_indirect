@@ -95,6 +95,7 @@ export default function InvoiceProposalsView({ onDataChanged }) {
   const [savedDraft, setSavedDraft] = useState('');
   const [preview, setPreview] = useState(null);
   const [reason, setReason] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -138,6 +139,7 @@ export default function InvoiceProposalsView({ onDataChanged }) {
     setSavedDraft(JSON.stringify(next));
     setPreview(selected.preview || null);
     setReason('');
+    setOverrideReason('');
   }, [selectedId, selected?.updated_at]);
 
   function lineHighlight(index, key) {
@@ -180,7 +182,10 @@ export default function InvoiceProposalsView({ onDataChanged }) {
     setBusy(true);
     setError('');
     try {
-      const result = await api.previewInvoiceProposal(selected.id, payloadFrom(draft));
+      const result = await api.previewInvoiceProposal(selected.id, {
+        ...payloadFrom(draft),
+        override_reason: overrideReason.trim() || undefined
+      });
       setPreview(result.preview);
     } catch (err) {
       setError(presentError(err));
@@ -194,9 +199,13 @@ export default function InvoiceProposalsView({ onDataChanged }) {
     setBusy(true);
     setError('');
     try {
+      const reasonText = overrideReason.trim();
       const result = dirty
-        ? await api.postInvoiceProposal(selected.id, payloadFrom(draft))
-        : await api.approveInvoiceProposal(selected.id);
+        ? await api.postInvoiceProposal(selected.id, {
+          ...payloadFrom(draft),
+          override_reason: reasonText || undefined
+        })
+        : await api.approveInvoiceProposal(selected.id, reasonText);
       setNotice(t('payables.inbox.posted', {
         invoice: result.invoice?.invoiceId ?? result.proposal?.posted_invoice_id
       }));
@@ -230,6 +239,11 @@ export default function InvoiceProposalsView({ onDataChanged }) {
 
   const poItems = options.po_items.filter((item) => String(item.po_id) === String(draft.po_id));
   const inputClass = 'w-full rounded-lg border px-2 py-1.5 text-sm text-slate-900';
+  const supplierGuess = ['suggested', 'from_po', 'ambiguous'].includes(selected?.vendor_match?.status);
+  const poGuess = ['suggested', 'ambiguous'].includes(selected?.po_match?.status);
+  const blockers = preview?.blockers || [];
+  const totalsOnly = blockers.length > 0 && blockers.every((code) => code === 'lines_net_mismatch' || code === 'gross_mismatch');
+  const needsOverride = totalsOnly && !overrideReason.trim();
 
   return (
     <div className="p-6 space-y-4" data-testid="finance-inbox">
@@ -309,8 +323,8 @@ export default function InvoiceProposalsView({ onDataChanged }) {
                 <Field label={t('payables.inbox.vendor')} highlight={isLowConfidence(selected.fields?.vendor_name?.confidence)}>
                   <input data-low-confidence={isLowConfidence(selected.fields?.vendor_name?.confidence) ? 'true' : 'false'} className={`${inputClass} ${fieldClass(isLowConfidence(selected.fields?.vendor_name?.confidence))}`} value={draft.vendor_name} disabled={!open} onChange={(e) => setDraft({ ...draft, vendor_name: e.target.value })} />
                 </Field>
-                <Field label={t('payables.inbox.supplier')} highlight={false}>
-                  <select className={inputClass} value={draft.supplier_id} disabled={!open} onChange={(e) => setDraft({ ...draft, supplier_id: e.target.value })}>
+                <Field label={t('payables.inbox.supplier')} highlight={supplierGuess}>
+                  <select data-low-confidence={supplierGuess ? 'true' : 'false'} className={`${inputClass} ${fieldClass(supplierGuess)}`} value={draft.supplier_id} disabled={!open} onChange={(e) => setDraft({ ...draft, supplier_id: e.target.value })}>
                     <option value="">{t('payables.inbox.choose')}</option>
                     {options.suppliers.map((row) => (
                       <option key={row.id} value={row.id}>{row.name}</option>
@@ -323,8 +337,8 @@ export default function InvoiceProposalsView({ onDataChanged }) {
                 <Field label={t('payables.inbox.poNumber')} highlight={isLowConfidence(selected.fields?.po_number?.confidence)}>
                   <input className={`${inputClass} ${fieldClass(isLowConfidence(selected.fields?.po_number?.confidence))}`} value={draft.po_number} disabled={!open} onChange={(e) => setDraft({ ...draft, po_number: e.target.value })} />
                 </Field>
-                <Field label={t('payables.inbox.po')} highlight={false}>
-                  <select className={inputClass} value={draft.po_id} disabled={!open} onChange={(e) => setDraft({ ...draft, po_id: e.target.value })}>
+                <Field label={t('payables.inbox.po')} highlight={poGuess}>
+                  <select data-low-confidence={poGuess ? 'true' : 'false'} className={`${inputClass} ${fieldClass(poGuess)}`} value={draft.po_id} disabled={!open} onChange={(e) => setDraft({ ...draft, po_id: e.target.value })}>
                     <option value="">{t('payables.inbox.choose')}</option>
                     {options.purchase_orders.map((row) => (
                       <option key={row.id} value={row.id}>{row.po_number}</option>
@@ -390,13 +404,25 @@ export default function InvoiceProposalsView({ onDataChanged }) {
                 ) : null}
               </div>
 
+              {open && totalsOnly ? (
+                <label className="block text-xs text-amber-900">
+                  <span className="block mb-1">{t('payables.inbox.overrideReason')}</span>
+                  <input
+                    data-testid="proposal-override-reason"
+                    className="w-full rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-sm text-slate-900"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                  />
+                </label>
+              ) : null}
+
               {open ? (
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy} onClick={refreshPreview} className="px-3 py-2 text-xs rounded-lg border border-slate-300 bg-white">{t('payables.inbox.refreshPreview')}</button>
-                  <button type="button" disabled={busy || dirty} onClick={onApprove} className="inline-flex items-center gap-1 px-3 py-2 text-xs rounded-lg bg-emerald-600 text-white disabled:opacity-40">
+                  <button type="button" disabled={busy || dirty || needsOverride} onClick={onApprove} className="inline-flex items-center gap-1 px-3 py-2 text-xs rounded-lg bg-emerald-600 text-white disabled:opacity-40">
                     <Check className="w-3.5 h-3.5" /> {t('payables.inbox.approve')}
                   </button>
-                  <button type="button" disabled={busy || !dirty} onClick={onApprove} className="px-3 py-2 text-xs rounded-lg bg-slate-900 text-white disabled:opacity-40">{t('payables.inbox.editPost')}</button>
+                  <button type="button" disabled={busy || !dirty || needsOverride} onClick={onApprove} className="px-3 py-2 text-xs rounded-lg bg-slate-900 text-white disabled:opacity-40">{t('payables.inbox.editPost')}</button>
                   <input className="flex-1 min-w-[12rem] rounded-lg border border-slate-200 px-2 py-1.5 text-sm" placeholder={t('payables.inbox.reason')} value={reason} onChange={(e) => setReason(e.target.value)} />
                   <button type="button" disabled={busy} onClick={onReject} className="inline-flex items-center gap-1 px-3 py-2 text-xs rounded-lg border border-rose-300 text-rose-800 bg-white">
                     <X className="w-3.5 h-3.5" /> {t('payables.inbox.reject')}

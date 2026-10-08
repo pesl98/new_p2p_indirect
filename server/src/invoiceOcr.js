@@ -58,7 +58,7 @@ function asCentsField(raw) {
     return { value: null, confidence: clampConfidence(raw.confidence) };
   }
   const n = Number(raw.value);
-  if (!Number.isInteger(n)) return { value: null, confidence: 0 };
+  if (!Number.isSafeInteger(n) || n < 0) return { value: null, confidence: 0 };
   return { value: n, confidence: clampConfidence(raw.confidence) };
 }
 
