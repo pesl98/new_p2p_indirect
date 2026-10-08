@@ -313,6 +313,24 @@ Vercel runs `npm run build`, deploys `api/index.js` as one Node Function (`inclu
 
 Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-YYYY-NNN`) use the **max numeric suffix** for the year, not `COUNT(*)+1`. Invoice numbers are unique per supplier (`UNIQUE(supplier_id, invoice_number)`).
 
+### Inbound supplier invoices
+
+`POST /api/integrations/invoices` with `Authorization: Bearer pfk_…` and scope `invoices:write`. The key is the actor. A `pf_session` cookie is not accepted. The body posts a supplier invoice against an issued PO. Amounts are integer cents. `currency` must be the deployment currency (default `EUR`). The call uses the same match, duplicate check, and exception workbench as the invoice screen.
+
+```json
+{
+  "external_id": "TSG-INV-1001",
+  "invoice_number": "INV-1001",
+  "po_id": 12,
+  "supplier_id": 3,
+  "currency": "EUR",
+  "invoice_date": "2026-09-04",
+  "lines": [{ "po_item_id": 44, "quantity_invoiced": 2, "unit_price": 74900 }]
+}
+```
+
+A perfect match is **201** with `invoice.status` `matched` and `invoice.match_status` `perfect_match`. The same transaction enqueues `invoice.created`. The same `external_id` and the same payload again is **200** (`unchanged: true`). A different payload is **409** `invoice_immutable`. Field rules and the error-code table are in [docs/SYSTEM_MANUAL.md §5.14](docs/SYSTEM_MANUAL.md#514-integrations) and [docs/DEPLOY_MANUAL.md §8.8](docs/DEPLOY_MANUAL.md#88-integrations). UBL/Peppol and OCR/PDF are follow-ups (OCR is Sprint 7b).
+
 Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 
 ---

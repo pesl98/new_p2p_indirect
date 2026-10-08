@@ -739,7 +739,7 @@ Because the rows cannot be edited or deleted, a manual `DELETE FROM audit_logs` 
 
 ### 8.8 Integrations
 
-`npm run db:migrate`, or the next process start, creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox`. You do not run extra SQL. API keys are rows in this customer’s database. The webhook URL and signing secret are environment variables on this deployment. They are not in the database, and the CLIs do not set them.
+`npm run db:migrate`, or the next process start, creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_invoice_links`, `integration_idempotency`, and `webhook_outbox` with `CREATE TABLE IF NOT EXISTS`. You do not run extra SQL. `integration_entity_links` is not rebuilt and is not dropped. Invoice external ids are only in `integration_invoice_links`. API keys are rows in this customer’s database. The webhook URL and signing secret are environment variables on this deployment. They are not in the database, and the CLIs do not set them.
 
 **Issue a key**
 
@@ -748,7 +748,7 @@ Because the rows cannot be edited or deleted, a manual `DELETE FROM audit_logs` 
 3. The response includes `key` (`pfk_…`) once. Copy it into the password manager. `GET /api/integrations/keys` returns the prefix, scopes, expiry, last used, and rate limit. It does not return the key or the hash.
 4. Revoke with **Revoke** or `POST /api/integrations/keys/:id/revoke`. Create and revoke append `API_KEY_CREATED` and `API_KEY_REVOKED` to `compliance_audit_events` under the admin’s name. The hash stays in `api_keys`. The row is not deleted.
 
-Scopes are `vendors:write`, `catalog:write`, and `export:read`. The default limit is 60 requests in a minute. Over the limit is **429**.
+Scopes are `vendors:write`, `catalog:write`, `export:read`, and `invoices:write`. The default limit is 60 requests in a minute. Over the limit is **429**.
 
 **What the ERP calls**
 
@@ -756,12 +756,80 @@ Scopes are `vendors:write`, `catalog:write`, and `export:read`. The default limi
 | --- | --- |
 | `POST /api/integrations/vendors` | `vendors:write` |
 | `POST /api/integrations/catalog` | `catalog:write` |
+| `POST /api/integrations/invoices` | `invoices:write` |
 | `GET /api/integrations/exports/invoices` | `export:read` |
 | `GET /api/integrations/exports/payment-runs` | `export:read` |
 
-Header: `Authorization: Bearer pfk_…`. A `pf_session` cookie does not authorize these four routes. The key does not authorize the rest of `/api` (those still require the cookie, and a missing cookie is **401**). The key’s name is the audit actor. Do not send `user_id` or `actor_name`. That body is **400**.
+Header: `Authorization: Bearer pfk_…`. A `pf_session` cookie does not authorize these routes. The key does not authorize the rest of `/api` (those still require the cookie, and a missing cookie is **401**). The key’s name is the audit actor. Do not send `user_id` or `actor_name`. That body is **400**.
 
 Vendor and catalog bodies are keyed by `external_id`. Sending the same id again updates that row. `Idempotency-Key` replays the first success. Catalog `unit_price` is integer cents. Preferred vendor is `preferred_supplier_external_id` (upsert the vendor first).
+
+**Inbound supplier invoice** (`invoices:write`)
+
+`POST /api/integrations/invoices` posts a supplier invoice against an issued PO. It runs the same create as the invoice screen: 3-way match (1% price tolerance), the duplicate check, and `variance_flagged` on the exception workbench. Amounts are integer cents. `currency` must be this deployment’s currency (default `EUR`).
+
+`external_id` is create-once (the supplier’s invoice id for that vendor). The same id and the same business payload returns **200** with `created: false` and `unchanged: true` and does not write again. A different payload is **409** `invoice_immutable`. A matched, variance, approved, paid, or rejected invoice is not updated. `Idempotency-Key` still replays the first success; the same key with a different body is **409** `idempotency_conflict`.
+
+```json
+{
+  "external_id": "TSG-INV-1001",
+  "invoice_number": "INV-1001",
+  "po_id": 12,
+  "supplier_id": 3,
+  "currency": "EUR",
+  "invoice_date": "2026-09-04",
+  "due_date": "2026-10-04",
+  "tax_amount": 0,
+  "lines": [
+    { "po_item_id": 44, "quantity_invoiced": 2, "unit_price": 74900 }
+  ]
+}
+```
+
+`po_number` may be sent instead of `po_id`. `supplier_external_id` may be sent instead of `supplier_id` after the vendor upsert. Omitted `due_date` is `invoice_date` plus 30 days. Omitted line `description` is the PO line text. A perfect match responds **201**:
+
+```json
+{
+  "external_id": "TSG-INV-1001",
+  "created": true,
+  "unchanged": false,
+  "invoice": {
+    "id": 18,
+    "invoice_number": "INV-1001",
+    "po_id": 12,
+    "status": "matched",
+    "match_status": "perfect_match",
+    "duplicate_status": "clear",
+    "exception_queued": false,
+    "currency": "EUR",
+    "subtotal_cents": 149800,
+    "tax_cents": 0,
+    "total_cents": 149800
+  }
+}
+```
+
+Price or quantity outside tolerance sets `status` to `variance_flagged`, `exception_queued` to true, and the invoice shows on the existing exception workbench. A likely duplicate sets `duplicate_status` to `suspect` and still creates the invoice. Create enqueues `invoice.created` in the same transaction. It does not emit `invoice.approved`. That webhook is written when AP approves, in that same transaction, for an API invoice and a UI invoice.
+
+| Code | HTTP | When |
+| --- | --- | --- |
+| `api_key_required` / `api_key_invalid` | 401 | Missing or bad key. A cookie is not a key. |
+| `api_key_scope` | 403 | Key lacks `invoices:write`. |
+| `rate_limited` | 429 | Over the key’s minute window. |
+| `actor_rejected` | 400 | Body names a user or actor. |
+| `currency_required` | 400 | `currency` is missing. |
+| `currency_mismatch` | 400 | `currency` is not the deployment currency. The message does not echo the supplied value. |
+| `po_not_found` | 404 | Unknown `po_id` or `po_number`, or the two name different orders. |
+| `po_not_issued` | 400 | PO is `draft`, `closed`, or `cancelled`. |
+| `vendor_required`, `vendor_not_linked` | 400 | Supplier missing, or `supplier_external_id` is not linked. |
+| `vendor_mismatch` | 400 | Supplier is not the PO vendor. |
+| `po_line_mismatch` | 400 | `po_item_id` is not on that PO. |
+| `invalid_amount` | 400 | Not a safe integer number of cents, `unit_price` is not greater than 0, or `tax_amount` is negative. |
+| `duplicate_invoice_number` | 409 | That supplier already has this invoice number. Nothing else is written. |
+| `invoice_immutable` | 409 | Same `external_id`, different payload. |
+| `idempotency_conflict` | 409 | Same `Idempotency-Key`, different body. |
+
+UBL/Peppol conversion and OCR/PDF intake are not this route. OCR proposals are Sprint 7b and will call the same create function. The full field list is [SYSTEM_MANUAL.md §5.14](SYSTEM_MANUAL.md#514-integrations).
 
 **Configure webhooks**
 
@@ -773,7 +841,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Put the hex in `WEBHOOK_SIGNING_SECRET`. Put the receiver’s `https` URL in `WEBHOOK_TARGET_URL`. Redeploy. Do not commit either value. `GET /api/integrations/config` with the admin cookie returns `webhook_target_configured`, `webhook_signing_secret_configured`, and `webhook_target_host`. It does not return the secret or the URL.
 
-Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
+Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.created`, `invoice.approved`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.created`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `invoice.created` is written when a supplier invoice is posted from the screen or from this route. `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
 
 The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id. The dispatcher, retry schedule, and drain are unchanged.
 

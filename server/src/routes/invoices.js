@@ -138,7 +138,9 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create vendor invoice and execute automated 3-Way Match
+// Create vendor invoice and execute automated 3-Way Match.
+// createVendorInvoice delegates to createSupplierInvoice — the same function
+// POST /api/integrations/invoices uses.
 router.post('/', async (req, res) => {
   try {
     const db = req.db;

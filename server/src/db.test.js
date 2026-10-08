@@ -1,6 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import Database from 'better-sqlite3';
 import { SqliteAdapter } from './sqliteAdapter.js';
 import {
@@ -584,5 +586,143 @@ describe('Turso/SQLite schema migrations', () => {
       db.prepare(`SELECT approver_user_id FROM departments WHERE id = 2`).get().approver_user_id,
       null
     );
+  });
+
+  test('applySchema adds invoice links without dropping supplier external ids', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+    db.exec(`
+      CREATE TABLE integration_entity_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
+        external_id TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(entity_type, external_id)
+      );
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+        VALUES ('supplier', 'ERP-V-1', 4, '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z');
+    `);
+
+    const issued = [];
+    const originalExec = db.exec.bind(db);
+    db.exec = (sql) => {
+      const text = String(sql);
+      issued.push(text);
+      assert.equal(/DROP\s+TABLE\s+(IF\s+EXISTS\s+)?integration_entity_links\b/i.test(text), false);
+      return originalExec(sql);
+    };
+
+    await applySchema(db);
+
+    const kept = db.prepare(`
+      SELECT entity_type, external_id, entity_id FROM integration_entity_links WHERE external_id = 'ERP-V-1'
+    `).get();
+    assert.equal(kept.entity_type, 'supplier');
+    assert.equal(kept.entity_id, 4);
+    const invoiceInsert = db.prepare(`
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+      VALUES ('invoice', 'TSG-INV-1', 9, '2026-10-08T00:00:00.000Z', '2026-10-08T00:00:00.000Z')
+    `);
+    assert.throws(() => invoiceInsert.run());
+    db.prepare(`
+      INSERT INTO integration_invoice_links (external_id, invoice_id, created_at, updated_at)
+      VALUES ('TSG-INV-1', 9, '2026-10-08T00:00:00.000Z', '2026-10-08T00:00:00.000Z')
+    `).run();
+    const invoice = db.prepare(`
+      SELECT invoice_id FROM integration_invoice_links WHERE external_id = 'TSG-INV-1'
+    `).get();
+    assert.equal(invoice.invoice_id, 9);
+    assert.equal(issued.some((sql) => /DROP\s+TABLE\s+integration_entity_links\b/i.test(sql)), false);
+  });
+
+  test('a failed statement that does not stop the batch still keeps supplier links', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+    db.exec(`
+      CREATE TABLE integration_entity_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
+        external_id TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(entity_type, external_id)
+      );
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+        VALUES ('supplier', 'ERP-V-1', 4, '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z');
+    `);
+
+    const { splitSqlScript } = await import('./tursoHttp.js');
+    const originalExec = db.exec.bind(db);
+    let failedCreate = false;
+    db.exec = (sql) => {
+      const statements = splitSqlScript(String(sql));
+      if (statements.length <= 1) return originalExec(sql);
+      for (const statement of statements) {
+        if (!failedCreate && /CREATE TABLE IF NOT EXISTS integration_invoice_links/i.test(statement)) {
+          failedCreate = true;
+          continue;
+        }
+        try {
+          originalExec(statement);
+        } catch {
+          // Turso pipeline: a failed statement does not stop the rest of the batch.
+        }
+      }
+    };
+
+    await applySchema(db);
+
+    const kept = db.prepare(`
+      SELECT entity_id FROM integration_entity_links WHERE external_id = 'ERP-V-1'
+    `).get();
+    assert.equal(kept.entity_id, 4);
+    assert.equal(failedCreate, true);
+    const created = db.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'integration_invoice_links'
+    `).get();
+    assert.equal(created, undefined);
+  });
+
+  test('two boots at once keep the supplier external id', async () => {
+    const file = path.join(os.tmpdir(), `pf-links-${Date.now()}-${Math.random().toString(16).slice(2)}.db`);
+    const first = new Database(file);
+    first.pragma('journal_mode = WAL');
+    first.exec(`
+      CREATE TABLE integration_entity_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
+        external_id TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(entity_type, external_id)
+      );
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+        VALUES ('supplier', 'ERP-V-1', 4, '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z');
+    `);
+    first.close();
+
+    const left = new SqliteAdapter(new Database(file));
+    const right = new SqliteAdapter(new Database(file));
+    left.raw.pragma('journal_mode = WAL');
+    right.raw.pragma('busy_timeout = 5000');
+    left.raw.pragma('busy_timeout = 5000');
+    const results = await Promise.allSettled([applySchema(left), applySchema(right)]);
+    assert.ok(results.some((result) => result.status === 'fulfilled'));
+    const kept = left.prepare(`
+      SELECT entity_id FROM integration_entity_links WHERE external_id = 'ERP-V-1'
+    `).get();
+    assert.equal(kept.entity_id, 4);
+    const count = left.prepare(`SELECT COUNT(*) AS n FROM integration_entity_links`).get();
+    assert.equal(Number(count.n), 1);
+    left.raw.close();
+    right.raw.close();
+    fs.rmSync(file, { force: true });
+    for (const suffix of ['-wal', '-shm']) fs.rmSync(file + suffix, { force: true });
   });
 });

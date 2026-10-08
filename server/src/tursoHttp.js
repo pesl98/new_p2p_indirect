@@ -295,6 +295,10 @@ export class TursoHttpClient {
     return true;
   }
 
+  inTransaction() {
+    return this._inTransaction > 0;
+  }
+
   _headers() {
     return {
       Authorization: `Bearer ${this._token}`,

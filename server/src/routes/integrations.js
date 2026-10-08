@@ -12,6 +12,7 @@ import {
   exportInvoices,
   exportPaymentRuns,
   runIdempotent,
+  postInboundInvoice,
   upsertCatalogItem,
   upsertVendor
 } from '../integrationConnectors.js';
@@ -28,6 +29,8 @@ function sendError(res, error) {
   if (status >= 500) console.error(error);
   const body = { error: error.message || 'Integration request failed' };
   if (error.code) body.code = error.code;
+  if (error.invoice_id != null) body.invoice_id = Number(error.invoice_id);
+  if (error.invoice_status) body.status = error.invoice_status;
   if (error.retryAfterSeconds) {
     res.set('Retry-After', String(error.retryAfterSeconds));
     body.retry_after_seconds = error.retryAfterSeconds;
@@ -140,6 +143,14 @@ router.post('/catalog', requireMachine('catalog:write'), async (req, res) => {
   }
 });
 
+router.post('/invoices', requireMachine('invoices:write'), async (req, res) => {
+  try {
+    await sendIdempotent(req, res, () => postInboundInvoice(req.db, req.body || {}, req.integrationKey));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.get('/exports/invoices', requireMachine('export:read'), async (req, res) => {
   try {
     const exported = await exportInvoices(req.db, req.integrationKey, req);
@@ -174,6 +185,7 @@ function methodNotAllowed(req, res) {
 
 router.all('/vendors', requireMachine('vendors:write'), methodNotAllowed);
 router.all('/catalog', requireMachine('catalog:write'), methodNotAllowed);
+router.all('/invoices', requireMachine('invoices:write'), methodNotAllowed);
 router.all('/exports/invoices', requireMachine('export:read'), methodNotAllowed);
 router.all('/exports/payment-runs', requireMachine('export:read'), methodNotAllowed);
 

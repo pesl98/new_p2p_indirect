@@ -30,6 +30,9 @@ describe('money helpers', () => {
     assert.throws(() => requireIntegerCents('1498.00', 'payable_total_cents'), /integer number of cents/);
     assert.throws(() => requireIntegerCents(undefined, 'payable_total_cents'), /required/);
     assert.throws(() => requireIntegerCents(true, 'payable_total_cents'), /integer number of cents/);
+    assert.throws(() => requireIntegerCents(1e20, 'unit_price'), /integer number of cents/);
+    assert.throws(() => requireIntegerCents('1' + '0'.repeat(20), 'unit_price'), /integer number of cents/);
+    assert.equal(requireIntegerCents(0, 'tax_amount'), 0);
   });
 
   test('change-order increase confirm threshold reuses the 1,000 tier-2 constant', () => {

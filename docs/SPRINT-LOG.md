@@ -68,6 +68,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
 | 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
+| 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -281,3 +282,39 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 - **Notices.** Success banners and match findings the server still writes in English are translated on display by `presentNotice`. Unmapped text becomes a Dutch fallback. The stored sentence is not rewritten.
 - **Amounts.** `parseMajorAmount` / `toCents` on the client: comma is the decimal separator, dot is thousands (`1.295,50` → 129550 cents). A single dot with one or two fractional digits still parses (`749.00`) so a paste does not become zero. `1.295` is one thousand two hundred ninety-five. Empty or invalid text is 0, as before. `formatMajorInput` shows `1.295,50` in the field. Quantity, meter, and capacity inputs are not money and stay as they were. Server `toCents` and `shared/currency.js` are unchanged.
 - **Left alone.** SSO, session auth, the append-only ledger, integration routes, `CURRENCY`, webhook drain, and the Sprint 5 icon follow-ups.
+
+## Sprint 7a — Inbound supplier invoices API
+
+**Date:** 2026-10-08
+
+**Goal:** Let an ERP, e-invoicing hub, or scanning service post a supplier invoice with a scoped API key, through the same match, duplicate, and exception pipeline as an invoice entered on screen.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/53 (#53). Draft. Do not merge until Architect dual-ACK and Peter OK.
+
+**Merge SHA:**
+
+**Status:** in progress.
+
+Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprint 7b (PDF upload, OCR proposals, finance inbox) is a separate draft and is not in this PR.
+
+### Done when
+
+- A key can include `invoices:write`. `POST /api/integrations/invoices` requires `Authorization: Bearer pfk_…`, ignores `pf_session`, and uses the Sprint 4 scope check, per-key rate limit, and `Idempotency-Key` replay.
+- The invoice is created by `createSupplierInvoice`. The UI route still goes through `createVendorInvoice`, which calls that function. Match tolerance, duplicate soft-hold, and `variance_flagged` on the exception workbench are the existing ones.
+- The PO exists and is issued (open statuses `issued`, `acknowledged`, `partially_received`, `received`). The vendor is the PO vendor. Lines are PO lines. Amounts are integer cents. `currency` equals the deployment currency or the call is rejected. A failed call does not leave a partial invoice.
+- `external_id` is create-once. The same payload is a no-op. A different payload does not rewrite a matched, variance, approved, paid, or rejected invoice.
+- Each API create appends `INTEGRATION_INVOICE_CREATED` on `compliance_audit_events` with the key name, role `integration`, null user id, and the key id in `details`. The same transaction enqueues `invoice.created`. `invoice.approved` is emitted only when AP approves, the same as the UI path.
+- Administration → Integrations offers `invoices:write` with a Dutch label. The scope token stays English.
+- Docs and this section describe the route, the example, the error codes, and the follow-ups (UBL/Peppol, OCR/PDF as Sprint 7b). `npm test` is green.
+
+### Decisions
+
+- **Same pipeline.** `createSupplierInvoice({ header, lines, actor, source, dryRun })` is the only create. `source` is `ui` or `integration`. `dryRun: true` runs the match and the duplicate check and writes nothing, so Sprint 7b can preview an OCR proposal without a second matcher. A real create runs that match once, inside the write transaction, not once as a preview and again while saving. There is no preview HTTP route in this PR.
+- **Create-once external id.** Vendor and catalog upserts update the linked row. An invoice does not. After the first success, the same `external_id` plus the same business payload returns **200** (`created: false`, `unchanged: true`) and does not append another compliance event. Any difference returns **409** `invoice_immutable`. Statuses that must not be rewritten include `matched`, `variance_flagged`, `approved_for_payment`, `paid`, and `rejected`. A second `external_id` that reuses `(supplier_id, invoice_number)` is **409** `duplicate_invoice_number` and rolls back.
+- **Issued PO.** Invoicing happens after receipt, so `partially_received` and `received` count as issued and open. `draft`, `closed`, and `cancelled` are `po_not_issued`.
+- **Currency and amounts.** `currency` is required and must equal `CURRENCY` (default `EUR`, allowlist unchanged). No conversion. A missing code is `currency_required`. A wrong code is `currency_mismatch`, and the error text names the deployment currency only — it does not echo the caller’s value. Money is a safe integer number of cents (`Number.isSafeInteger`). `unit_price` must be greater than 0. `tax_amount` may be 0 and must not be negative. `1e20` is `invalid_amount`. `po_not_found` is always **404**, including when `po_id` and `po_number` name different orders.
+- **Actor.** Sprint 4 convention: key name, role `integration`, null user id, `api_key_id` inside `details`. The matcher row stays `System 3-Way Matcher` and the duplicate row stays `System Duplicate Detector`, so the UI audit shape does not change. A body user or actor id is **400** `actor_rejected`.
+- **Webhooks.** Create enqueues `invoice.created` in the same transaction as the invoice, for a UI post and an API post. `invoice.approved` is still written only in the approve transaction. `postInboundInvoice` opens that transaction itself; the route’s idempotency wrapper is not what makes the invoice and the external-id link atomic.
+- **UI copy.** The scope checkbox shows the English token and a Dutch label (`Inkomende facturen schrijven`). Other scopes on that form got Dutch labels too. The API value is unchanged.
+- **Existing databases.** Invoice external ids go in `integration_invoice_links` (`CREATE TABLE IF NOT EXISTS`). `integration_entity_links` stays supplier and catalog only. There is no table rebuild and no `DROP`. A failed statement on Turso does not stop the rest of a batch, so a rebuild that dropped the old table could erase supplier and catalog links if two instances booted together or the copy failed.
+- **Left alone.** SSO, `pf_session`, the ledger triggers, webhook drain, UBL/Peppol, and OCR/PDF. Those last two are follow-ups. OCR/PDF is Sprint 7b, built on `createSupplierInvoice`.

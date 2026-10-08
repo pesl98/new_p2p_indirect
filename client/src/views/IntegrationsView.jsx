@@ -3,7 +3,14 @@ import { KeyRound, Plus, RefreshCw, RotateCcw } from 'lucide-react';
 import { api } from '../api';
 import { presentError, statusLabel, t } from '../i18n';
 
-const SCOPES = ['vendors:write', 'catalog:write', 'export:read'];
+const SCOPES = ['vendors:write', 'catalog:write', 'export:read', 'invoices:write'];
+
+const SCOPE_LABEL_KEYS = {
+  'vendors:write': 'admin.integrations.scope.vendorsWrite',
+  'catalog:write': 'admin.integrations.scope.catalogWrite',
+  'export:read': 'admin.integrations.scope.exportRead',
+  'invoices:write': 'admin.integrations.scope.invoicesWrite'
+};
 
 function emptyForm() {
   return {
@@ -220,6 +227,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
                 onChange={() => toggleScope(scope)}
               />
               <span className="font-mono">{scope}</span>
+              <span className="text-slate-500">{t(SCOPE_LABEL_KEYS[scope])}</span>
             </label>
           ))}
         </div>

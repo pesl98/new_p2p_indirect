@@ -40,6 +40,7 @@ export const EXPECTED_TABLES = [
   'goods_receipts',
   'integration_entity_links',
   'integration_idempotency',
+  'integration_invoice_links',
   'invoice_duplicate_flags',
   'invoice_exception_dispositions',
   'invoice_items',

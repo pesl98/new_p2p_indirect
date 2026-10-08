@@ -20,6 +20,12 @@ import { requireIntegerCents } from './money.js';
 import { deploymentCurrency } from './currencyConfig.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { invoicePayableCents } from './invoiceExceptionsService.js';
+import { MEASURED_SCALE, parseMeasuredMilli } from './measuredQty.js';
+import {
+  createSupplierInvoice,
+  normalizeSupplierInvoiceLines
+} from './invoicesService.js';
+import { kickWebhookDispatch } from './webhookOutbox.js';
 
 export const CATALOG_CATEGORIES = Object.freeze([
   'IT Hardware',
@@ -121,6 +127,19 @@ async function saveLink(db, entityType, externalId, entityId, nowIso) {
     INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(entityType, externalId, entityId, nowIso, nowIso);
+}
+
+async function findInvoiceLink(db, externalId) {
+  return db.prepare(`
+    SELECT * FROM integration_invoice_links WHERE external_id = ?
+  `).get(externalId);
+}
+
+async function saveInvoiceLink(db, externalId, invoiceId, nowIso) {
+  await db.prepare(`
+    INSERT INTO integration_invoice_links (external_id, invoice_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+  `).run(externalId, invoiceId, nowIso, nowIso);
 }
 
 async function writeIntegrationAudit(db, principal, { action, entityType, entityId, details, now }) {
@@ -426,6 +445,445 @@ export async function upsertCatalogItem(db, body, key, now = new Date()) {
   });
 }
 
+/**
+ * PO statuses that mean the order was issued and is still open for an invoice.
+ * `received` and `partially_received` are the normal 3-way case (goods already in).
+ * Draft, closed, and cancelled are not.
+ */
+const INVOICEABLE_PO_STATUSES = new Set([
+  'issued',
+  'acknowledged',
+  'partially_received',
+  'received'
+]);
+
+function requireInboundCents(value, field) {
+  try {
+    return requireIntegerCents(value, field);
+  } catch (error) {
+    throw new IntegrationError(error.message, 400, 'invalid_amount');
+  }
+}
+
+function assertInboundCurrency(value) {
+  const expected = deploymentCurrency();
+  if (value == null || String(value).trim() === '') {
+    throw new IntegrationError(
+      `currency is required and must be ${expected}`,
+      400,
+      'currency_required'
+    );
+  }
+  const code = String(value).trim().toUpperCase();
+  if (code !== expected) {
+    throw new IntegrationError(
+      `currency must be ${expected}. This deployment does not convert currencies.`,
+      400,
+      'currency_mismatch'
+    );
+  }
+  return code;
+}
+
+function requireYmd(value, field) {
+  const text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw new IntegrationError(`${field} must be YYYY-MM-DD`, 400, 'invalid_date');
+  }
+  const [year, month, day] = text.split('-').map(Number);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) {
+    throw new IntegrationError(`${field} must be YYYY-MM-DD`, 400, 'invalid_date');
+  }
+  return text;
+}
+
+function addUtcDays(ymd, days) {
+  const [year, month, day] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function requireInvoiceNumber(value) {
+  const invoiceNumber = String(value || '').trim();
+  if (!invoiceNumber || invoiceNumber.length > 80 || /[\u0000-\u001f]/.test(invoiceNumber)) {
+    throw new IntegrationError('invoice_number is required (1-80 characters)', 400, 'invalid_invoice_number');
+  }
+  return invoiceNumber;
+}
+
+async function resolveInboundPurchaseOrder(db, body) {
+  const hasId = body.po_id != null && body.po_id !== '';
+  const hasNumber = body.po_number != null && String(body.po_number).trim() !== '';
+  if (!hasId && !hasNumber) {
+    throw new IntegrationError('po_id or po_number is required', 400, 'po_required');
+  }
+  let po = null;
+  if (hasId) {
+    const id = Number(body.po_id);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new IntegrationError('Purchase order not found', 404, 'po_not_found');
+    }
+    po = await db.prepare(`SELECT * FROM purchase_orders WHERE id = ?`).get(id);
+    if (!po) throw new IntegrationError('Purchase order not found', 404, 'po_not_found');
+  }
+  if (hasNumber) {
+    const byNumber = await db.prepare(`SELECT * FROM purchase_orders WHERE po_number = ?`).get(String(body.po_number).trim());
+    if (!byNumber) throw new IntegrationError('Purchase order not found', 404, 'po_not_found');
+    if (po && Number(po.id) !== Number(byNumber.id)) {
+      throw new IntegrationError('po_id does not match po_number', 404, 'po_not_found');
+    }
+    po = byNumber;
+  }
+  if (!INVOICEABLE_PO_STATUSES.has(po.status)) {
+    throw new IntegrationError(
+      `Purchase order ${po.po_number} is ${po.status}. Supplier invoices are accepted on an issued PO (issued, acknowledged, partially_received, or received).`,
+      400,
+      'po_not_issued'
+    );
+  }
+  return po;
+}
+
+async function resolveInboundSupplier(db, body, po) {
+  const hasId = body.supplier_id != null && body.supplier_id !== '';
+  const hasExternal = body.supplier_external_id != null && String(body.supplier_external_id).trim() !== '';
+  if (!hasId && !hasExternal) {
+    throw new IntegrationError(
+      'supplier_id or supplier_external_id is required',
+      400,
+      'vendor_required'
+    );
+  }
+  let supplierId = null;
+  if (hasId) {
+    const id = Number(body.supplier_id);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new IntegrationError('Vendor does not match the purchase order', 400, 'vendor_mismatch');
+    }
+    const row = await db.prepare(`SELECT id FROM suppliers WHERE id = ?`).get(id);
+    if (!row) throw new IntegrationError('Vendor does not match the purchase order', 400, 'vendor_mismatch');
+    supplierId = id;
+  }
+  if (hasExternal) {
+    const externalId = requireExternalId(body.supplier_external_id);
+    const link = await findLink(db, 'supplier', externalId);
+    if (!link) {
+      throw new IntegrationError(
+        'supplier_external_id is not linked. Upsert the vendor first.',
+        400,
+        'vendor_not_linked'
+      );
+    }
+    if (supplierId != null && supplierId !== Number(link.entity_id)) {
+      throw new IntegrationError('supplier_id does not match supplier_external_id', 400, 'vendor_mismatch');
+    }
+    supplierId = Number(link.entity_id);
+  }
+  if (supplierId !== Number(po.supplier_id)) {
+    throw new IntegrationError('Vendor does not match the purchase order', 400, 'vendor_mismatch');
+  }
+  return supplierId;
+}
+
+async function normalizeInboundLines(db, poId, lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    throw new IntegrationError('lines must contain at least one PO line', 400, 'invalid_lines');
+  }
+  const seen = new Set();
+  const normalized = [];
+  for (const line of lines) {
+    const id = Number(line?.po_item_id);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new IntegrationError('Each line requires a po_item_id on this purchase order', 400, 'po_line_mismatch');
+    }
+    if (seen.has(id)) {
+      throw new IntegrationError(`po_item_id ${id} is repeated`, 400, 'po_line_mismatch');
+    }
+    seen.add(id);
+    const row = await db.prepare(`
+      SELECT id, po_id, item_description, quantity_scale FROM po_items WHERE id = ?
+    `).get(id);
+    if (!row || Number(row.po_id) !== Number(poId)) {
+      throw new IntegrationError(
+        `Line po_item_id ${id} is not on this purchase order`,
+        400,
+        'po_line_mismatch'
+      );
+    }
+    const unitPrice = requireInboundCents(line.unit_price, 'unit_price');
+    if (unitPrice <= 0) {
+      throw new IntegrationError('unit_price must be greater than 0', 400, 'invalid_amount');
+    }
+    const measured = Number(row.quantity_scale) === MEASURED_SCALE;
+    if (measured) {
+      try {
+        parseMeasuredMilli(line.quantity_invoiced, 'quantity_invoiced');
+      } catch (error) {
+        throw new IntegrationError(error.message, error.statusCode || 400, 'invalid_quantity');
+      }
+    } else {
+      const qty = line.quantity_invoiced;
+      const text = typeof qty === 'number' ? String(qty) : String(qty ?? '').trim();
+      if (!/^[1-9]\d*$/.test(text)) {
+        throw new IntegrationError(
+          'quantity_invoiced must be a positive integer',
+          400,
+          'invalid_quantity'
+        );
+      }
+    }
+    const description = line.description == null || String(line.description).trim() === ''
+      ? String(row.item_description)
+      : optionalText(line.description, 'description', 2000);
+    normalized.push({
+      po_item_id: id,
+      description,
+      quantity_invoiced: line.quantity_invoiced,
+      unit_price: unitPrice
+    });
+  }
+  return normalized;
+}
+
+/**
+ * Validate an inbound supplier invoice. Does not write.
+ * Callers that already have a header and lines can skip this and call
+ * `createSupplierInvoice` directly (the UI does).
+ */
+export async function prepareInboundInvoice(db, body) {
+  assertNoActorFields(body);
+  const currency = assertInboundCurrency(body?.currency);
+  const externalId = requireExternalId(body?.external_id);
+  const po = await resolveInboundPurchaseOrder(db, body || {});
+  const supplierId = await resolveInboundSupplier(db, body || {}, po);
+  const invoiceNumber = requireInvoiceNumber(body?.invoice_number);
+  const invoiceDate = requireYmd(body?.invoice_date, 'invoice_date');
+  const dueDate = body?.due_date == null || body.due_date === ''
+    ? addUtcDays(invoiceDate, 30)
+    : requireYmd(body.due_date, 'due_date');
+  const tax = body?.tax_amount == null || body.tax_amount === ''
+    ? 0
+    : requireInboundCents(body.tax_amount, 'tax_amount');
+  if (tax < 0) throw new IntegrationError('tax_amount cannot be negative', 400, 'invalid_amount');
+  const notes = optionalText(body?.notes, 'notes', 2000);
+  const lines = await normalizeInboundLines(db, po.id, body?.lines);
+  return {
+    currency,
+    externalId,
+    po,
+    header: {
+      invoice_number: invoiceNumber,
+      po_id: Number(po.id),
+      supplier_id: supplierId,
+      invoice_date: invoiceDate,
+      due_date: dueDate,
+      tax_amount: tax,
+      notes
+    },
+    lines
+  };
+}
+
+function lineFingerprint(lines) {
+  return lines
+    .map((line) => ({
+      po_item_id: Number(line.po_item_id),
+      description: line.description,
+      quantity_invoiced: Number(line.quantity_invoiced),
+      unit_price: Number(line.unit_price)
+    }))
+    .sort((a, b) => a.po_item_id - b.po_item_id || String(a.description || '').localeCompare(String(b.description || '')));
+}
+
+async function inboundInvoiceMatches(db, invoiceId, header, lines) {
+  const invoice = await db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(invoiceId);
+  if (!invoice) return { invoice: null, matches: false };
+  const items = await db.prepare(`
+    SELECT po_item_id, description, quantity_invoiced, unit_price
+    FROM invoice_items WHERE invoice_id = ?
+  `).all(invoiceId);
+  const normalized = await normalizeSupplierInvoiceLines(db, lines);
+  const sameHeader = String(invoice.invoice_number) === String(header.invoice_number)
+    && Number(invoice.po_id) === Number(header.po_id)
+    && Number(invoice.supplier_id) === Number(header.supplier_id)
+    && String(invoice.invoice_date).slice(0, 10) === header.invoice_date
+    && String(invoice.due_date).slice(0, 10) === header.due_date
+    && Number(invoice.tax_amount) === Number(header.tax_amount)
+    && (invoice.notes || null) === (header.notes || null);
+  const sameLines = canonicalJson(lineFingerprint(items)) === canonicalJson(lineFingerprint(normalized));
+  return { invoice, matches: sameHeader && sameLines };
+}
+
+async function loadInboundInvoiceRow(db, invoiceId) {
+  return db.prepare(`
+    SELECT inv.*, po.po_number
+    FROM invoices inv
+    JOIN purchase_orders po ON po.id = inv.po_id
+    WHERE inv.id = ?
+  `).get(invoiceId);
+}
+
+async function loadOpenDuplicateSuspects(db, invoiceId) {
+  const rows = await db.prepare(`
+    SELECT
+      c.id,
+      c.invoice_number,
+      c.po_id,
+      c.total_amount,
+      c.status,
+      f.match_rule
+    FROM invoice_duplicate_flags f
+    JOIN invoices c ON c.id = f.candidate_invoice_id
+    WHERE f.invoice_id = ? AND f.status = 'open'
+    ORDER BY c.id
+  `).all(invoiceId);
+  return (rows || []).map((row) => ({
+    id: Number(row.id),
+    invoice_number: row.invoice_number,
+    po_id: Number(row.po_id),
+    total_amount: Number(row.total_amount),
+    status: row.status,
+    match_rule: row.match_rule
+  }));
+}
+
+function inboundInvoiceView(row, externalId, currency, suspects) {
+  return {
+    id: Number(row.id),
+    external_id: externalId,
+    invoice_number: row.invoice_number,
+    po_id: Number(row.po_id),
+    po_number: row.po_number,
+    supplier_id: Number(row.supplier_id),
+    invoice_date: String(row.invoice_date).slice(0, 10),
+    due_date: String(row.due_date).slice(0, 10),
+    status: row.status,
+    match_status: row.match_status,
+    duplicate_status: row.duplicate_status || 'clear',
+    duplicate_suspects: suspects || [],
+    exception_queued: row.status === 'variance_flagged',
+    currency,
+    subtotal_cents: Number(row.subtotal),
+    tax_cents: Number(row.tax_amount),
+    total_cents: Number(row.total_amount)
+  };
+}
+
+/**
+ * Post a supplier invoice for an ERP, e-invoicing hub, or scanning service.
+ *
+ * `external_id` is create-once. The same id with the same business payload
+ * returns the existing invoice and writes nothing. A different payload is
+ * 409 `invoice_immutable` — a matched, variance, approved, paid, or rejected
+ * invoice is not rewritten. `Idempotency-Key` is applied by the route.
+ *
+ * `dryRun` validates and runs match + duplicate detection without persisting.
+ */
+export async function postInboundInvoice(db, body, key, now = new Date(), { dryRun = false } = {}) {
+  const prepared = await prepareInboundInvoice(db, body);
+  const principal = integrationPrincipal(key);
+  if (dryRun) {
+    const preview = await createSupplierInvoice(db, {
+      header: prepared.header,
+      lines: prepared.lines,
+      actor: principal,
+      source: 'integration',
+      dryRun: true,
+      externalId: prepared.externalId,
+      now
+    });
+    return {
+      status: 200,
+      body: {
+        dry_run: true,
+        external_id: prepared.externalId,
+        currency: prepared.currency,
+        match_status: preview.matchOutcome.overallMatchStatus,
+        status: preview.matchOutcome.invoiceStatus,
+        duplicate_status: preview.duplicate_status,
+        duplicate_suspects: preview.duplicate_suspects,
+        exception: preview.exception,
+        subtotal_cents: preview.subtotal,
+        tax_cents: preview.tax_amount,
+        total_cents: preview.total_amount
+      }
+    };
+  }
+
+  const nested = Boolean(db.inTransaction?.());
+  const outcome = await db.transaction(async () => {
+    const link = await findInvoiceLink(db, prepared.externalId);
+    if (link) {
+      const current = await inboundInvoiceMatches(db, link.invoice_id, prepared.header, prepared.lines);
+      if (!current.invoice) {
+        throw new IntegrationError('Linked invoice no longer exists', 409, 'link_broken');
+      }
+      if (!current.matches) {
+        const error = new IntegrationError(
+          `Invoice ${prepared.externalId} is already ${current.invoice.status} and cannot be rewritten.`,
+          409,
+          'invoice_immutable'
+        );
+        error.invoice_id = Number(current.invoice.id);
+        error.invoice_status = current.invoice.status;
+        throw error;
+      }
+      const row = await loadInboundInvoiceRow(db, current.invoice.id);
+      const suspects = await loadOpenDuplicateSuspects(db, current.invoice.id);
+      return {
+        status: 200,
+        body: {
+          external_id: prepared.externalId,
+          created: false,
+          unchanged: true,
+          invoice: inboundInvoiceView(row, prepared.externalId, prepared.currency, suspects)
+        }
+      };
+    }
+
+    let created;
+    try {
+      created = await createSupplierInvoice(db, {
+        header: prepared.header,
+        lines: prepared.lines,
+        actor: principal,
+        source: 'integration',
+        dryRun: false,
+        externalId: prepared.externalId,
+        now
+      });
+    } catch (error) {
+      if (isUniqueConstraint(error)) {
+        throw new IntegrationError(
+          `Invoice number '${prepared.header.invoice_number}' already exists for this supplier.`,
+          409,
+          'duplicate_invoice_number'
+        );
+      }
+      throw error;
+    }
+
+    await saveInvoiceLink(db, prepared.externalId, Number(created.invoiceId), now.toISOString());
+    const row = await loadInboundInvoiceRow(db, created.invoiceId);
+    return {
+      status: 201,
+      body: {
+        external_id: prepared.externalId,
+        created: true,
+        unchanged: false,
+        invoice: inboundInvoiceView(
+          row,
+          prepared.externalId,
+          prepared.currency,
+          created.duplicate_suspects || []
+        )
+      }
+    };
+  })();
+  if (!nested) kickWebhookDispatch(db);
+  return outcome;
+}
+
 function normalizeIdempotencyKey(value) {
   if (value == null || value === '') return null;
   const key = String(value).trim();
@@ -463,8 +921,9 @@ export async function runIdempotent(db, apiKey, idempotencyHeader, body, work) {
     const existing = await findIdempotency(db, apiKey.id, key);
     if (existing) return replayOrConflict(existing, requestHash);
   }
+  const nested = Boolean(db.inTransaction?.());
   try {
-    return await db.transaction(async () => {
+    const result = await db.transaction(async () => {
       const result = await work();
       if (key) {
         await db.prepare(`
@@ -481,7 +940,9 @@ export async function runIdempotent(db, apiKey, idempotencyHeader, body, work) {
         );
       }
       return { replay: false, status: result.status, body: result.body };
-    });
+    })();
+    if (!nested) kickWebhookDispatch(db);
+    return result;
   } catch (error) {
     if (key && isUniqueConstraint(error) && /integration_idempotency/i.test(String(error.message || ''))) {
       const existing = await findIdempotency(db, apiKey.id, key);
