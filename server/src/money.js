@@ -86,7 +86,7 @@ export function requireIntegerCents(value, field = 'amount') {
     throw err(`${field} must be an integer number of cents.`);
   }
   if (typeof value === 'number') {
-    if (!Number.isInteger(value)) {
+    if (!Number.isSafeInteger(value)) {
       throw err(`${field} must be an integer number of cents.`);
     }
     return value;
@@ -95,7 +95,11 @@ export function requireIntegerCents(value, field = 'amount') {
   if (!/^-?\d+$/.test(text)) {
     throw err(`${field} must be an integer number of cents.`);
   }
-  return Number(text);
+  const parsed = Number(text);
+  if (!Number.isSafeInteger(parsed)) {
+    throw err(`${field} must be an integer number of cents.`);
+  }
+  return parsed;
 }
 
 /** Existing approval routing thresholds, expressed in cents (1,000 / 10,000 major units). */

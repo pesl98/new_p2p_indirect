@@ -25,6 +25,7 @@ export const WEBHOOK_BACKOFF_SECONDS = Object.freeze([30, 120, 600, 3600]);
 export const WEBHOOK_EVENTS = Object.freeze({
   PO_ISSUED: 'po.issued',
   RECEIPT_POSTED: 'receipt.posted',
+  INVOICE_CREATED: 'invoice.created',
   INVOICE_APPROVED: 'invoice.approved',
   PAYMENT_RUN_CREATED: 'payment_run.created',
   PAYMENT_RUN_PAID: 'payment_run.paid'
@@ -71,6 +72,12 @@ export function backoffSeconds(attemptCount) {
 
 export async function externalIdFor(db, entityType, entityId) {
   if (entityId == null) return null;
+  if (entityType === 'invoice') {
+    const row = await db.prepare(`
+      SELECT external_id FROM integration_invoice_links WHERE invoice_id = ?
+    `).get(entityId);
+    return row?.external_id || null;
+  }
   const row = await db.prepare(`
     SELECT external_id FROM integration_entity_links
     WHERE entity_type = ? AND entity_id = ?

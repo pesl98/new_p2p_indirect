@@ -103,10 +103,12 @@ export async function createVendorInvoice(db, payload) {
  * duplicate flag, audit row, or webhook.
  *
  * Persist runs in one transaction: invoice, lines, match, claimed qty,
- * duplicate soft-hold, and (integration only) the API-key compliance event.
- * Creating an invoice does not approve it, so it does not emit
- * `invoice.approved`. That event is still written by `approveInvoicePayment`,
- * for a UI invoice and an API invoice the same way.
+ * duplicate soft-hold, the `invoice.created` outbox row, and (integration
+ * only) the API-key compliance event. The match and the duplicate check run
+ * once inside that transaction. `dryRun` is the only path that previews them
+ * without writing. Creating an invoice does not approve it, so it does not
+ * emit `invoice.approved`. That event is still written by
+ * `approveInvoicePayment`, for a UI invoice and an API invoice the same way.
  *
  * @returns Created invoice plus match, duplicate, and exception-queue results.
  *          `exception.queued` means the row is `variance_flagged` and shows
@@ -131,29 +133,30 @@ export async function createSupplierInvoice(db, {
   }
 
   const draft = await buildInvoiceDraft(db, header, lines);
-  const matchOutcome = await evaluate3WayMatch(db, draft.normalizedItems);
-  const duplicateSuspects = await findDuplicateSuspects(db, {
-    supplierId: draft.supplierId,
-    poId: draft.poId,
-    totalAmountCents: draft.totalAmount,
-    invoiceDate: draft.invoiceDate
-  });
-  const duplicateStatus = duplicateSuspects.length > 0 ? 'suspect' : 'clear';
-  const preview = {
-    dry_run: true,
-    persisted: false,
-    invoiceId: null,
-    matchOutcome,
-    duplicate_status: duplicateStatus,
-    duplicate_suspects: duplicateSuspects,
-    exception: exceptionResult(matchOutcome.invoiceStatus),
-    currency: deploymentCurrency(),
-    subtotal: draft.subtotal,
-    tax_amount: draft.tax,
-    total_amount: draft.totalAmount
-  };
-  if (dryRun) return preview;
+  if (dryRun) {
+    const matchOutcome = await evaluate3WayMatch(db, draft.normalizedItems);
+    const duplicateSuspects = await findDuplicateSuspects(db, {
+      supplierId: draft.supplierId,
+      poId: draft.poId,
+      totalAmountCents: draft.totalAmount,
+      invoiceDate: draft.invoiceDate
+    });
+    return {
+      dry_run: true,
+      persisted: false,
+      invoiceId: null,
+      matchOutcome,
+      duplicate_status: duplicateSuspects.length > 0 ? 'suspect' : 'clear',
+      duplicate_suspects: duplicateSuspects,
+      exception: exceptionResult(matchOutcome.invoiceStatus),
+      currency: deploymentCurrency(),
+      subtotal: draft.subtotal,
+      tax_amount: draft.tax,
+      total_amount: draft.totalAmount
+    };
+  }
 
+  const nested = Boolean(db.inTransaction?.());
   const invoiceTransaction = db.transaction(async () => {
     const invResult = await db.prepare(`
       INSERT INTO invoices (invoice_number, po_id, supplier_id, invoice_date, due_date, subtotal, tax_amount, total_amount, status, match_status, notes)
@@ -242,6 +245,25 @@ export async function createSupplierInvoice(db, {
       });
     }
 
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.INVOICE_CREATED,
+      entityType: 'invoice',
+      entityId: invoiceId,
+      data: withDeploymentCurrency({
+        invoice_id: Number(invoiceId),
+        invoice_number: draft.invoiceNumber,
+        supplier_id: Number(draft.supplierId),
+        supplier_external_id: await externalIdFor(db, 'supplier', draft.supplierId),
+        po_id: Number(draft.poId),
+        status: persistedMatch.invoiceStatus,
+        match_status: persistedMatch.overallMatchStatus,
+        external_id: externalId || null,
+        source,
+        total_cents: draft.totalAmount
+      }),
+      now
+    });
+
     return {
       dry_run: false,
       persisted: true,
@@ -257,7 +279,9 @@ export async function createSupplierInvoice(db, {
     };
   });
 
-  return invoiceTransaction();
+  const created = await invoiceTransaction();
+  if (!nested) kickWebhookDispatch(db);
+  return created;
 }
 
 /**
