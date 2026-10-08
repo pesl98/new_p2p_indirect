@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { applySchema, getDb } from './db.js';
 import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
 import { measuredAmountCents } from './measuredQty.js';
@@ -13,15 +14,9 @@ const NITROGEN_MILLI = 450250;
 const NITROGEN_PRICE = 125;
 const NITROGEN_AMOUNT = measuredAmountCents(NITROGEN_MILLI, NITROGEN_PRICE);
 
-console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
-console.warn('Do not run this against a live customer database.');
-console.warn('Real tenant: npm run db:migrate && npm run bootstrap-org && npm run bootstrap-admin && npm run smoke');
+export const DEMO_ADMIN_EMAIL = 'elena.rostova@company.com';
 
-const db = await getDb();
-
-console.log('🌱 Seeding Non-Production Procurement Database...');
-
-const allTables = [
+const DEMO_TABLES = [
   'invoice_proposal_upload_attempts',
   'invoice_proposal_files',
   'invoice_proposals',
@@ -75,21 +70,10 @@ const allTables = [
   'audit_logs'
 ];
 
-await db.pragma('foreign_keys = OFF');
-for (const table of allTables) {
-  await db.exec(`DROP TABLE IF EXISTS ${table}`);
-}
-await db.pragma('foreign_keys = ON');
-try {
-  await db.exec(`DELETE FROM sqlite_sequence`);
-} catch {
-  // sqlite_sequence is absent until AUTOINCREMENT tables exist
-}
-await applySchema(db);
+export async function insertDemoData(db) {
+  const demoPasswordHash = await hashPassword(DEMO_SEED_PASSWORD, 10);
 
-const demoPasswordHash = await hashPassword(DEMO_SEED_PASSWORD, 10);
-
-await db.transaction(async () => {
+  await db.transaction(async () => {
   // 1. Departments
   const insertDept = db.prepare(`INSERT INTO departments (id, code, name) VALUES (?, ?, ?)`);
   await insertDept.run(1, 'MKT', 'Marketing & Brand');
@@ -1492,10 +1476,47 @@ await db.transaction(async () => {
     UPDATE invoices SET created_at = '2026-09-20 10:00:00' WHERE id = 15;
   `);
 
-});
+  });
+}
 
-console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
-console.log('   Utilities: UTA-2026-001 electricity (INV-MGU-0901 matched), UTA-2026-003 gas awaiting invoice, UTA-2026-002 water with no reading.');
-console.log('   Bulk: LN2 silo BVL-2026-001 drawn as PO-2026-018 (INV-NIG-1801). Argon tube bank BVL-2026-002 is filled and not drawn.');
-console.log(`   Demo login (local only): alice.chen@company.com / ${DEMO_SEED_PASSWORD}`);
-console.log('   Same password for Bob, Carol, David, Elena, Priya, James, Sofia. Never use this in a customer DB.');
+async function destructiveSeed() {
+  console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
+  console.warn('Do not run this against a live customer database.');
+  console.warn('Real tenant: npm run db:migrate && npm run bootstrap-org && npm run bootstrap-admin && npm run smoke');
+
+  const db = await getDb();
+
+  console.log('🌱 Seeding Non-Production Procurement Database...');
+
+  await db.pragma('foreign_keys = OFF');
+  for (const table of DEMO_TABLES) {
+    await db.exec(`DROP TABLE IF EXISTS ${table}`);
+  }
+  await db.pragma('foreign_keys = ON');
+  try {
+    await db.exec('DELETE FROM sqlite_sequence');
+  } catch {
+    // sqlite_sequence is absent until AUTOINCREMENT tables exist
+  }
+  await applySchema(db);
+  await insertDemoData(db);
+
+  console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
+  console.log('   Utilities: UTA-2026-001 electricity (INV-MGU-0901 matched), UTA-2026-003 gas awaiting invoice, UTA-2026-002 water with no reading.');
+  console.log('   Bulk: LN2 silo BVL-2026-001 drawn as PO-2026-018 (INV-NIG-1801). Argon tube bank BVL-2026-002 is filled and not drawn.');
+  console.log(`   Demo login (local only): alice.chen@company.com / ${DEMO_SEED_PASSWORD}`);
+  console.log('   Same password for Bob, Carol, David, Elena, Priya, James, Sofia. Never use this in a customer DB.');
+}
+
+function invokedAsScript() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (invokedAsScript()) {
+  destructiveSeed().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

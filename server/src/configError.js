@@ -17,6 +17,17 @@ function escapeHtml(message) {
     .replace(/>/g, '&gt;');
 }
 
+function previewDbSteps() {
+  return `<h2>Preview needs its own database</h2>
+  <ol>
+    <li>Create <code>procureflow-&lt;slug&gt;-preview</code> in the same Turso group and location as production.</li>
+    <li>On the Vercel <strong>Preview</strong> environment set <code>TURSO_PREVIEW_DATABASE_URL</code> and <code>TURSO_PREVIEW_AUTH_TOKEN</code>.</li>
+    <li>Set <code>TURSO_PRODUCTION_DATABASE_URL</code> to the production libsql URL (comparison only, no token), or leave <code>TURSO_DATABASE_URL</code> as that production URL. Preview will not open it.</li>
+    <li>The preview URL must not equal the production URL. <code>libsql://</code> and <code>https://</code> for the same host are the same database.</li>
+    <li>Redeploy the Preview. Do not set <code>ALLOW_PREVIEW_PRODUCTION_DATABASE</code> unless you intend Preview to serve production.</li>
+  </ol>`;
+}
+
 export function configErrorHtml(message, { code } = {}) {
   const detail = escapeHtml(message);
   const steps = code === 'currency_misconfigured'
@@ -28,6 +39,10 @@ export function configErrorHtml(message, { code } = {}) {
     <li>Enable <strong>Production</strong> and <strong>Preview</strong> (or All Environments)</li>
     <li>Redeploy after saving — env changes do not apply to an old deploy</li>
   </ol>`
+    : (code === 'preview_db_unconfigured'
+      || code === 'preview_db_unverified'
+      || code === 'preview_db_matches_production')
+    ? previewDbSteps()
     : `<h2>Set these on Vercel</h2>
   <ol>
     <li>Project → Settings → Environment Variables</li>
@@ -61,10 +76,12 @@ export function sendConfigError(req, res, error, statusCode = 503) {
   const message = error?.message || TURSO_REQUIRED_MSG;
   const status = error?.statusCode || statusCode;
   if (wantsJson(req)) {
-    return res.status(status).json({
+    const body = {
       error: error?.name || 'TursoConfigError',
       detail: message
-    });
+    };
+    if (error?.code) body.code = error.code;
+    return res.status(status).json(body);
   }
   return res.status(status).type('html').send(configErrorHtml(message, { code: error?.code }));
 }

@@ -381,7 +381,149 @@ CREATE TABLE IF NOT EXISTS users (
     );
     assert.ok(calls.some((c) => c.baton === 'baton-1'));
   });
+
+  test('concurrent transactions keep separate batons and rollback isolation', async () => {
+    const fake = createIsolatingFetch();
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    let releaseA;
+    const gateA = new Promise((resolve) => { releaseA = resolve; });
+    let markA;
+    const aStarted = new Promise((resolve) => { markA = resolve; });
+
+    const pendingA = client.transaction(async () => {
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+      markA();
+      await gateA;
+      throw new Error('rollback-a');
+    })();
+
+    await aStarted;
+    const outside = await client.prepare('SELECT v FROM t WHERE k = ?').get('a');
+    const pendingB = client.transaction(async () => {
+      await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('b', '2');
+    })();
+    await pendingB;
+    releaseA();
+    await assert.rejects(pendingA, /rollback-a/);
+
+    const insertA = fake.calls.find((body) => bodyHasArg(body, 'a') && sqlIncludes(body, 'INSERT'));
+    const insertB = fake.calls.find((body) => bodyHasArg(body, 'b') && sqlIncludes(body, 'INSERT'));
+    const outsideCall = fake.calls.find((body) => sqlIncludes(body, 'SELECT v FROM t'));
+    assert.ok(insertA?.baton, 'transaction A must pin a baton');
+    assert.ok(insertB?.baton, 'transaction B must pin a baton');
+    assert.notEqual(insertA.baton, insertB.baton);
+    assert.equal(outsideCall.baton, undefined);
+    assert.ok(outsideCall.requests.some((request) => request.type === 'close'));
+    assert.equal(outside, undefined);
+    assert.deepEqual(await client.prepare('SELECT v FROM t WHERE k = ?').get('b'), { v: '2' });
+    assert.equal(await client.prepare('SELECT v FROM t WHERE k = ?').get('a'), undefined);
+  });
 });
+
+function sqlIncludes(body, fragment) {
+  return (body?.requests || []).some((request) => String(request.stmt?.sql || '').includes(fragment));
+}
+
+function bodyHasArg(body, value) {
+  return (body?.requests || []).some((request) => (request.stmt?.args || []).some((arg) => arg?.value === value));
+}
+
+/**
+ * One committed map, plus a stream per baton. A statement with no baton reads
+ * only committed rows. Rollback discards that stream and leaves other streams
+ * and the committed map alone.
+ */
+function createIsolatingFetch() {
+  const calls = [];
+  let seq = 0;
+  const committed = new Map();
+  const streams = new Map();
+
+  function readMap(map, key) {
+    if (!map.has(key)) return undefined;
+    return { v: map.get(key) };
+  }
+
+  function resultFor(sql, args, map) {
+    if (/^select\s+v\s+from\s+t\b/i.test(sql)) {
+      const key = args[0]?.value;
+      const row = readMap(map, key);
+      return {
+        cols: [{ name: 'v' }],
+        rows: row ? [[{ type: 'text', value: row.v }]] : [],
+        affected_row_count: 0
+      };
+    }
+    if (/^insert\b/i.test(sql)) {
+      const key = args[0]?.value;
+      const value = args[1]?.value;
+      if (key != null) map.set(key, value);
+      return { cols: [], rows: [], affected_row_count: 1, last_insert_rowid: '1' };
+    }
+    if (/last_insert_rowid/i.test(sql)) {
+      return {
+        cols: [{ name: 'id' }],
+        rows: [[{ type: 'integer', value: '1' }]],
+        affected_row_count: 0
+      };
+    }
+    return { cols: [], rows: [], affected_row_count: 0 };
+  }
+
+  const fetchImpl = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    const requests = body.requests || [];
+    const closing = requests.some((request) => request.type === 'close');
+    let baton = body.baton || null;
+    let map;
+    if (!baton && !closing) {
+      baton = `baton-${++seq}`;
+      streams.set(baton, new Map(committed));
+      map = streams.get(baton);
+    } else if (baton) {
+      map = streams.get(baton) || committed;
+    } else {
+      map = committed;
+    }
+
+    const results = [];
+    for (const request of requests) {
+      if (request.type === 'close') {
+        results.push({ type: 'ok', response: { type: 'close' } });
+        continue;
+      }
+      const sql = String(request.stmt?.sql || '');
+      const args = request.stmt?.args || [];
+      if (/^commit\b/i.test(sql) && baton && streams.has(baton)) {
+        const stream = streams.get(baton);
+        committed.clear();
+        for (const [key, value] of stream) committed.set(key, value);
+        streams.delete(baton);
+      } else if (/^rollback\b/i.test(sql) && !/^rollback\s+to\b/i.test(sql) && baton) {
+        streams.delete(baton);
+      }
+      results.push({
+        type: 'ok',
+        response: {
+          type: 'execute',
+          result: resultFor(sql, args, baton && streams.has(baton) ? streams.get(baton) : map)
+        }
+      });
+    }
+
+    const responseBaton = baton && streams.has(baton) ? baton : null;
+    return {
+      status: 200,
+      ok: true,
+      async text() {
+        return JSON.stringify({ baton: responseBaton, results });
+      }
+    };
+  };
+
+  return { fetchImpl, calls };
+}
 
 function mockPipelineBySql(handler, calls = []) {
   return async (_url, options) => {
