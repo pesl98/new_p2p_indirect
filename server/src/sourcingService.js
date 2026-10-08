@@ -956,6 +956,10 @@ export async function removeEventFile(db, actor, eventId, fileId) {
       WHERE id = ? AND event_id = ? AND owner_kind = 'event' AND removed_at IS NULL
     `).run(now, fileId, existing.id);
     if (!result.changes) return 0;
+    // Draft only. bytes is NOT NULL and the blob trigger rejects UPDATE, so the
+    // row is deleted. Metadata and the audit line stay. Later statuses never
+    // reach this path.
+    await db.prepare(`DELETE FROM sourcing_file_blobs WHERE file_id = ?`).run(fileId);
     await writeAudit(db, 'sourcing_event', existing.id, 'FILE_REMOVED', actor.name, `PDF file ${fileId} removed from the draft`);
     return result.changes;
   })();

@@ -663,6 +663,77 @@ describe('sourcing HTTP', () => {
     }));
   });
 
+  test('removing a draft file deletes the blob and download returns 404', async () => {
+    const { db, app } = await boot();
+    await withFlag('1', () => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Met een bijlage' })
+      }));
+      assert.equal(created.status, 201);
+      const eventId = created.body.id;
+      const upload = (name) => fetch(`${base}/api/sourcing/events/${eventId}/files`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(3),
+          'Content-Type': 'application/pdf',
+          'X-Filename': name
+        },
+        body: PDF
+      });
+      const saved = await json(await upload('specificatie.pdf'));
+      assert.equal(saved.status, 201, JSON.stringify(saved.body));
+      const fileId = saved.body.id;
+
+      const before = await fetch(`${base}/api/sourcing/events/${eventId}/files/${fileId}`, {
+        headers: authHeaders(3)
+      });
+      assert.equal(before.status, 200);
+
+      const removed = await json(await fetch(`${base}/api/sourcing/events/${eventId}/files/${fileId}/remove`, {
+        method: 'POST',
+        headers: authHeaders(3)
+      }));
+      assert.equal(removed.status, 200, JSON.stringify(removed.body));
+      assert.ok(removed.body.removed_at);
+
+      const download = await json(await fetch(`${base}/api/sourcing/events/${eventId}/files/${fileId}`, {
+        headers: authHeaders(3)
+      }));
+      assert.equal(download.status, 404);
+      assert.equal(download.body.code, 'file_not_found');
+
+      const meta = await db.prepare(`
+        SELECT id, filename, sha256, removed_at FROM sourcing_files WHERE id = ?
+      `).get(fileId);
+      assert.equal(meta.filename, 'specificatie.pdf');
+      assert.equal(typeof meta.sha256, 'string');
+      assert.ok(meta.removed_at);
+      const blob = await db.prepare(`SELECT file_id FROM sourcing_file_blobs WHERE file_id = ?`).get(fileId);
+      assert.equal(blob, undefined);
+      const audit = await db.prepare(`
+        SELECT action FROM audit_logs
+        WHERE entity_type = 'sourcing_event' AND entity_id = ? AND action = 'FILE_REMOVED'
+      `).get(eventId);
+      assert.equal(audit.action, 'FILE_REMOVED');
+
+      const again = await json(await upload('vervanging.pdf'));
+      assert.equal(again.status, 201, JSON.stringify(again.body));
+      const active = await db.prepare(`
+        SELECT COUNT(*) AS n FROM sourcing_files
+        WHERE event_id = ? AND owner_kind = 'event' AND removed_at IS NULL
+      `).get(eventId);
+      const stored = await db.prepare(`
+        SELECT COUNT(*) AS n FROM sourcing_file_blobs b
+        JOIN sourcing_files f ON f.id = b.file_id
+        WHERE f.event_id = ?
+      `).get(eventId);
+      assert.equal(Number(active.n), 1);
+      assert.equal(Number(stored.n), 1);
+    }));
+  });
+
   test('a published event cannot be cancelled through the draft transition', async () => {
     const { db, app } = await boot();
     const now = '2026-10-08T12:00:00.000Z';
