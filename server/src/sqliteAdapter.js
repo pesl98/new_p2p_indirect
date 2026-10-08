@@ -18,6 +18,10 @@ export class SqliteAdapter {
     return false;
   }
 
+  inTransaction() {
+    return this._inTransaction > 0;
+  }
+
   prepare(sql) {
     const stmt = this.raw.prepare(sql);
     return {

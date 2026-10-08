@@ -329,7 +329,7 @@ Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `C
 }
 ```
 
-A perfect match is **201** with `invoice.status` `matched` and `invoice.match_status` `perfect_match`. The same `external_id` and the same payload again is **200** (`unchanged: true`). A different payload is **409** `invoice_immutable`. Field rules and the error-code table are in [docs/SYSTEM_MANUAL.md §5.14](docs/SYSTEM_MANUAL.md#514-integrations) and [docs/DEPLOY_MANUAL.md §8.8](docs/DEPLOY_MANUAL.md#88-integrations). UBL/Peppol is still a follow-up.
+A perfect match is **201** with `invoice.status` `matched` and `invoice.match_status` `perfect_match`. The same transaction enqueues `invoice.created`. The same `external_id` and the same payload again is **200** (`unchanged: true`). A different payload is **409** `invoice_immutable`. Field rules and the error-code table are in [docs/SYSTEM_MANUAL.md §5.14](docs/SYSTEM_MANUAL.md#514-integrations) and [docs/DEPLOY_MANUAL.md §8.8](docs/DEPLOY_MANUAL.md#88-integrations). UBL/Peppol is still a follow-up.
 
 ### Finance inbox (PDF proposals)
 

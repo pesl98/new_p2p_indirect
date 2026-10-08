@@ -612,13 +612,13 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 - `POST /api/integrations/vendors` and `POST /api/integrations/catalog`, keyed by `external_id` in `integration_entity_links`.
 - Repeat vendor and catalog calls update the same supplier or catalog row. `Idempotency-Key` replays the first 2xx body; a different body with the same key is **409**.
 - Catalog `unit_price` is integer cents. `preferred_supplier_external_id` must already be linked. Supplier `code` does not change after create. Omitted optional vendor and catalog fields are stored as their defaults, so send the full record each time.
-- `POST /api/integrations/invoices` (`invoices:write`) creates a supplier invoice through `createSupplierInvoice`, the same function the invoice screen uses (`createVendorInvoice` is the UI adapter). One transaction runs the insert, the 3-way match (1% of PO unit price, integer cents), the duplicate soft-hold, and the API-key audit. A variance sets `variance_flagged`, which is the existing exception workbench queue. There is no second match path.
-- The PO must already be issued and still open: `issued`, `acknowledged`, `partially_received`, or `received`. `draft`, `closed`, and `cancelled` are **400** `po_not_issued`. Unknown `po_id` or `po_number` is **404** `po_not_found`. The supplier (`supplier_id` or `supplier_external_id`) must be the PO’s supplier (**400** `vendor_mismatch`). Each line’s `po_item_id` must belong to that PO (**400** `po_line_mismatch`).
-- Money is integer cents (`unit_price`, `tax_amount`). `currency` is required and must equal the deployment currency (`CURRENCY`, default `EUR`). Anything else is **400** `currency_mismatch`. This route does not convert.
+- `POST /api/integrations/invoices` (`invoices:write`) creates a supplier invoice through `createSupplierInvoice`, the same function the invoice screen uses (`createVendorInvoice` is the UI adapter). `postInboundInvoice` opens the transaction itself: the insert, the 3-way match (1% of PO unit price, integer cents, run once), the duplicate soft-hold, the `invoice.created` outbox row, the API-key audit, and the row in `integration_invoice_links`. A variance sets `variance_flagged`, which is the existing exception workbench queue. There is no second match path.
+- The PO must already be issued and still open: `issued`, `acknowledged`, `partially_received`, or `received`. `draft`, `closed`, and `cancelled` are **400** `po_not_issued`. Unknown `po_id` or `po_number`, and a `po_id` that does not name the same order as `po_number`, are **404** `po_not_found`. The supplier (`supplier_id` or `supplier_external_id`) must be the PO’s supplier (**400** `vendor_mismatch`). An unknown `supplier_external_id` is **400** `vendor_not_linked`. Each line’s `po_item_id` must belong to that PO (**400** `po_line_mismatch`).
+- Money is a safe integer number of cents (`Number.isSafeInteger`). `unit_price` must be greater than 0. `tax_amount` may be 0 and must not be negative. `1e20` and other unsafe magnitudes are **400** `invalid_amount`. `currency` is required (**400** `currency_required`) and must equal the deployment currency (`CURRENCY`, default `EUR`). Anything else is **400** `currency_mismatch`. The error names the deployment currency and does not repeat the caller’s value. This route does not convert.
 - `external_id` is create-once. The same id with the same business payload (invoice number, PO, supplier, dates, tax, notes, lines) is **200** `created: false`, `unchanged: true`, and writes nothing. A different payload is **409** `invoice_immutable` with `invoice_id` and `status`. A posted invoice is not updated, including when it is already `matched`, `variance_flagged`, `approved_for_payment`, `paid`, or `rejected`. That is deliberate: vendor and catalog upserts update in place; invoices do not.
 - Omitted `due_date` becomes `invoice_date` plus 30 UTC days. Omitted line `description` is copied from the PO line. `Idempotency-Key` behaves as on vendor and catalog (replay, or **409** `idempotency_conflict`).
 - The compliance row is `INTEGRATION_INVOICE_CREATED`. `actor_name` is the key name, `actor_role` is `integration`, `actor_user_id` is null, and `details` includes `api_key_id`. The pipeline still writes `3_WAY_MATCHED` as `System 3-Way Matcher` and the duplicate audit as `System Duplicate Detector`, the same actors the UI path uses. A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400** `actor_rejected`.
-- Create does not enqueue a webhook. `invoice.approved` is still inserted in the approve transaction when AP approves, whether the invoice was posted from the screen or from this route. A likely duplicate is `duplicate_status: suspect` and is held by the existing Duplicate Suspects queue.
+- Create enqueues `invoice.created` in that same transaction, whether the invoice was posted from the screen or from this route. `invoice.approved` is still inserted only in the approve transaction. A likely duplicate is `duplicate_status: suspect` and is held by the existing Duplicate Suspects queue.
 - `createSupplierInvoice({ header, lines, actor, source, dryRun: true })` runs the match and the duplicate check and returns `exception.queued` without writing. Sprint 7b (PDF upload, OCR proposals, finance inbox) should call that function. This route has no preview URL.
 
 Example request:
@@ -680,12 +680,14 @@ A variance response is still **201**. `invoice.status` is `variance_flagged`, `i
 | `api_key_scope` | 403 | Key does not include `invoices:write`. |
 | `rate_limited` | 429 | Per-key fixed window exceeded. `Retry-After` is set. |
 | `actor_rejected` | 400 | Body names a user. |
-| `currency_required`, `currency_mismatch` | 400 | Missing currency, or not the deployment currency. |
-| `po_not_found` | 404 | PO id or number does not exist. |
+| `currency_required` | 400 | `currency` is missing. |
+| `currency_mismatch` | 400 | `currency` is not the deployment currency. The message does not echo the supplied value. |
+| `po_not_found` | 404 | Unknown `po_id` or `po_number`, or the two name different orders. |
 | `po_not_issued` | 400 | PO is draft, closed, or cancelled. |
 | `vendor_required`, `vendor_mismatch`, `vendor_not_linked` | 400 | Supplier missing, not the PO vendor, or external id not linked. |
 | `po_line_mismatch` | 400 | Line is missing, repeated, or on another PO. |
-| `invalid_amount`, `invalid_quantity`, `invalid_date`, `invalid_invoice_number`, `invalid_external_id` | 400 | Field validation. |
+| `invalid_amount` | 400 | Not a safe integer number of cents, `unit_price` is not greater than 0, or `tax_amount` is negative. |
+| `invalid_quantity`, `invalid_date`, `invalid_invoice_number`, `invalid_external_id` | 400 | Field validation. |
 | `duplicate_invoice_number` | 409 | `(supplier_id, invoice_number)` already exists. The transaction rolls back. |
 | `invoice_immutable` | 409 | Same `external_id`, different payload. |
 | `idempotency_conflict` | 409 | Same `Idempotency-Key`, different body. |
@@ -694,8 +696,8 @@ A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400
 
 **Outbound**
 
-- Events, in the same transaction as the business write: `po.issued`, `receipt.posted` (goods receipt only), `invoice.approved`, `invoice_proposal.rejected` (a rejected PDF proposal; see §5.15), `payment_run.created`, `payment_run.paid`.
-- Money-bearing payloads (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) include `currency` (the deployment code, default `EUR`) next to the existing cent fields. `receipt.posted` has no amount, so it has no `currency` field. Cent field names and values are unchanged.
+- Events, in the same transaction as the business write: `po.issued`, `receipt.posted` (goods receipt only), `invoice.created`, `invoice.approved`, `invoice_proposal.rejected` (a rejected PDF proposal; see §5.15), `payment_run.created`, `payment_run.paid`.
+- Money-bearing payloads (`po.issued`, `invoice.created`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) include `currency` (the deployment code, default `EUR`) next to the existing cent fields. `invoice.created` also includes `external_id` (null for a screen post), `source` (`ui` or `integration`), `match_status`, and `total_cents`. `receipt.posted` has no amount, so it has no `currency` field. Cent field names and values are unchanged.
 - `X-ProcureFlow-Signature: t=<unix seconds>,v1=<64 hex>`. `v1` is HMAC-SHA256 of the string `${t}.${rawBody}` with `WEBHOOK_SIGNING_SECRET`. Reject timestamps more than 300 seconds off. Dedupe on `id` (`evt_<outbox id>`). Retries get a new timestamp and the same id.
 - `webhook_outbox` status is `pending`, `delivered`, or `dead`. Five attempts. Backoff after failure: 30s, 120s, 600s, 3600s. Unset URL or secret does not increment attempts.
 - Admin list: `GET /api/integrations/outbox`. Replay: `POST /api/integrations/outbox/:id/replay` (resets attempts, audits `WEBHOOK_REPLAYED`). Deliver now: `POST /api/integrations/outbox/dispatch`.
@@ -711,7 +713,7 @@ A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400
 
 `WEBHOOK_TARGET_URL` and `WEBHOOK_SIGNING_SECRET` are environment variables for this deployment only. They are not in `tenant_settings` or any other table. `GET /api/integrations/config` returns two booleans and `webhook_target_host`. `vercel:customer` does not set them. Set both on Production and Preview, then redeploy.
 
-`npm run db:migrate` or the next process start creates the tables. No separate migration file. An existing `integration_entity_links` table whose check allowed only `supplier` and `catalog_item` is rebuilt on that run so `entity_type` can be `invoice`. Existing link rows are copied.
+`npm run db:migrate` or the next process start creates the tables, including `integration_invoice_links`, with `CREATE TABLE IF NOT EXISTS`. No separate migration file. An existing `integration_entity_links` table is not rebuilt and is not dropped. Supplier and catalog external ids stay on that table. Invoice external ids are only on `integration_invoice_links`.
 
 **Follow-ups**
 

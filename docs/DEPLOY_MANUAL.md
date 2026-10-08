@@ -744,7 +744,7 @@ Because the rows cannot be edited or deleted, a manual `DELETE FROM audit_logs` 
 
 ### 8.8 Integrations
 
-`npm run db:migrate`, or the next process start, creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox`. You do not run extra SQL. An existing database whose `integration_entity_links` check only allowed `supplier` and `catalog_item` is rebuilt on that same run so `entity_type` can also be `invoice`. Rows are copied. No new table. API keys are rows in this customer’s database. The webhook URL and signing secret are environment variables on this deployment. They are not in the database, and the CLIs do not set them.
+`npm run db:migrate`, or the next process start, creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_invoice_links`, `integration_idempotency`, and `webhook_outbox` with `CREATE TABLE IF NOT EXISTS`. You do not run extra SQL. `integration_entity_links` is not rebuilt and is not dropped. Invoice external ids are only in `integration_invoice_links`. API keys are rows in this customer’s database. The webhook URL and signing secret are environment variables on this deployment. They are not in the database, and the CLIs do not set them.
 
 **Issue a key**
 
@@ -814,7 +814,7 @@ Vendor and catalog bodies are keyed by `external_id`. Sending the same id again 
 }
 ```
 
-Price or quantity outside tolerance sets `status` to `variance_flagged`, `exception_queued` to true, and the invoice shows on the existing exception workbench. A likely duplicate sets `duplicate_status` to `suspect` and still creates the invoice. Create does not emit `invoice.approved`. That webhook is written when AP approves, in that same transaction, for an API invoice and a UI invoice.
+Price or quantity outside tolerance sets `status` to `variance_flagged`, `exception_queued` to true, and the invoice shows on the existing exception workbench. A likely duplicate sets `duplicate_status` to `suspect` and still creates the invoice. Create enqueues `invoice.created` in the same transaction. It does not emit `invoice.approved`. That webhook is written when AP approves, in that same transaction, for an API invoice and a UI invoice.
 
 | Code | HTTP | When |
 | --- | --- | --- |
@@ -822,12 +822,14 @@ Price or quantity outside tolerance sets `status` to `variance_flagged`, `except
 | `api_key_scope` | 403 | Key lacks `invoices:write`. |
 | `rate_limited` | 429 | Over the key’s minute window. |
 | `actor_rejected` | 400 | Body names a user or actor. |
-| `currency_mismatch` | 400 | `currency` is not the deployment currency. |
-| `po_not_found` | 404 | Unknown `po_id` or `po_number`. |
+| `currency_required` | 400 | `currency` is missing. |
+| `currency_mismatch` | 400 | `currency` is not the deployment currency. The message does not echo the supplied value. |
+| `po_not_found` | 404 | Unknown `po_id` or `po_number`, or the two name different orders. |
 | `po_not_issued` | 400 | PO is `draft`, `closed`, or `cancelled`. |
+| `vendor_required`, `vendor_not_linked` | 400 | Supplier missing, or `supplier_external_id` is not linked. |
 | `vendor_mismatch` | 400 | Supplier is not the PO vendor. |
 | `po_line_mismatch` | 400 | `po_item_id` is not on that PO. |
-| `invalid_amount` | 400 | Money is not integer cents. |
+| `invalid_amount` | 400 | Not a safe integer number of cents, `unit_price` is not greater than 0, or `tax_amount` is negative. |
 | `duplicate_invoice_number` | 409 | That supplier already has this invoice number. Nothing else is written. |
 | `invoice_immutable` | 409 | Same `external_id`, different payload. |
 | `idempotency_conflict` | 409 | Same `Idempotency-Key`, different body. |
@@ -844,7 +846,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Put the hex in `WEBHOOK_SIGNING_SECRET`. Put the receiver’s `https` URL in `WEBHOOK_TARGET_URL`. Redeploy. Do not commit either value. `GET /api/integrations/config` with the admin cookie returns `webhook_target_configured`, `webhook_signing_secret_configured`, and `webhook_target_host`. It does not return the secret or the URL.
 
-Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `invoice_proposal.rejected`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
+Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.created`, `invoice.approved`, `invoice_proposal.rejected`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.created`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `invoice.created` is written when a supplier invoice is posted from the screen or from this route. `invoice_proposal.rejected` is a rejected PDF proposal. `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
 
 The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id. The dispatcher, retry schedule, and drain are unchanged.
 

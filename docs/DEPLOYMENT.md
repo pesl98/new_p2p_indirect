@@ -157,7 +157,7 @@ Apply the tables with the usual migrate (no extra SQL file):
 npm run db:migrate
 ```
 
-That creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox` (`CREATE TABLE IF NOT EXISTS`). The next process start does the same.
+That creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_invoice_links`, `integration_idempotency`, and `webhook_outbox` (`CREATE TABLE IF NOT EXISTS`). The next process start does the same. Invoice external ids are `integration_invoice_links`. `integration_entity_links` is not rebuilt.
 
 Operator steps, after the first admin can sign in:
 
@@ -181,7 +181,7 @@ npm run db:migrate
 npm run db:status
 ```
 
-`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). The same run creates `compliance_audit_events` and the append-only triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger (`CREATE TRIGGER IF NOT EXISTS`). It also creates the Sprint 4 integration tables: `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox`. An existing customer database gets them on the next `db:migrate` or process start. No separate SQL file. It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
+`db:migrate` connects with the env above, runs `schema.sql` plus the existing migrations in `server/src/db.js` (`CREATE TABLE IF NOT EXISTS` + `ALTER` / rebuilds, including `users.status` and `user_credentials`). The same run creates `compliance_audit_events` and the append-only triggers on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and that ledger (`CREATE TRIGGER IF NOT EXISTS`). It also creates the Sprint 4 integration tables: `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `integration_idempotency`, and `webhook_outbox`, plus `integration_invoice_links` for supplier-invoice external ids. That last table is created in place. `integration_entity_links` is not rebuilt. An existing customer database gets them on the next `db:migrate` or process start. No separate SQL file. It does **not** load cost centers or Alice/Bob/Carol sample PRs unless you pass `--seed`.
 
 Empty schema still has **0 departments**. PR submit fails closed until cost centers + a FY 2026 budget exist — that is `npm run bootstrap-org` (next), not migrate.
 

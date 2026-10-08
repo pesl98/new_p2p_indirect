@@ -818,15 +818,26 @@ CREATE TABLE IF NOT EXISTS api_key_rate_windows (
   FOREIGN KEY (api_key_id) REFERENCES api_keys(id)
 );
 
--- External ERP id → local supplier, catalog row, or supplier invoice.
+-- External ERP id → local supplier or catalog row.
+-- Invoice external ids live in integration_invoice_links so an existing
+-- database can gain them with CREATE TABLE IF NOT EXISTS. Do not rebuild
+-- this table: a failed statement on Turso does not stop the rest of the batch.
 CREATE TABLE IF NOT EXISTS integration_entity_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item', 'invoice')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
   external_id TEXT NOT NULL,
   entity_id INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(entity_type, external_id)
+);
+
+CREATE TABLE IF NOT EXISTS integration_invoice_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_id TEXT NOT NULL UNIQUE,
+  invoice_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS integration_idempotency (

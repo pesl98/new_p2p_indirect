@@ -599,6 +599,7 @@ describe('webhook outbox', () => {
     assert.deepEqual(rows.map((row) => row.event_type), [
       'po.issued',
       'receipt.posted',
+      'invoice.created',
       'invoice.approved',
       'payment_run.created',
       'payment_run.paid'
@@ -613,6 +614,8 @@ describe('webhook outbox', () => {
       }
     }
     assert.equal(JSON.parse(rows[0].payload).total_amount_cents, 5000);
-    assert.equal(JSON.parse(rows[2].payload).payable_total_cents, 5000);
+    assert.equal(JSON.parse(rows[2].payload).source, 'ui');
+    assert.equal(JSON.parse(rows[2].payload).external_id, null);
+    assert.equal(JSON.parse(rows[3].payload).payable_total_cents, 5000);
   });
 });

@@ -200,8 +200,12 @@ describe('inbound supplier invoices API', () => {
       `).get(invoiceId);
       assert.equal(principal.actor_name, 'ERP Invoices');
 
-      const webhooks = await db.prepare(`SELECT event_type FROM webhook_outbox`).all();
-      assert.deepEqual(webhooks, []);
+      const webhooks = await db.prepare(`SELECT event_type, payload FROM webhook_outbox`).all();
+      assert.deepEqual(webhooks.map((row) => row.event_type), ['invoice.created']);
+      const createdPayload = JSON.parse(webhooks[0].payload);
+      assert.equal(createdPayload.external_id, 'TSG-INV-1001');
+      assert.equal(createdPayload.invoice_id, invoiceId);
+      assert.equal(createdPayload.currency, 'EUR');
 
       const spoof = await postInvoice(base, key.key, {
         ...invoiceBody({ externalId: 'TSG-INV-1002', invoiceNumber: 'INV-1002' }),
@@ -372,9 +376,7 @@ describe('inbound supplier invoices API', () => {
       assert.equal(line.body.code, 'po_line_mismatch');
 
       const invoices = await db.prepare(`SELECT COUNT(*) AS n FROM invoices`).get();
-      const links = await db.prepare(`
-        SELECT COUNT(*) AS n FROM integration_entity_links WHERE entity_type = 'invoice'
-      `).get();
+      const links = await db.prepare(`SELECT COUNT(*) AS n FROM integration_invoice_links`).get();
       assert.equal(Number(invoices.n), 0);
       assert.equal(Number(links.n), 0);
     });
@@ -395,9 +397,7 @@ describe('inbound supplier invoices API', () => {
       assert.equal(second.status, 409);
       assert.equal(second.body.code, 'duplicate_invoice_number');
       const invoices = await db.prepare(`SELECT COUNT(*) AS n FROM invoices`).get();
-      const links = await db.prepare(`
-        SELECT COUNT(*) AS n FROM integration_entity_links WHERE entity_type = 'invoice'
-      `).get();
+      const links = await db.prepare(`SELECT COUNT(*) AS n FROM integration_invoice_links`).get();
       assert.equal(Number(invoices.n), 1);
       assert.equal(Number(links.n), 1);
     });
@@ -481,5 +481,80 @@ describe('inbound supplier invoices API', () => {
       SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'INTEGRATION_INVOICE_CREATED'
     `).get();
     assert.equal(Number(compliance.n), 0);
+    const hooks = await db.prepare(`SELECT event_type FROM webhook_outbox`).all();
+    assert.deepEqual(hooks.map((row) => row.event_type), ['invoice.created']);
+  });
+
+  test('missing currency, an unissued PO, unsafe amounts, and supplier_external_id', async () => {
+    const db = await createTestDb();
+    await insertPo(db, { poId: 1, status: 'received' });
+    await insertPo(db, { poId: 2, itemId: 2, poNumber: 'PO-DRAFT', status: 'draft' });
+    await db.prepare(`
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+      VALUES ('supplier', 'ERP-V-1', 1, '2026-10-08T00:00:00.000Z', '2026-10-08T00:00:00.000Z')
+    `).run();
+    const app = appFor(db);
+    await withServer(app, async (base) => {
+      const key = await issueKey(base, ['invoices:write']);
+
+      const missingCurrency = await postInvoice(base, key.key, { ...invoiceBody(), currency: undefined });
+      assert.equal(missingCurrency.status, 400);
+      assert.equal(missingCurrency.body.code, 'currency_required');
+      assert.equal(String(missingCurrency.body.error).includes('undefined'), false);
+
+      const echoed = await postInvoice(base, key.key, invoiceBody({ currency: 'USD-AND-A-VERY-LONG-UNTRUSTED-VALUE' }));
+      assert.equal(echoed.status, 400);
+      assert.equal(echoed.body.code, 'currency_mismatch');
+      assert.equal(echoed.body.error.includes('USD-AND-A-VERY-LONG-UNTRUSTED-VALUE'), false);
+      assert.match(echoed.body.error, /EUR/);
+
+      const draftPo = await postInvoice(base, key.key, invoiceBody({ poId: 2, itemId: 2 }));
+      assert.equal(draftPo.status, 400);
+      assert.equal(draftPo.body.code, 'po_not_issued');
+
+      const disagreed = await postInvoice(base, key.key, { ...invoiceBody(), po_number: 'PO-DRAFT' });
+      assert.equal(disagreed.status, 404);
+      assert.equal(disagreed.body.code, 'po_not_found');
+
+      const unsafe = await postInvoice(base, key.key, invoiceBody({ unitPrice: 1e20 }));
+      assert.equal(unsafe.status, 400);
+      assert.equal(unsafe.body.code, 'invalid_amount');
+
+      const zero = await postInvoice(base, key.key, invoiceBody({ unitPrice: 0 }));
+      assert.equal(zero.status, 400);
+      assert.equal(zero.body.code, 'invalid_amount');
+
+      const byExternal = {
+        ...invoiceBody({ externalId: 'TSG-INV-EXT', invoiceNumber: 'INV-EXT' }),
+        supplier_id: undefined,
+        supplier_external_id: 'ERP-V-1'
+      };
+      const created = await postInvoice(base, key.key, byExternal);
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      assert.equal(created.body.invoice.supplier_id, 1);
+      const link = await db.prepare(`
+        SELECT invoice_id FROM integration_invoice_links WHERE external_id = 'TSG-INV-EXT'
+      `).get();
+      assert.equal(Number(link.invoice_id), created.body.invoice.id);
+    });
+  });
+
+  test('postInboundInvoice rolls its invoice and link back with the caller transaction', async () => {
+    const db = await createTestDb();
+    await insertPo(db);
+    const key = { id: 1, name: 'ERP Invoices', key_prefix: 'pfk_test', scopes: ['invoices:write'] };
+    await assert.rejects(
+      db.transaction(async () => {
+        const created = await postInboundInvoice(db, invoiceBody(), key);
+        assert.equal(created.status, 201);
+        throw new Error('caller failed after post');
+      })()
+    );
+    const invoices = await db.prepare(`SELECT COUNT(*) AS n FROM invoices`).get();
+    const links = await db.prepare(`SELECT COUNT(*) AS n FROM integration_invoice_links`).get();
+    const hooks = await db.prepare(`SELECT COUNT(*) AS n FROM webhook_outbox`).get();
+    assert.equal(Number(invoices.n), 0);
+    assert.equal(Number(links.n), 0);
+    assert.equal(Number(hooks.n), 0);
   });
 });
