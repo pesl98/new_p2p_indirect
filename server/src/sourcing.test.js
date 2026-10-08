@@ -2,6 +2,8 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import { toCents } from '../../client/src/money.js';
 import { createApp } from './app.js';
@@ -12,6 +14,7 @@ import { sourcingEnabled, parseDeadline } from './sourcingConfig.js';
 import { assertTransition, canTransition, publishBlockers, SourcingStatusError } from './sourcingStatus.js';
 import { SqliteAdapter } from './sqliteAdapter.js';
 import { withCookie } from './testSession.js';
+import { TursoHttpClient } from './tursoHttp.js';
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
 
@@ -277,6 +280,195 @@ describe('sourcing schema', () => {
     `).run(bid.id), /append-only/);
   });
 });
+
+function bindPipelineArgs(args) {
+  return (args || []).map((arg) => {
+    if (!arg || arg.type === 'null') return null;
+    if (arg.type === 'integer') return Number(arg.value);
+    if (arg.type === 'float') return Number(arg.value);
+    if (arg.type === 'blob') return Buffer.from(arg.base64 || '', 'base64');
+    return arg.value ?? null;
+  });
+}
+
+function pipelineCell(value) {
+  if (value == null) return { type: 'null' };
+  if (typeof value === 'bigint') return { type: 'integer', value: value.toString() };
+  if (typeof value === 'number') {
+    return Number.isInteger(value)
+      ? { type: 'integer', value: String(value) }
+      : { type: 'float', value };
+  }
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return { type: 'blob', base64: Buffer.from(value).toString('base64') };
+  }
+  return { type: 'text', value: String(value) };
+}
+
+function runPipelineSql(db, sql, args) {
+  const text = String(sql || '').trim();
+  if (/^(begin|commit|rollback|savepoint|release)\b/i.test(text)) {
+    db.exec(text);
+    return { cols: [], rows: [], affected_row_count: 0, last_insert_rowid: '0' };
+  }
+  const stmt = db.prepare(text);
+  const bound = bindPipelineArgs(args);
+  if (stmt.reader) {
+    const rows = stmt.all(...bound);
+    const cols = stmt.columns().map((col) => ({ name: col.name }));
+    return {
+      cols,
+      rows: rows.map((row) => cols.map((col) => pipelineCell(row[col.name]))),
+      affected_row_count: 0,
+      last_insert_rowid: '0'
+    };
+  }
+  const result = stmt.run(...bound);
+  return {
+    cols: [],
+    rows: [],
+    affected_row_count: Number(result.changes || 0),
+    last_insert_rowid: String(result.lastInsertRowid ?? 0)
+  };
+}
+
+function startFilePipeline(file) {
+    const autocommit = new Database(file);
+    autocommit.pragma('journal_mode = WAL');
+    autocommit.pragma('foreign_keys = ON');
+    autocommit.pragma('busy_timeout = 0');
+  const streams = new Map();
+  const calls = [];
+  let seq = 0;
+  let writer = null;
+  const waiters = [];
+
+  function openStream() {
+    const db = new Database(file);
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 0');
+    const id = `baton-${++seq}`;
+    const stream = { id, db, writing: false };
+    streams.set(id, stream);
+    return stream;
+  }
+
+  function acquire(stream) {
+    if (writer == null) {
+      writer = stream;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      waiters.push(() => {
+        writer = stream;
+        resolve();
+      });
+    });
+  }
+
+  function release(stream) {
+    if (writer !== stream) return;
+    const next = waiters.shift();
+    if (next) next();
+    else writer = null;
+  }
+
+  async function handle(body) {
+    let stream = null;
+    if (body.baton) {
+      stream = streams.get(body.baton);
+      if (!stream) {
+        return {
+          status: 400,
+          payload: { message: 'stale or unknown baton' }
+        };
+      }
+    }
+    const results = [];
+    for (const request of body.requests || []) {
+      if (request.type === 'close') {
+        if (stream) {
+          if (stream.db.inTransaction) {
+            try { stream.db.exec('ROLLBACK'); } catch { /* already closed */ }
+          }
+          if (stream.writing) release(stream);
+          streams.delete(stream.id);
+          stream.db.close();
+          stream = null;
+        }
+        results.push({ type: 'ok', response: { type: 'close' } });
+        continue;
+      }
+      const sql = String(request.stmt?.sql || '');
+      const args = request.stmt?.args || [];
+      if (/^begin\b/i.test(sql) && !stream) stream = openStream();
+      const immediate = /^begin\s+immediate\b/i.test(sql);
+      if (immediate) {
+        await acquire(stream);
+        stream.writing = true;
+      }
+      try {
+        const result = runPipelineSql(stream ? stream.db : autocommit, sql, args);
+        if (stream) calls.push({ sql, argc: args.length });
+        results.push({ type: 'ok', response: { type: 'execute', result } });
+      } catch (error) {
+        if (immediate && stream?.writing) {
+          stream.writing = false;
+          release(stream);
+        }
+        results.push({
+          type: 'error',
+          error: { message: `${error.code || 'SQLITE_ERROR'}: ${error.message}` }
+        });
+        break;
+      }
+      if (/^(commit|rollback)\b/i.test(sql.trim()) && !/^rollback\s+to\b/i.test(sql)) {
+        if (stream?.writing) {
+          stream.writing = false;
+          release(stream);
+        }
+      }
+    }
+    return { status: 200, payload: { baton: stream?.id || null, results } };
+  }
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+      const outcome = await handle(body);
+      res.writeHead(outcome.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(outcome.payload));
+    } catch (error) {
+      res.writeHead(500, { 'content-type': 'text/plain' });
+      res.end(String(error?.message || error));
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        calls,
+        close() {
+          return new Promise((done) => {
+            server.close(() => {
+              for (const stream of streams.values()) {
+                try { stream.db.close(); } catch { /* already closed */ }
+              }
+              try { autocommit.close(); } catch { /* already closed */ }
+              done();
+            });
+          });
+        }
+      });
+    });
+    server.on('error', reject);
+  });
+}
 
 describe('sourcing HTTP', () => {
   async function boot() {
@@ -862,6 +1054,10 @@ describe('sourcing HTTP', () => {
         assert.equal(updated.status, 200, JSON.stringify(updated.body));
         assert.equal(updated.body.lines.length, 50);
         assert.equal(updated.body.invitations.length, 20);
+        assert.deepEqual(
+          updated.body.invitations.map((row) => row.id),
+          created.body.invitations.map((row) => row.id)
+        );
         const edited = await db.prepare(`
           SELECT action FROM compliance_audit_events
           WHERE entity_type = 'sourcing_event' AND entity_id = ? AND action = 'SOURCING_EVENT_UPDATED'
@@ -939,6 +1135,52 @@ describe('sourcing HTTP', () => {
         assert.equal(blocked.body.code, 'event_number_conflict');
         assert.equal(collisions, 3);
         assert.equal(String(blocked.body.error).includes('UNIQUE constraint'), false);
+
+        collisions = 0;
+        db.prepare = (sql) => {
+          const stmt = origPrepare(sql);
+          if (!/INSERT INTO sourcing_events/i.test(String(sql))) return stmt;
+          const run = stmt.run.bind(stmt);
+          return {
+            get: stmt.get.bind(stmt),
+            all: stmt.all.bind(stmt),
+            run: (...args) => {
+              collisions += 1;
+              if (collisions <= 2) {
+                const error = new Error('database is locked');
+                error.code = 'SQLITE_BUSY_SNAPSHOT';
+                throw error;
+              }
+              return run(...args);
+            }
+          };
+        };
+        const retriedBusy = await json(await post());
+        assert.equal(retriedBusy.status, 201, JSON.stringify(retriedBusy.body));
+        assert.equal(JSON.stringify(retriedBusy.body).includes('database is locked'), false);
+        assert.ok(collisions >= 3);
+
+        collisions = 0;
+        db.prepare = (sql) => {
+          const stmt = origPrepare(sql);
+          if (!/INSERT INTO sourcing_events/i.test(String(sql))) return stmt;
+          return {
+            get: stmt.get.bind(stmt),
+            all: stmt.all.bind(stmt),
+            run: () => {
+              collisions += 1;
+              const error = new Error('SQLITE_BUSY: database is locked');
+              error.code = 'SQLITE_BUSY';
+              throw error;
+            }
+          };
+        };
+        const locked = await json(await post());
+        assert.equal(locked.status, 409);
+        assert.equal(locked.body.code, 'event_number_conflict');
+        assert.equal(collisions, 3);
+        assert.equal(JSON.stringify(locked.body).includes('database is locked'), false);
+        assert.equal(JSON.stringify(locked.body).includes('SQLITE_BUSY'), false);
       } finally {
         db.prepare = origPrepare;
       }
@@ -1052,6 +1294,270 @@ describe('sourcing HTTP', () => {
     } finally {
       db.prepare = origPrepare;
     }
+  });
+
+  test('a buyer can resave a requisition department and cannot move it', async () => {
+    const { db, app } = await boot();
+    const pr = await db.prepare(`
+      INSERT INTO purchase_requisitions (
+        pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority
+      ) VALUES ('PR-2026-077', 1, 2, 'approved', 1000, 'Andere kostenplaats', '2026-12-01', 'Medium')
+    `).run();
+    const prId = Number(pr.lastInsertRowid);
+    await db.prepare(`
+      INSERT INTO requisition_items (
+        requisition_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type
+      ) VALUES (?, 'Papier', 'Office Supplies', 1, 1000, 1000, 1, 'goods')
+    `).run(prId);
+    await withFlag('1', () => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events/from-requisition`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requisition_id: prId, title: 'Van financiën' })
+      }));
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      assert.equal(created.body.department_id, 2);
+
+      const same = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Van financiën, herzien',
+          department_id: 2,
+          row_version: created.body.row_version
+        })
+      }));
+      assert.equal(same.status, 200, JSON.stringify(same.body));
+      assert.equal(same.body.department_id, 2);
+
+      const moved = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          department_id: 1,
+          row_version: same.body.row_version
+        })
+      }));
+      assert.equal(moved.status, 409);
+      assert.equal(moved.body.code, 'department_locked');
+
+      const scratch = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Eigen kostenplaats' })
+      }));
+      assert.equal(scratch.status, 201, JSON.stringify(scratch.body));
+      assert.equal(scratch.body.department_id, 1);
+      const other = await json(await fetch(`${base}/api/sourcing/events/${scratch.body.id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          department_id: 2,
+          row_version: scratch.body.row_version
+        })
+      }));
+      assert.equal(other.status, 403);
+      assert.equal(other.body.code, 'department_not_allowed');
+    }));
+  });
+
+  test('invitation ids stay put when a draft is saved again', async () => {
+    const { db, app } = await boot();
+    await db.prepare(`
+      INSERT INTO suppliers (id, name, code, email, status) VALUES (4, 'Extra', 'EXT', 'extra@supply.test', 'active')
+    `).run();
+    await withFlag('1', () => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Uitnodigingen',
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const keptId = created.body.invitations[0].id;
+
+      const edited = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          row_version: created.body.row_version,
+          invitations: [
+            { supplier_id: 2, contact_email: 'buyer@active.test' },
+            { supplier_id: 4, contact_email: 'extra@supply.test' }
+          ]
+        })
+      }));
+      assert.equal(edited.status, 200, JSON.stringify(edited.body));
+      const still = edited.body.invitations.find((row) => row.supplier_id === 2);
+      const added = edited.body.invitations.find((row) => row.supplier_id === 4);
+      assert.equal(still.id, keptId);
+      assert.equal(still.contact_email, 'buyer@active.test');
+      assert.ok(added.id);
+      assert.notEqual(added.id, keptId);
+
+      const trimmed = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          row_version: edited.body.row_version,
+          invitations: [{ supplier_id: 4, contact_email: 'extra@supply.test' }]
+        })
+      }));
+      assert.equal(trimmed.status, 200, JSON.stringify(trimmed.body));
+      assert.equal(trimmed.body.invitations.length, 1);
+      assert.equal(trimmed.body.invitations[0].id, added.id);
+    }));
+  });
+
+  test('removing a file re-checks draft status inside the write', async () => {
+    const { db, app } = await boot();
+    await withFlag('1', () => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Bijlage race' })
+      }));
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const upload = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/files`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(3),
+          'Content-Type': 'application/pdf',
+          'X-Filename': 'specificatie.pdf'
+        },
+        body: PDF
+      }));
+      assert.equal(upload.status, 201, JSON.stringify(upload.body));
+      await db.prepare(`
+        UPDATE sourcing_events SET status = 'published', deadline_at = ? WHERE id = ?
+      `).run('2026-12-01T12:00:00.000Z', created.body.id);
+
+      const origPrepare = db.prepare.bind(db);
+      let lied = false;
+      db.prepare = (sql) => {
+        const stmt = origPrepare(sql);
+        if (!lied && /SELECT \* FROM sourcing_events WHERE id/i.test(String(sql))) {
+          return {
+            get: async (...args) => {
+              lied = true;
+              const row = await stmt.get(...args);
+              return row ? { ...row, status: 'draft' } : row;
+            },
+            all: stmt.all.bind(stmt),
+            run: stmt.run.bind(stmt)
+          };
+        }
+        return stmt;
+      };
+      try {
+        const removed = await json(await fetch(
+          `${base}/api/sourcing/events/${created.body.id}/files/${upload.body.id}/remove`,
+          { method: 'POST', headers: authHeaders(3) }
+        ));
+        assert.equal(removed.status, 409);
+        assert.equal(removed.body.code, 'event_state_changed');
+        assert.equal(JSON.stringify(removed.body).includes('UNIQUE'), false);
+      } finally {
+        db.prepare = origPrepare;
+      }
+      const meta = await db.prepare(`SELECT removed_at FROM sourcing_files WHERE id = ?`).get(upload.body.id);
+      const blob = await db.prepare(`SELECT file_id FROM sourcing_file_blobs WHERE file_id = ?`).get(upload.body.id);
+      assert.equal(meta.removed_at, null);
+      assert.equal(blob.file_id, upload.body.id);
+    }));
+  });
+
+  async function openSeededTurso(extra) {
+    const file = path.join(os.tmpdir(), `pf-rfq-${Date.now()}-${Math.random().toString(16).slice(2)}.db`);
+    const setup = new SqliteAdapter(new Database(file));
+    setup.raw.pragma('journal_mode = WAL');
+    setup.raw.pragma('foreign_keys = ON');
+    await applySchema(setup);
+    await seedWorld(setup);
+    if (extra) await extra(setup);
+    setup.raw.pragma('wal_checkpoint(TRUNCATE)');
+    setup.close();
+    const pipeline = await startFilePipeline(file);
+    const client = new TursoHttpClient(pipeline.url, 'tok');
+    return {
+      app: appFor(client),
+      client,
+      pipeline,
+      async close() {
+        await pipeline.close();
+        fs.rmSync(file, { force: true });
+        for (const suffix of ['-wal', '-shm']) fs.rmSync(file + suffix, { force: true });
+      }
+    };
+  }
+
+  test('five parallel creates on the Turso client get distinct RFQ numbers', async () => {
+    const opened = await openSeededTurso();
+    try {
+      await withFlag('1', () => withServer(opened.app, async (base) => {
+        const post = () => fetch(`${base}/api/sourcing/events`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'Gelijktijdig' })
+        }).then(json);
+        const created = await Promise.all(Array.from({ length: 5 }, () => post()));
+        const numbers = created.map((row) => {
+          assert.equal(row.status, 201, JSON.stringify(row.body));
+          assert.match(row.body.event_number, /^RFQ-\d{4}-\d{3}$/);
+          return row.body.event_number;
+        });
+        assert.equal(new Set(numbers).size, 5);
+      }));
+    } finally {
+      await opened.close();
+    }
+  });
+
+  test('a capped draft save stays within 25 statements on the Turso client', async () => {
+    const opened = await openSeededTurso((db) => seedCapSuppliers(db));
+    const supplierIds = [2, ...Array.from({ length: 19 }, (_, index) => index + 4)];
+    const body = capPayload(supplierIds);
+    const watch = watchTransactions(opened.client);
+    try {
+      await withFlag('1', () => withServer(opened.app, async (base) => {
+        const created = await json(await fetch(`${base}/api/sourcing/events`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'Vol tot de rand', ...body })
+        }));
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        assert.equal(created.body.lines.length, 50);
+        assert.equal(created.body.invitations.length, 20);
+        const updated = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+          method: 'PATCH',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Vol tot de rand, herzien',
+            row_version: created.body.row_version,
+            ...body
+          })
+        }));
+        assert.equal(updated.status, 200, JSON.stringify(updated.body));
+        assert.deepEqual(
+          updated.body.invitations.map((row) => row.id),
+          created.body.invitations.map((row) => row.id)
+        );
+      }));
+    } finally {
+      watch.restore();
+      await opened.close();
+    }
+    assert.equal(watch.counts.length, 2, JSON.stringify(watch.counts));
+    for (const count of watch.counts) {
+      assert.ok(count <= 25, `transaction used ${count} statements`);
+      assert.ok(count > 0);
+    }
+    assert.ok(opened.pipeline.calls.some((call) => /^BEGIN IMMEDIATE\b/i.test(call.sql.trim())));
+    const lineInserts = opened.pipeline.calls.filter((call) => /INSERT INTO sourcing_event_lines/i.test(call.sql));
+    assert.ok(lineInserts.length >= 1);
+    assert.equal(Math.max(...lineInserts.map((call) => call.argc)), 600);
   });
 
   test('convert still issues a PO when no RFQ points at the requisition', async () => {

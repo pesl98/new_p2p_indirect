@@ -111,6 +111,7 @@ export const sourcing = {
   'code.event_state_changed': 'De offerteaanvraag is intussen gewijzigd. Vernieuw het scherm.',
   'code.event_number_conflict': 'Het offertenummer was net vergeven. Probeer het opnieuw.',
   'code.department_not_allowed': 'Deze kostenplaats hoort niet bij jouw account.',
+  'code.department_locked': 'De kostenplaats van een offerteaanvraag vanuit een inkoopaanvraag kan niet worden gewijzigd.',
   'code.event_files_too_large': 'De bijlagen van deze offerteaanvraag zijn samen groter dan 40 MB.',
   'sourcing.warning.deadlinePast': 'De sluitingstijd ligt in het verleden. Publiceren wordt in een latere versie geweigerd.',
   'code.invalid_transition': 'Deze statusovergang is niet toegestaan.',

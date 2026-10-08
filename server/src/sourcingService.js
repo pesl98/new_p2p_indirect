@@ -214,6 +214,19 @@ async function readDepartment(db, actor, value) {
   return id;
 }
 
+async function departmentForUpdate(db, actor, input, existing) {
+  if (!hasOwn(input, 'department_id') || input.department_id == null || input.department_id === '') {
+    return existing.department_id;
+  }
+  const id = Number(input.department_id);
+  if (!Number.isInteger(id) || id <= 0) fail('Department was not found.', 400, 'department_not_found');
+  if (id === Number(existing.department_id)) return id;
+  if (existing.source_requisition_id) {
+    fail('The department of an RFQ from a requisition cannot be changed.', 409, 'department_locked');
+  }
+  return readDepartment(db, actor, id);
+}
+
 function digest(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -254,6 +267,18 @@ function saveDetails(source, sourceRequisitionId, lines, invitations) {
 
 function isEventNumberConflict(error) {
   return isUniqueConstraint(error) && /event_number/i.test(String(error.message || ''));
+}
+
+function isBusyConflict(error) {
+  const code = String(error?.code || '');
+  if (code === 'SQLITE_BUSY' || code === 'SQLITE_BUSY_SNAPSHOT' || code === 'SQLITE_BUSY_TIMEOUT') return true;
+  return /SQLITE_BUSY|database is locked/i.test(String(error?.message || ''));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function insertRows(db, table, columns, rows) {
@@ -514,7 +539,8 @@ async function replaceLines(db, eventId, lines) {
 
 async function replaceInvitations(db, eventId, actor, invitations, now) {
   const existing = await db.prepare(`
-    SELECT supplier_id, token_hash FROM sourcing_invitations WHERE event_id = ?
+    SELECT id, supplier_id, contact_name, contact_email, token_hash
+    FROM sourcing_invitations WHERE event_id = ?
   `).all(eventId);
   const keep = new Set(invitations.map((row) => row.supplier_id));
   for (const row of existing) {
@@ -522,19 +548,46 @@ async function replaceInvitations(db, eventId, actor, invitations, now) {
       fail('An invitation with a link cannot be removed here.', 409, 'event_state_changed');
     }
   }
-  await db.prepare(`
-    DELETE FROM sourcing_invitations WHERE event_id = ? AND token_hash IS NULL
-  `).run(eventId);
-  const locked = new Set(
-    existing.filter((row) => row.token_hash && keep.has(row.supplier_id)).map((row) => row.supplier_id)
-  );
-  await insertInvitations(
-    db,
-    eventId,
-    actor,
-    invitations.filter((row) => !locked.has(row.supplier_id)),
-    now
-  );
+  const bySupplier = new Map(existing.map((row) => [row.supplier_id, row]));
+  const dropIds = existing
+    .filter((row) => !row.token_hash && !keep.has(row.supplier_id))
+    .map((row) => row.supplier_id);
+  if (dropIds.length) {
+    const marks = dropIds.map(() => '?').join(', ');
+    await db.prepare(`
+      DELETE FROM sourcing_invitations
+      WHERE event_id = ? AND token_hash IS NULL AND supplier_id IN (${marks})
+    `).run(eventId, ...dropIds);
+  }
+  const fresh = [];
+  const changed = [];
+  for (const invitation of invitations) {
+    const row = bySupplier.get(invitation.supplier_id);
+    if (!row) {
+      fresh.push(invitation);
+      continue;
+    }
+    if (row.token_hash) continue;
+    const nextName = invitation.contact_name || null;
+    const prevName = row.contact_name || null;
+    if (prevName !== nextName || row.contact_email !== invitation.contact_email) {
+      changed.push(invitation);
+    }
+  }
+  if (changed.length) {
+    const nameCase = changed.map(() => 'WHEN ? THEN ?').join(' ');
+    const emailCase = changed.map(() => 'WHEN ? THEN ?').join(' ');
+    const marks = changed.map(() => '?').join(', ');
+    const nameArgs = changed.flatMap((row) => [row.supplier_id, row.contact_name || null]);
+    const emailArgs = changed.flatMap((row) => [row.supplier_id, row.contact_email]);
+    await db.prepare(`
+      UPDATE sourcing_invitations
+      SET contact_name = CASE supplier_id ${nameCase} ELSE contact_name END,
+          contact_email = CASE supplier_id ${emailCase} ELSE contact_email END
+      WHERE event_id = ? AND token_hash IS NULL AND supplier_id IN (${marks})
+    `).run(...nameArgs, ...emailArgs, eventId, ...changed.map((row) => row.supplier_id));
+  }
+  if (fresh.length) await insertInvitations(db, eventId, actor, fresh, now);
 }
 
 async function replaceEvaluators(db, eventId, actor, userIds, now) {
@@ -571,10 +624,9 @@ async function insertEvent(db, actor, fields, lines, invitations, evaluators, so
     if (open) fail('This requisition already has an open RFQ.', 409, 'requisition_in_sourcing');
   }
 
-  let lastConflict = null;
   for (let attempt = 1; attempt <= EVENT_NUMBER_ATTEMPTS; attempt += 1) {
     try {
-      return await db.transaction(async () => {
+      return await db.immediateTransaction(async () => {
         const year = Number(String(now).slice(0, 4));
         const eventNumber = await nextDocumentNumber(db, 'rfq', year);
         const result = await db.prepare(`
@@ -635,15 +687,17 @@ async function insertEvent(db, actor, fields, lines, invitations, evaluators, so
       if (isUniqueConstraint(error) && /sourcing_invitations/i.test(String(error.message || ''))) {
         fail('Each supplier can be invited once.', 409, 'duplicate_invitation');
       }
-      if (isEventNumberConflict(error)) {
-        lastConflict = error;
-        if (attempt < EVENT_NUMBER_ATTEMPTS) continue;
+      if (isEventNumberConflict(error) || isBusyConflict(error)) {
+        if (attempt < EVENT_NUMBER_ATTEMPTS) {
+          await wait(20 * attempt);
+          continue;
+        }
         fail('Could not allocate an RFQ number.', 409, 'event_number_conflict');
       }
       throw error;
     }
   }
-  fail(lastConflict?.message || 'Could not allocate an RFQ number.', 409, 'event_number_conflict');
+  fail('Could not allocate an RFQ number.', 409, 'event_number_conflict');
 }
 
 export async function createEvent(db, actor, input, { currency } = {}) {
@@ -741,9 +795,7 @@ export async function updateEvent(db, actor, id, input) {
     : existing.title;
   const description = hasOwn(input, 'description') ? optionalText(input.description, 20000) : existing.description;
   const category = hasOwn(input, 'category') ? readCategory(input.category) : existing.category;
-  const departmentId = hasOwn(input, 'department_id')
-    ? await readDepartment(db, actor, input.department_id)
-    : existing.department_id;
+  const departmentId = await departmentForUpdate(db, actor, input, existing);
   const schedule = readSchedule(input);
   const deadline = hasOwn(schedule, 'deadline_at') ? schedule.deadline_at : existing.deadline_at;
   const qaEnabled = hasOwn(schedule, 'qa_enabled') ? schedule.qa_enabled : existing.qa_enabled;
@@ -1031,12 +1083,36 @@ export async function removeEventFile(db, actor, eventId, fileId) {
       UPDATE sourcing_files
       SET removed_at = ?
       WHERE id = ? AND event_id = ? AND owner_kind = 'event' AND removed_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM sourcing_events e
+          WHERE e.id = sourcing_files.event_id AND e.status = 'draft'
+        )
     `).run(now, fileId, existing.id);
-    if (!result.changes) return 0;
+    if (!result.changes) {
+      const current = await db.prepare(`SELECT status FROM sourcing_events WHERE id = ?`).get(existing.id);
+      if (!current || current.status !== 'draft') {
+        fail('The RFQ is no longer a draft.', 409, 'event_state_changed');
+      }
+      return 0;
+    }
     // Draft only. bytes is NOT NULL and the blob trigger rejects UPDATE, so the
-    // row is deleted. Metadata and the audit line stay. Later statuses never
-    // reach this path.
-    await db.prepare(`DELETE FROM sourcing_file_blobs WHERE file_id = ?`).run(fileId);
+    // row is deleted. Metadata and the audit line stay. The status check is
+    // repeated on the DELETE so a publish that won the write lock keeps the blob.
+    const removed = await db.prepare(`
+      DELETE FROM sourcing_file_blobs
+      WHERE file_id = ?
+        AND EXISTS (
+          SELECT 1 FROM sourcing_events e
+          JOIN sourcing_files f ON f.event_id = e.id
+          WHERE f.id = ? AND e.status = 'draft'
+        )
+    `).run(fileId, fileId);
+    if (!removed.changes) {
+      const current = await db.prepare(`SELECT status FROM sourcing_events WHERE id = ?`).get(existing.id);
+      if (!current || current.status !== 'draft') {
+        fail('The RFQ is no longer a draft.', 409, 'event_state_changed');
+      }
+    }
     await writeAudit(db, 'sourcing_event', existing.id, 'FILE_REMOVED', actor.name, `PDF file ${fileId} removed from the draft`);
     await writeCompliance(db, actor, 'SOURCING_FILE_REMOVED', 'sourcing_event', existing.id, {
       file_id: Number(fileId)

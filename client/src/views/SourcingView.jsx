@@ -486,8 +486,9 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
               <label className="block text-sm">
                 <span className="text-slate-600">{t('sourcing.field.department')}</span>
                 <select
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 disabled:bg-slate-50 disabled:text-slate-500"
                   value={draft.department_id}
+                  disabled={draft.source === 'requisition'}
                   onChange={(event) => setDraft({ ...draft, department_id: event.target.value })}
                 >
                   <option value="">{t('common.none')}</option>
