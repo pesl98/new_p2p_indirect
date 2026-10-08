@@ -329,7 +329,17 @@ Document numbers (`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `C
 }
 ```
 
-A perfect match is **201** with `invoice.status` `matched` and `invoice.match_status` `perfect_match`. The same `external_id` and the same payload again is **200** (`unchanged: true`). A different payload is **409** `invoice_immutable`. Field rules and the error-code table are in [docs/SYSTEM_MANUAL.md §5.14](docs/SYSTEM_MANUAL.md#514-integrations) and [docs/DEPLOY_MANUAL.md §8.8](docs/DEPLOY_MANUAL.md#88-integrations). UBL/Peppol and OCR/PDF are follow-ups (OCR is Sprint 7b).
+A perfect match is **201** with `invoice.status` `matched` and `invoice.match_status` `perfect_match`. The same `external_id` and the same payload again is **200** (`unchanged: true`). A different payload is **409** `invoice_immutable`. Field rules and the error-code table are in [docs/SYSTEM_MANUAL.md §5.14](docs/SYSTEM_MANUAL.md#514-integrations) and [docs/DEPLOY_MANUAL.md §8.8](docs/DEPLOY_MANUAL.md#88-integrations). UBL/Peppol is still a follow-up.
+
+### Finance inbox (PDF proposals)
+
+Finance and admin upload one or more supplier-invoice PDFs in **Financiële inbox**. Recognition does not post an invoice. It stores a proposal. The reviewer sees the PDF next to the fields, with low-confidence fields highlighted, plus a preview of the 3-way match and the duplicate check. **Goedkeuren en boeken** posts through the same pipeline as a screen invoice. **Bewerk en boek** keeps the OCR values and the edited values. **Afwijzen** needs a reason, keeps the PDF, and posts nothing.
+
+The original PDF stays in this customer’s database. It is not a public URL. Download is `GET /api/invoice-proposals/:id/pdf` and requires a finance or admin session.
+
+`POST /api/integrations/invoice-proposals` accepts one raw `application/pdf` body with scope `invoices:write`, the same API key, rate limit, and `Idempotency-Key` as the JSON invoice route. The key is the uploader. A person still approves in the inbox.
+
+If `INVOICE_OCR_PROVIDER` and `INVOICE_OCR_MODEL` are not set, upload is off: the screen says so, and the API returns **503** `ocr_not_configured`. The size cap is 4 MiB (`INVOICE_PDF_MAX_BYTES` can only lower it). Operator setup is [docs/DEPLOY_MANUAL.md §8.9](docs/DEPLOY_MANUAL.md#89-pdf-invoice-proposals). The workflow is [docs/SYSTEM_MANUAL.md §5.15](docs/SYSTEM_MANUAL.md#515-pdf-invoice-proposals).
 
 Catalog / PR / PO lines are typed `goods` or `service` from category (Consulting, Software & Cloud, Marketing & Events, Travel → service; IT Hardware, Office, Facilities → goods) unless an explicit `line_type` is stored.
 

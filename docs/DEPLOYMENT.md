@@ -99,6 +99,11 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `WEBHOOK_TARGET_URL` | When webhooks are on | HTTPS endpoint for this customer’s ERP/AP. Not stored in the database. See [§2.2](#22-integrations-api-keys-and-webhooks-per-customer). |
 | `WEBHOOK_SIGNING_SECRET` | When webhooks are on | HMAC key for `X-ProcureFlow-Signature`. Never committed, never returned by the API. |
 | `CURRENCY` | No | `EUR` (default) or `USD`. Display locale is `nl-NL` (`€ 1.295,00`, non-breaking space after the symbol). Invalid values refuse to boot. Stored amounts stay integer cents; this is not FX. |
+| `INVOICE_OCR_PROVIDER` | When PDF upload is on | `gateway`, or leave unset. Unset disables upload (fail closed). |
+| `INVOICE_OCR_MODEL` | With the gateway provider | AI Gateway model id, for example a current Gemini flash model that accepts PDFs. |
+| `AI_GATEWAY_API_KEY` | Off Vercel | Gateway credential. On Vercel, OIDC is enough. Never commit it. |
+| `INVOICE_PDF_MAX_BYTES` | No | Optional cap at or below 4194304 (4 MiB). Invalid values use 4 MiB. |
+| `INVOICE_PROPOSAL_SOD` | No | `enforce` (default) or `off`. `enforce` blocks the uploading user from posting their own proposal. |
 
 ### 2.1 SSO (OIDC or SAML) per customer
 

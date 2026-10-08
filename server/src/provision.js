@@ -43,6 +43,7 @@ export const EXPECTED_TABLES = [
   'invoice_duplicate_flags',
   'invoice_exception_dispositions',
   'invoice_items',
+  'invoice_proposals',
   'invoices',
   'match_results',
   'payment_run_items',

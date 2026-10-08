@@ -25,6 +25,8 @@ export const shell = {
   'shell.nav.serviceEntryDesc': 'Diensten accepteren; 2-way matching op basis van SES',
   'shell.nav.invoices': 'Facturen en matching',
   'shell.nav.invoicesDesc': 'Geautomatiseerde 3-way matching en crediteuren',
+  'shell.nav.financeInbox': 'Financiële inbox',
+  'shell.nav.financeInboxDesc': 'PDF-voorstellen controleren en boeken',
   'shell.nav.exceptions': 'Uitzonderingswerkbank',
   'shell.nav.exceptionsDesc': 'Beoordeling door crediteuren bij afwijkende matching',
   'shell.nav.duplicates': 'Mogelijke duplicaten',

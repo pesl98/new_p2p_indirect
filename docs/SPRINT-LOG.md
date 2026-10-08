@@ -69,6 +69,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
 | 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
 | 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | | in progress |
+| 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | draft, stacked on [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -318,3 +319,35 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **UI copy.** The scope checkbox shows the English token and a Dutch label (`Inkomende facturen schrijven`). Other scopes on that form got Dutch labels too. The API value is unchanged.
 - **Existing databases.** `integration_entity_links.entity_type` gains `invoice`. CHECK cannot be altered, so the next `db:migrate` or process start rebuilds that table and copies the rows. No new table and no hand-written SQL.
 - **Left alone.** SSO, `pf_session`, the ledger triggers, webhook drain, UBL/Peppol, and OCR/PDF. Those last two are follow-ups. OCR/PDF is Sprint 7b, built on `createSupplierInvoice`.
+
+## Sprint 7b — PDF invoice upload, OCR proposals, finance inbox
+
+**Date:** 2026-10-08
+
+**Goal:** Let finance upload a supplier-invoice PDF, review an OCR proposal with a match preview, and post or reject it through the Sprint 7a invoice service.
+
+**PR:** draft, stacked on https://github.com/pesl98/new_p2p_indirect/pull/53 (#53). Merge this only after 7a.
+
+**Merge SHA:**
+
+**Status:** in progress.
+
+### Done when
+
+- Finance and admin can upload one or more PDFs in **Financiële inbox**. `POST /api/integrations/invoice-proposals` accepts one PDF under `invoices:write`, with the Sprint 7a key check, rate limit, and `Idempotency-Key`.
+- The file is a real PDF (`%PDF-`) and at most 4 MiB. The bytes sit in `invoice_proposals` in the customer database and are downloaded only by a finance or admin session.
+- Extraction is behind `INVOICE_OCR_PROVIDER=gateway` and `INVOICE_OCR_MODEL`. Unset means upload is disabled in the UI and **503** `ocr_not_configured` on the API. Tests use a fake provider and do not call the network.
+- A proposal is not an invoice. It matches vendor and PO when it can, suggests when it cannot, and previews the 3-way match and duplicate check with `createSupplierInvoice({ dryRun: true })`.
+- Approve posts through `createSupplierInvoice`. Edit-then-post keeps the OCR snapshot and audits the diff. Reject requires a reason, keeps the PDF, and posts nothing.
+- The uploader cannot post their own proposal unless `INVOICE_PROPOSAL_SOD=off`. An API-key upload has no user uploader.
+- Compliance events: uploaded, extracted, edited, posted, rejected. Reject enqueues `invoice_proposal.rejected` in the same transaction. Post does not add a webhook; `invoice.approved` stays on payment approval.
+- Dutch labels, EUR formatting, and comma amount entry. Docs name the env vars, the size cap, and the disabled state. `npm test` is green.
+
+### Decisions
+
+- **Storage.** Private BLOB in the customer database, not Vercel Blob. One Turso database is already the isolation boundary. A Blob token is a second secret that can be copied onto the wrong project. Download stays behind the session. 4 MiB keeps the raw upload under the usual serverless body limit and the base64 Turso pipeline body near 5.4 MiB. The same cap applies to local SQLite.
+- **OCR.** A vision model through the Vercel AI Gateway (`generateText` + `Output.object`, PDF sent inline) beats shipping Tesseract for invoices that are not clean scans. The provider is env-configured and fail-closed. Tests never import the gateway module’s network call.
+- **No second pipeline.** Preview and post both call `createSupplierInvoice`. Post uses `source: ui` even when a key uploaded the PDF, because the poster is the signed-in user. The key remains the actor on the upload compliance rows.
+- **Segregation.** Default `enforce`. It compares user ids, so it applies only when the uploader was a session user. The key cannot approve. `off` is the explicit small-team escape. Reject is allowed for the uploader; the control is on posting.
+- **Webhooks.** New event `invoice_proposal.rejected` only. Posted proposals do not enqueue `invoice.approved`. That event still fires later if AP approves the invoice for payment.
+- **Left alone.** Email ingestion, Peppol/UBL, auto-post, webhook cron, SSO, and `pf_session`.

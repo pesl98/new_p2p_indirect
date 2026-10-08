@@ -16,6 +16,7 @@ import utilitiesRouter from './routes/utilities.js';
 import bulkVesselsRouter from './routes/bulkVessels.js';
 import serviceEntrySheetsRouter from './routes/serviceEntrySheets.js';
 import invoicesRouter from './routes/invoices.js';
+import invoiceProposalsRouter from './routes/invoiceProposals.js';
 import invoiceExceptionsRouter from './routes/invoiceExceptions.js';
 import invoiceDuplicatesRouter from './routes/invoiceDuplicates.js';
 import apAgingRouter from './routes/apAging.js';
@@ -117,6 +118,7 @@ export function createApp(options = {}) {
   app.use('/api/bulk-vessels', bulkVesselsRouter);
   app.use('/api/service-entry-sheets', serviceEntrySheetsRouter);
   app.use('/api/invoices', invoicesRouter);
+  app.use('/api/invoice-proposals', invoiceProposalsRouter);
   app.use('/api/invoice-exceptions', invoiceExceptionsRouter);
   app.use('/api/invoice-duplicates', invoiceDuplicatesRouter);
   app.use('/api/ap-aging', apAgingRouter);

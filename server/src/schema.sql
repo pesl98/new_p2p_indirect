@@ -862,3 +862,37 @@ CREATE TABLE IF NOT EXISTS webhook_outbox (
 CREATE INDEX IF NOT EXISTS webhook_outbox_pending
   ON webhook_outbox (status, next_attempt_at);
 
+-- Sprint 7b. One row per uploaded supplier-invoice PDF. The bytes live in
+-- this customer database (not a public URL). OCR fills the proposal; a
+-- person posts it later through the same invoice pipeline as the UI.
+CREATE TABLE IF NOT EXISTS invoice_proposals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'posted', 'rejected')),
+  pdf_filename TEXT NOT NULL,
+  pdf_sha256 TEXT NOT NULL,
+  pdf_size INTEGER NOT NULL,
+  pdf_bytes BLOB NOT NULL,
+  ocr_json TEXT NOT NULL,
+  baseline_json TEXT NOT NULL,
+  working_json TEXT NOT NULL,
+  vendor_match_json TEXT NOT NULL,
+  po_match_json TEXT NOT NULL,
+  preview_json TEXT NOT NULL,
+  uploaded_by_user_id INTEGER,
+  uploaded_by_name TEXT NOT NULL,
+  uploaded_by_role TEXT,
+  api_key_id INTEGER,
+  source TEXT NOT NULL CHECK (source IN ('ui', 'integration')),
+  posted_invoice_id INTEGER,
+  rejected_reason TEXT,
+  rejected_by_user_id INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id),
+  FOREIGN KEY (api_key_id) REFERENCES api_keys(id),
+  FOREIGN KEY (posted_invoice_id) REFERENCES invoices(id)
+);
+
+CREATE INDEX IF NOT EXISTS invoice_proposals_status
+  ON invoice_proposals (status, id);
+

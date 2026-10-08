@@ -5,8 +5,9 @@
  * `approver_id`, `requester_id`, and `actor_name` cannot name someone else.
  * OIDC and SAML callbacks mint the same `pf_session` cookie (see auth.js / routes/sso.js)
  * and then go through this helper — not a parallel identity header.
- * Integration machine routes (/api/integrations/vendors, /catalog, /invoices, /exports)
- * are the exception: they require a scoped API key and ignore pf_session.
+ * Integration machine routes (/api/integrations/vendors, /catalog, /invoices,
+ * /invoice-proposals, /exports) are the exception: they require a scoped API
+ * key and ignore pf_session.
  */
 
 import { IDENTITY_PROVIDER } from './auth.js';
@@ -34,6 +35,7 @@ export function isIntegrationMachineRoute(req) {
   const path = requestPath(req);
   if (path === '/api/integrations/vendors' || path === '/api/integrations/catalog') return true;
   if (path === '/api/integrations/invoices') return true;
+  if (path === '/api/integrations/invoice-proposals') return true;
   if (path.startsWith('/api/integrations/exports/')) return true;
   return false;
 }

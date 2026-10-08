@@ -667,5 +667,64 @@ export const api = {
   dispatchWebhooks: async () => {
     const r = await apiFetch(`${API_BASE}/integrations/outbox/dispatch`, { method: 'POST' });
     return jsonOk(r, t('errors.dispatch'));
+  },
+
+  getInvoiceProposalConfig: () =>
+    apiFetch(`${API_BASE}/invoice-proposals/config`).then((r) => proposalJson(r, t('errors.proposalLoad'))),
+  getInvoiceProposalOptions: () =>
+    apiFetch(`${API_BASE}/invoice-proposals/options`).then((r) => proposalJson(r, t('errors.proposalLoad'))),
+  listInvoiceProposals: (status = 'proposed') =>
+    apiFetch(`${API_BASE}/invoice-proposals?status=${encodeURIComponent(status)}`).then((r) =>
+      proposalJson(r, t('errors.proposalLoad'))
+    ),
+  uploadInvoiceProposal: async (file) => {
+    const r = await apiFetch(`${API_BASE}/invoice-proposals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/pdf',
+        'X-Filename': file.name || 'invoice.pdf'
+      },
+      body: await file.arrayBuffer()
+    });
+    return proposalJson(r, t('errors.proposalUpload'));
+  },
+  previewInvoiceProposal: async (id, data) => {
+    const r = await apiFetch(`${API_BASE}/invoice-proposals/${id}/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return proposalJson(r, t('errors.proposalPreview'));
+  },
+  approveInvoiceProposal: async (id) => {
+    const r = await apiFetch(`${API_BASE}/invoice-proposals/${id}/approve`, { method: 'POST' });
+    return proposalJson(r, t('errors.proposalPost'));
+  },
+  postInvoiceProposal: async (id, data) => {
+    const r = await apiFetch(`${API_BASE}/invoice-proposals/${id}/post`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return proposalJson(r, t('errors.proposalPost'));
+  },
+  rejectInvoiceProposal: async (id, reason) => {
+    const r = await apiFetch(`${API_BASE}/invoice-proposals/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    });
+    return proposalJson(r, t('errors.proposalReject'));
   }
 };
+
+async function proposalJson(response, fallbackMessage) {
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+  if (!response.ok) throw new Error(data.code || data.error || fallbackMessage);
+  return data;
+}

@@ -146,6 +146,11 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `WEBHOOK_TARGET_URL` | HTTPS URL that receives signed webhooks for this customer. | Optional. Required only when you want delivery. `http` is allowed for localhost only. | Production and Preview. Not written by the CLIs. | Treat as sensitive if the URL contains a token. | You set it. The API returns the host only, never the URL. |
 | `WEBHOOK_SIGNING_SECRET` | HMAC-SHA256 key for `X-ProcureFlow-Signature`. | Optional. Required together with the URL. | Production and Preview. One value per customer. Not written by the CLIs. | Yes. Never stored in the database and never returned by the API. | 32-byte hex, same generator as `SESSION_SECRET`. |
 | `CURRENCY` | Deployment currency for display, audit text, exports, and money-bearing webhooks. Allowlist: `EUR` (default) or `USD`. | Optional. Leave unset for EUR. Any other value refuses to boot (503). It does not convert stored cents. | Production and Preview. Not written by the CLIs. | No. | `EUR` or `USD`. |
+| `INVOICE_OCR_PROVIDER` | `gateway` turns on PDF invoice upload. Any other value, including unset, leaves upload disabled. | Optional. Leave unset until you want the finance inbox to accept PDFs. | Production and Preview. Not written by the CLIs. | No. | `gateway` |
+| `INVOICE_OCR_MODEL` | AI Gateway model id sent the PDF. Required together with the provider. | Optional. Required only when the provider is `gateway`. | Production and Preview. | No. | A current vision model id from the gateway catalog, such as `google/gemini-2.5-flash`. |
+| `AI_GATEWAY_API_KEY` | Credential for the AI Gateway when the function is not on Vercel OIDC. | Optional on Vercel (OIDC). Required for a laptop that should call the gateway. | Production and Preview if you do not use OIDC. | Yes. | Vercel AI Gateway dashboard. The app never returns it. |
+| `INVOICE_PDF_MAX_BYTES` | Raw PDF size cap. Default and maximum **4194304** (4 MiB). | Optional. | Production and Preview. | No. | An integer from 5 through 4194304. Anything else uses 4 MiB. |
+| `INVOICE_PROPOSAL_SOD` | `enforce` (default) or `off`. | Optional. | Production and Preview. | No. | `off` only when the same person must upload and post. |
 
 ### 3.1 SSO and login flags the CLIs do not write
 
@@ -839,13 +844,34 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Put the hex in `WEBHOOK_SIGNING_SECRET`. Put the receiver’s `https` URL in `WEBHOOK_TARGET_URL`. Redeploy. Do not commit either value. `GET /api/integrations/config` with the admin cookie returns `webhook_target_configured`, `webhook_signing_secret_configured`, and `webhook_target_host`. It does not return the secret or the URL.
 
-Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
+Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.approved`, `invoice_proposal.rejected`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
 
 The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id. The dispatcher, retry schedule, and drain are unchanged.
 
 Five attempts, then status `dead`. Backoff is 30 seconds, 2 minutes, 10 minutes, then 1 hour. If the URL or secret is unset, rows stay `pending` and attempts are not burned. A long-running `npm start` sweeps every 30 seconds. On Vercel, delivery is attempted when the event is written; further tries are **Deliver pending**, **Replay**, or the next business event. Replay is `POST /api/integrations/outbox/:id/replay` (admin cookie). It resets the attempt count.
 
-There is still no inbound supplier-invoice connector and no SAP/NetSuite-specific adapter.
+There is still no UBL/Peppol connector and no SAP/NetSuite-specific adapter. PDF proposals are the next section.
+
+### 8.9 PDF invoice proposals
+
+Leave `INVOICE_OCR_PROVIDER` unset and the finance inbox shows upload as disabled. `POST /api/invoice-proposals` and `POST /api/integrations/invoice-proposals` return **503** `ocr_not_configured` and store nothing.
+
+To turn it on for this customer only:
+
+1. Set `INVOICE_OCR_PROVIDER=gateway`.
+2. Set `INVOICE_OCR_MODEL` to a gateway model id that can read a PDF. Check the current catalog (`https://ai-gateway.vercel.sh/v1/models`) and pick a vision model. Do not reuse a retired id from an old note.
+3. On Vercel, OIDC covers the gateway. Off Vercel, set `AI_GATEWAY_API_KEY` for that same project. Do not copy the key onto another customer.
+4. Redeploy. `vercel:customer` does not write these variables.
+
+The PDF is stored in this customer’s Turso database (local SQLite when you are not on Turso). You do not create a Vercel Blob store. The file is served only to a signed-in finance or admin user at `GET /api/invoice-proposals/:id/pdf`. It is not a public URL.
+
+Size limit: **4 MiB** raw. A non-PDF, including a renamed file whose bytes do not start with `%PDF-`, is **400** `not_a_pdf`. A larger file is **413** `file_too_large`. `INVOICE_PDF_MAX_BYTES` can set a smaller cap. It cannot raise the cap.
+
+`INVOICE_PROPOSAL_SOD` defaults to enforce: the user who uploaded a PDF cannot be the user who posts it. API-key uploads have no user, so a finance or admin user posts those. Set `INVOICE_PROPOSAL_SOD=off` only when one person has to do both jobs.
+
+Machine upload: `POST /api/integrations/invoice-proposals` with `Authorization: Bearer pfk_…`, scope `invoices:write`, `Content-Type: application/pdf`, and the raw PDF as the body. Optional `X-Filename` and `Idempotency-Key`. Rate limit and idempotency match the JSON invoice route. The key does not post the invoice. Rejecting a proposal writes webhook `invoice_proposal.rejected` in that same database transaction. Posting reuses the existing invoice webhooks: nothing new is queued at post time, and `invoice.approved` is still only written when AP approves the invoice for payment.
+
+The screen workflow is [SYSTEM_MANUAL.md §5.15](SYSTEM_MANUAL.md#515-pdf-invoice-proposals).
 
 ---
 

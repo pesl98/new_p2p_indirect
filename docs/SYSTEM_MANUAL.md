@@ -58,7 +58,7 @@ Do not promise these. They are **not** in the code:
 - Enterprise Coupa / SAP Ariba / Oracle Fusion replacement
 - SCIM (OIDC and SAML login are optional per customer; see [§3](#3-personas-and-authentication))
 - Shared-row multi-tenancy (`org_id` on every table)
-- OCR / PDF / email invoice capture
+- Email invoice capture, UBL/Peppol, or posting a PDF without a person reviewing it (PDF proposals are [§5.15](#515-pdf-invoice-proposals))
 - Bank NACHA / ACH file export, remittance portal, early-pay discount calendar, foreign exchange or an in-app currency picker (one `CURRENCY` per deployment, default EUR)
 - CLM, e-sign, vendor portal, successor `CNT-` rows, auto-extend of `end_date`
 - Create-department or create-budget UI
@@ -188,6 +188,7 @@ The SPA is a tab switcher (`client/src/App.jsx`). There is no React Router.
 | Vendor-Managed Bulk | Everyone | Container or silo level; measured draw opens a payable; no GRN |
 | Service Entry (SES) | Everyone | Service lines: draft → submitted → accepted/rejected |
 | Invoices & Matching | Everyone | Manual invoice against a PO; match matrix; approve / mark paid |
+| **Finance inbox** | `finance` + `admin` | Upload a supplier-invoice PDF, review the OCR proposal, post or reject |
 | Exception Workbench | Everyone | Hard dual-match failures |
 | Duplicate Suspects | `finance` + `admin` | Likely-duplicate soft holds |
 | Buyer Inbox | `requester` only | Invoices AP parked with `return_to_buyer` |
@@ -403,7 +404,7 @@ Price: exact cents → perfect; non-zero difference within 1% of PO unit price (
 
 Overall `match_status`: `perfect_match` | `tolerated_match` | `quantity_variance` | `price_variance` | `total_variance`.
 
-**Invoice capture** is a **manual form** against a PO (`POST /api/invoices`). Unique per `(supplier_id, invoice_number)` — same number from two vendors is allowed. No OCR.
+**Invoice capture** is a **manual form** against a PO (`POST /api/invoices`), or a reviewed PDF proposal ([§5.15](#515-pdf-invoice-proposals)). Unique per `(supplier_id, invoice_number)` — same number from two vendors is allowed. OCR never posts by itself.
 
 **Limits**
 
@@ -693,7 +694,7 @@ A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400
 
 **Outbound**
 
-- Events, in the same transaction as the business write: `po.issued`, `receipt.posted` (goods receipt only), `invoice.approved`, `payment_run.created`, `payment_run.paid`.
+- Events, in the same transaction as the business write: `po.issued`, `receipt.posted` (goods receipt only), `invoice.approved`, `invoice_proposal.rejected` (a rejected PDF proposal; see §5.15), `payment_run.created`, `payment_run.paid`.
 - Money-bearing payloads (`po.issued`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) include `currency` (the deployment code, default `EUR`) next to the existing cent fields. `receipt.posted` has no amount, so it has no `currency` field. Cent field names and values are unchanged.
 - `X-ProcureFlow-Signature: t=<unix seconds>,v1=<64 hex>`. `v1` is HMAC-SHA256 of the string `${t}.${rawBody}` with `WEBHOOK_SIGNING_SECRET`. Reject timestamps more than 300 seconds off. Dedupe on `id` (`evt_<outbox id>`). Retries get a new timestamp and the same id.
 - `webhook_outbox` status is `pending`, `delivered`, or `dead`. Five attempts. Backoff after failure: 30s, 120s, 600s, 3600s. Unset URL or secret does not increment attempts.
@@ -714,7 +715,41 @@ A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400
 
 **Follow-ups**
 
-UBL or Peppol conversion. OCR or PDF intake (Sprint 7b will propose invoices and call `createSupplierInvoice`, including its dry-run). ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. Foreign exchange and an in-app currency picker. The webhook dispatcher and its retry loop are unchanged. Dutch UI shipped in Sprint 6; the integrations screen labels `invoices:write` in Dutch (`Inkomende facturen schrijven`) and still sends the English scope token.
+UBL or Peppol conversion. ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. Foreign exchange and an in-app currency picker. The webhook dispatcher and its retry loop are unchanged. PDF intake is [§5.15](#515-pdf-invoice-proposals). Dutch UI shipped in Sprint 6; the integrations screen labels `invoices:write` in Dutch (`Inkomende facturen schrijven`) and still sends the English scope token.
+
+---
+
+### 5.15 PDF invoice proposals
+
+**Shipped**
+
+Finance and admin open **Financiële inbox**. They upload one or more supplier-invoice PDFs. Each file becomes a proposal (`invoice_proposals.status = proposed`). OCR does not post. The screen shows the PDF beside editable fields. A field with confidence below 0.8 is highlighted. Vendor and PO are matched when the name or PO number is clear, and suggestions are shown when it is ambiguous. The proposal runs `createSupplierInvoice(..., { dryRun: true })`, so the reviewer sees the 3-way match (1% tolerance) and the duplicate check before anything is written to `invoices`.
+
+- **Goedkeuren en boeken** posts the current fields through `createSupplierInvoice` (`source: ui`). Match, duplicate soft-hold, and `variance_flagged` on the exception workbench are the existing ones. Statuses are the existing invoice statuses.
+- **Bewerk en boek** stores the edited fields, keeps the OCR snapshot, and appends `INVOICE_PROPOSAL_EDITED` with `{ field, ocr, edited }` diffs, then posts the same way.
+- **Afwijzen** requires a reason. Status becomes `rejected`. The PDF stays. No invoice row is created.
+
+The uploader cannot post their own proposal while `INVOICE_PROPOSAL_SOD` is unset or `enforce`. An API-key upload has no user id, so any finance or admin user may post it. The key cannot call the approve route. `INVOICE_PROPOSAL_SOD=off` allows the same person to upload and post (a small team). Any other value still enforces.
+
+`POST /api/integrations/invoice-proposals` is a machine route: `Authorization: Bearer pfk_…`, scope `invoices:write`, per-key rate limit, `Idempotency-Key`. Body is raw `application/pdf` (not JSON). Optional header `X-Filename`. The fingerprint is the SHA-256, filename, and byte length. The key name is the compliance actor (`actor_role = integration`, `actor_user_id` null).
+
+Compliance actions on `invoice_proposal`: `INVOICE_PROPOSAL_UPLOADED`, `INVOICE_PROPOSAL_EXTRACTED`, `INVOICE_PROPOSAL_EDITED`, `INVOICE_PROPOSAL_POSTED`, `INVOICE_PROPOSAL_REJECTED`. Posting does not emit `invoice.approved`. That event is still only the payment-approval webhook. Rejecting enqueues `invoice_proposal.rejected` in the same transaction. Payload: `proposal_id`, `status`, `reason`, `invoice_number`, `supplier_id`, `po_id`, `extracted_currency`, `source`, and `currency` (the deployment code).
+
+**Storage**
+
+The PDF bytes are a BLOB on `invoice_proposals` in this customer’s database (SQLite locally, Turso on Vercel). There is no public URL and no Vercel Blob store. Download is `GET /api/invoice-proposals/:id/pdf` with a finance or admin session (`Content-Disposition: inline`, `Cache-Control: private, no-store`). A requester is 403. No session is 401. The cap is 4 MiB (4 × 1024 × 1024). Magic bytes must be `%PDF-`; the filename is not trusted. `INVOICE_PDF_MAX_BYTES` may set a lower cap. A larger value is ignored.
+
+Why not Vercel Blob: this product provisions one Turso database per customer and does not provision a Blob store. A copied `BLOB_READ_WRITE_TOKEN` could point at another customer. The database credential cannot. Private Blob would still need this same session check. The upload already has to fit the function request, and 4 MiB stays under the common 4.5 MB serverless body limit. On Turso the bytes travel as base64 inside the HTTP pipeline (about 5.4 MiB of JSON for a 4 MiB file), which is the size this cap is written for. Local SQLite uses the same cap so a file that uploads in development uploads in production. Backups of the customer database include the PDFs.
+
+**OCR**
+
+`INVOICE_OCR_PROVIDER=gateway` and `INVOICE_OCR_MODEL` (an AI Gateway model id that accepts a PDF) enable extraction. The call is AI SDK `generateText` with `Output.object` and the PDF inline. Auth is `AI_GATEWAY_API_KEY`, or Vercel OIDC on Vercel. No provider SDK is imported. If either variable is missing, or the provider is not `gateway`, upload is disabled. The UI shows that. The API returns **503** `ocr_not_configured` and writes nothing. Tests inject a fake provider and do not call the network.
+
+Amounts in the proposal are integer cents. The screen formats them with the Sprint 5 formatter and accepts Dutch comma amounts (`1.295,50`) on the editable money fields.
+
+**Known limits**
+
+No email inbox. No UBL/Peppol. No auto-post. The webhook drain is unchanged. A proposal with an unmapped vendor, PO, or line cannot be posted until a person fills those fields. API-key uploads are not bound to a user, so segregation of duties does not name an uploader for them.
 
 ---
 
@@ -889,7 +924,7 @@ Hand this list with the URL so nobody assumes Coupa-parity.
 | `org_id` multi-tenancy | Isolation is the **connection**, not a tenant column. |
 | Finer role matrix on every screen | Session is required everywhere. Admin and AP roles are enforced. Catalog edits are not limited to procurement. |
 | Create-department / create-budget UI | Operator CLI `bootstrap-org` only. |
-| OCR / PDF / email invoice ingest | Manual invoice form. |
+| Email invoice ingest / unattended OCR posting | PDF proposals are reviewed in the finance inbox (§5.15). There is no mailbox. The manual invoice form remains. |
 | NACHA / bank file / remittance portal | Payment run stores a shared ACH **reference string** and marks paid. No file. |
 | Foreign exchange / tax engine / 1099 | One currency per deployment (`CURRENCY`, default EUR). Amounts stay integer cents. No FX and no in-app picker. |
 | Parallel / AND approvals | Sequential pending/waiting only. |

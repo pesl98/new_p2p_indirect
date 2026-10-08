@@ -28,11 +28,13 @@
   },
   "dependencies": {
     "@node-saml/node-saml": "^5.1.0",
+    "ai": "^7.0.133",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "jose": "^6.2.12",
-    "openid-client": "^6.8.8"
+    "openid-client": "^6.8.8",
+    "zod": "^4.6.5"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.8.1"
