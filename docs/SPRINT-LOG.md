@@ -69,7 +69,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
 | 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
 | 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | | in progress |
-| 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | draft, stacked on [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | | in progress |
+| 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) (draft, stacked on [#53](https://github.com/pesl98/new_p2p_indirect/pull/53); merge 7a first) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -326,7 +326,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Let finance upload a supplier-invoice PDF, review an OCR proposal with a match preview, and post or reject it through the Sprint 7a invoice service.
 
-**PR:** draft, stacked on https://github.com/pesl98/new_p2p_indirect/pull/53 (#53). Merge this only after 7a.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/54 (#54, draft). Stacked on https://github.com/pesl98/new_p2p_indirect/pull/53 (#53). Merge this only after 7a.
 
 **Merge SHA:**
 
