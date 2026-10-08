@@ -673,10 +673,10 @@ export const api = {
     apiFetch(`${API_BASE}/invoice-proposals/config`).then((r) => proposalJson(r, t('errors.proposalLoad'))),
   getInvoiceProposalOptions: () =>
     apiFetch(`${API_BASE}/invoice-proposals/options`).then((r) => proposalJson(r, t('errors.proposalLoad'))),
-  listInvoiceProposals: (status = 'proposed') =>
-    apiFetch(`${API_BASE}/invoice-proposals?status=${encodeURIComponent(status)}`).then((r) =>
-      proposalJson(r, t('errors.proposalLoad'))
-    ),
+  listInvoiceProposals: (status = 'proposed', { limit = 50, offset = 0 } = {}) =>
+    apiFetch(
+      `${API_BASE}/invoice-proposals?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`
+    ).then((r) => proposalJson(r, t('errors.proposalLoad'))),
   uploadInvoiceProposal: async (file) => {
     const original = file.name || 'invoice.pdf';
     const ascii = original.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'invoice.pdf';

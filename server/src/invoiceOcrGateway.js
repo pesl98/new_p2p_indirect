@@ -18,11 +18,26 @@ const PROMPT = [
   'Do not invent a vendor, invoice number, or PO number that is not on the page.'
 ].join(' ');
 
-/** One retry. The timeout is per attempt. vercel.json maxDuration is 60s. */
+/** The upload function's maxDuration. Two attempts, one backoff, and app work must fit. */
+export const OCR_MAX_DURATION_MS = 60_000;
+const OCR_RESERVED_MS = 10_000;
+const OCR_RETRY_BACKOFF_MS = 1_000;
+const OCR_MAX_RETRIES = 1;
+
+export function ocrAttemptCapMs() {
+  return Math.floor((OCR_MAX_DURATION_MS - OCR_RESERVED_MS - OCR_RETRY_BACKOFF_MS) / (OCR_MAX_RETRIES + 1));
+}
+
+/** One retry. The timeout is per attempt and is capped so both attempts fit in maxDuration. */
 export function ocrCallLimits(env = process.env) {
+  const cap = ocrAttemptCapMs();
   const raw = Number(env.INVOICE_OCR_TIMEOUT_MS);
-  const timeoutMs = Number.isInteger(raw) && raw >= 1000 && raw <= 50000 ? raw : 20000;
-  return { timeoutMs, maxRetries: 1 };
+  const requested = Number.isInteger(raw) && raw >= 1000 ? raw : 20000;
+  return {
+    timeoutMs: Math.min(requested, cap),
+    maxRetries: OCR_MAX_RETRIES,
+    backoffMs: OCR_RETRY_BACKOFF_MS
+  };
 }
 
 function unavailable(message) {
@@ -118,6 +133,9 @@ export async function extractWithGateway(pdf, env = process.env) {
         || error?.name === 'TimeoutError'
         || /timeout|network|fetch|ECONN|429|502|503/i.test(String(error?.message || ''));
       if (!retryable || attempt >= limits.maxRetries) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, limits.backoffMs);
+      });
     }
   }
   const failed = new Error(lastError?.message || 'Invoice OCR failed');

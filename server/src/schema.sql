@@ -840,6 +840,9 @@ CREATE TABLE IF NOT EXISTS integration_invoice_links (
   updated_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS integration_invoice_links_invoice
+  ON integration_invoice_links (invoice_id);
+
 CREATE TABLE IF NOT EXISTS integration_idempotency (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   api_key_id INTEGER NOT NULL,
@@ -911,4 +914,15 @@ CREATE TABLE IF NOT EXISTS invoice_proposal_files (
   pdf_bytes BLOB NOT NULL,
   FOREIGN KEY (proposal_id) REFERENCES invoice_proposals(id)
 );
+
+-- One row per signed-in upload attempt, written before OCR.
+-- Failed and in-flight calls count toward the per-user minute limit.
+CREATE TABLE IF NOT EXISTS invoice_proposal_upload_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS invoice_proposal_upload_attempts_user
+  ON invoice_proposal_upload_attempts (user_id, created_at);
 

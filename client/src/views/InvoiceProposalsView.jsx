@@ -89,6 +89,8 @@ export default function InvoiceProposalsView({ onDataChanged }) {
   const [config, setConfig] = useState(null);
   const [queue, setQueue] = useState('proposed');
   const [proposals, setProposals] = useState([]);
+  const [pageOffset, setPageOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [options, setOptions] = useState({ suppliers: [], purchase_orders: [], po_items: [] });
   const [draft, setDraft] = useState(EMPTY_DRAFT);
@@ -104,13 +106,15 @@ export default function InvoiceProposalsView({ onDataChanged }) {
   const dirty = useMemo(() => JSON.stringify(draft) !== savedDraft, [draft, savedDraft]);
   const open = selected?.status === 'proposed';
 
-  async function load(nextQueue = queue, keepId = selectedId) {
+  async function load(nextQueue = queue, keepId = selectedId, nextOffset = 0) {
     const [cfg, list] = await Promise.all([
       api.getInvoiceProposalConfig(),
-      api.listInvoiceProposals(nextQueue)
+      api.listInvoiceProposals(nextQueue, { limit: 50, offset: nextOffset })
     ]);
     setConfig(cfg);
     setProposals(list.proposals || []);
+    setPageOffset(Number(list.offset) || 0);
+    setHasMore(Boolean(list.has_more));
     const still = (list.proposals || []).some((row) => row.id === keepId);
     setSelectedId(still ? keepId : (list.proposals?.[0]?.id ?? null));
     return cfg;
@@ -309,6 +313,26 @@ export default function InvoiceProposalsView({ onDataChanged }) {
               ) : null}
             </button>
           ))}
+          {pageOffset > 0 || hasMore ? (
+            <div className="flex justify-between gap-2 p-2">
+              <button
+                type="button"
+                disabled={busy || pageOffset <= 0}
+                onClick={() => load(queue, null, Math.max(0, pageOffset - 50)).catch((err) => setError(presentError(err)))}
+                className="px-2 py-1 rounded border border-slate-200 text-xs disabled:opacity-40"
+              >
+                {t('payables.inbox.prevPage')}
+              </button>
+              <button
+                type="button"
+                disabled={busy || !hasMore}
+                onClick={() => load(queue, null, pageOffset + 50).catch((err) => setError(presentError(err)))}
+                className="px-2 py-1 rounded border border-slate-200 text-xs disabled:opacity-40"
+              >
+                {t('payables.inbox.nextPage')}
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {selected ? (

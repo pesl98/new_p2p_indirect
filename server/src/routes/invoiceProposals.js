@@ -87,6 +87,7 @@ router.get('/:id/pdf', async (req, res) => {
     const file = await readProposalPdf(req.db, req.params.id);
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', contentDispositionInline(file.filename));
+    res.set('Content-Security-Policy', "frame-ancestors 'self'");
     res.set('Cache-Control', 'private, no-store');
     res.set('X-Content-Type-Options', 'nosniff');
     res.send(file.bytes);

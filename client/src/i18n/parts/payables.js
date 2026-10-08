@@ -252,6 +252,8 @@ export const payables = {
   'payables.inbox.queue.posted': 'Geboekt',
   'payables.inbox.queue.rejected': 'Afgewezen',
   'payables.inbox.empty': 'Geen voorstellen in deze lijst.',
+  'payables.inbox.prevPage': 'Vorige',
+  'payables.inbox.nextPage': 'Volgende',
   'payables.inbox.unknownVendor': 'Leverancier onbekend',
   'payables.inbox.needsReview': 'Lage zekerheid',
   'payables.inbox.pick': 'Kies een voorstel.',

@@ -45,6 +45,7 @@ export const EXPECTED_TABLES = [
   'invoice_exception_dispositions',
   'invoice_items',
   'invoice_proposal_files',
+  'invoice_proposal_upload_attempts',
   'invoice_proposals',
   'invoices',
   'match_results',

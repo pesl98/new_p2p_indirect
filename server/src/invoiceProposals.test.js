@@ -15,7 +15,7 @@ import {
   normalizeExtraction,
   setInvoiceOcrProviderForTests
 } from './invoiceOcr.js';
-import { ocrCallLimits } from './invoiceOcrGateway.js';
+import { ocrAttemptCapMs, ocrCallLimits } from './invoiceOcrGateway.js';
 import {
   approveInvoiceProposal,
   rejectInvoiceProposal,
@@ -196,11 +196,15 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
     assert.equal(unsafe.gross_cents.value, 149800);
   });
 
-  test('ocr limits default to 20s and one retry', () => {
-    assert.deepEqual(ocrCallLimits({}), { timeoutMs: 20000, maxRetries: 1 });
+  test('ocr limits default to 20s and one retry inside maxDuration', () => {
+    const limits = ocrCallLimits({});
+    assert.deepEqual(limits, { timeoutMs: 20000, maxRetries: 1, backoffMs: 1000 });
     assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: '5000' }).timeoutMs, 5000);
     assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: '10' }).timeoutMs, 20000);
     assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: 'nope' }).timeoutMs, 20000);
+    const cap = ocrAttemptCapMs();
+    assert.equal(ocrCallLimits({ INVOICE_OCR_TIMEOUT_MS: '50000' }).timeoutMs, cap);
+    assert.ok(cap * 2 + limits.backoffMs + 10000 <= 60000);
   });
 
   test('fake provider maps fields, highlights low confidence, and previews a match', async () => {
@@ -335,6 +339,7 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
       const pdf = await fetch(`${base}/api/invoice-proposals/${id}/pdf`, withCookie(5));
       assert.equal(pdf.status, 200);
       assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+      assert.equal(pdf.headers.get('content-security-policy'), "frame-ancestors 'self'");
       const bytes = Buffer.from(await pdf.arrayBuffer());
       assert.equal(bytes.subarray(0, 5).toString('ascii'), '%PDF-');
       const anon = await fetch(`${base}/api/invoice-proposals/${id}/pdf`);
@@ -505,6 +510,7 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
       assert.equal(list.body.limit, 1);
       assert.equal(list.body.offset, 0);
       assert.equal(list.body.proposals.length, 1);
+      assert.equal(list.body.has_more, false);
       assert.equal(JSON.stringify(list.body).includes('%PDF-'), false);
       const pdf = await fetch(`${base}/api/invoice-proposals/${created.body.proposal.id}/pdf`, withCookie(5));
       assert.match(pdf.headers.get('content-disposition'), /filename\*=UTF-8''factuur-caf%C3%A9\.pdf/);
@@ -592,6 +598,63 @@ describe('Sprint 7b invoice proposals', { concurrency: 1 }, () => {
         method: 'POST'
       })));
       assert.equal(other.status, 201, JSON.stringify(other.body));
+    });
+  });
+
+  test('a failed OCR call still counts toward the upload limit', async () => {
+    process.env.INVOICE_PROPOSAL_UPLOADS_PER_MINUTE = '1';
+    setInvoiceOcrProviderForTests({
+      async extract() {
+        throw new Error('ocr down');
+      }
+    });
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const first = await upload(base, 4, extraction({ invoice_number: { value: 'INV-FAIL', confidence: 0.95 } }));
+      assert.equal(first.status, 502);
+      assert.equal(first.body.code, 'ocr_failed');
+      const second = await upload(base, 4, extraction({ invoice_number: { value: 'INV-FAIL-2', confidence: 0.95 } }));
+      assert.equal(second.status, 429);
+      assert.equal(second.body.code, 'rate_limited');
+      const stored = await db.prepare('SELECT COUNT(*) AS n FROM invoice_proposals').get();
+      assert.equal(Number(stored.n), 0);
+      const attempts = await db.prepare('SELECT COUNT(*) AS n FROM invoice_proposal_upload_attempts').get();
+      assert.equal(Number(attempts.n), 1);
+    });
+  });
+
+  test('an in-flight OCR call counts toward the upload limit', async () => {
+    process.env.INVOICE_PROPOSAL_UPLOADS_PER_MINUTE = '1';
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let markEntered = () => {};
+    const entered = new Promise((resolve) => {
+      markEntered = resolve;
+    });
+    setInvoiceOcrProviderForTests({
+      async extract(pdf) {
+        markEntered();
+        await gate;
+        const text = Buffer.from(pdf).toString('utf8');
+        const marker = '\n%%OCR%%\n';
+        const at = text.indexOf(marker);
+        return JSON.parse(text.slice(at + marker.length));
+      }
+    });
+    const db = await createTestDb();
+    await insertPo(db);
+    await withServer(appFor(db), async (base) => {
+      const first = upload(base, 4, extraction({ invoice_number: { value: 'INV-LIVE', confidence: 0.95 } }));
+      await entered;
+      const second = await upload(base, 4, extraction({ invoice_number: { value: 'INV-LIVE-2', confidence: 0.95 } }));
+      assert.equal(second.status, 429);
+      assert.equal(second.body.code, 'rate_limited');
+      release();
+      const done = await first;
+      assert.equal(done.status, 201, JSON.stringify(done.body));
     });
   });
 

@@ -243,7 +243,7 @@ On Vercel (`VERCEL` / `VERCEL_ENV`), Turso is **required**. Missing vars (or a 4
 | [`api/index.js`](api/index.js) | Vercel Node Function — **default-exports** the Express app. CLI 59.x requires `functions` keys under `api/` (root `app.js` is rejected). |
 | [`server/src/app.js`](server/src/app.js) | Express factory (API + lazy DB init). Does not `listen`. |
 | [`server/src/index.js`](server/src/index.js) | Local listen on `PORT` (default 5000) |
-| [`vercel.json`](vercel.json) | `buildCommand`, `functions.api/index.js.includeFiles` for `server/src/schema.sql`, rewrite `/api/*` → `/api` |
+| [`vercel.json`](vercel.json) | `buildCommand`, `includeFiles` for `server/src/schema.sql`, PDF uploads rewritten to `api/invoice-proposal-upload.js` (`maxDuration` 60), other `/api/*` → `/api` |
 | [`public/`](public/) | Vite build output (`npm run build` copies `client/dist` here). Vercel CDN serves it; `express.static` is ignored on Vercel. |
 
 ### Create a Turso database
@@ -307,7 +307,7 @@ npm run build    # client → client/dist and public/
 # Connect the Git repo in Vercel, or: vercel
 ```
 
-Vercel runs `npm run build`, deploys `api/index.js` as one Node Function (`includeFiles` keeps `schema.sql` in the bundle), rewrites `/api/*` to that function, and serves `public/` statically. No Hobby-breaking cron is configured.
+Vercel runs `npm run build`, deploys `api/index.js` for the API and `api/invoice-proposal-upload.js` for PDF invoice uploads (`maxDuration` 60 only there). `includeFiles` keeps `schema.sql` in both bundles. Other `/api/*` requests rewrite to `api/index.js`. Static files come from `public/`. No Hobby-breaking cron is configured.
 
 ---
 

@@ -616,13 +616,20 @@ function uploadLimitPerMinute(env = process.env) {
 async function assertUiUploadRate(db, actor, now) {
   if (actor?.source !== 'ui' || actor.userId == null) return;
   const since = utcTimestamp(new Date(now.getTime() - 60_000));
-  const row = await db.prepare(`
-    SELECT COUNT(*) AS n FROM invoice_proposals
-    WHERE uploaded_by_user_id = ? AND created_at >= ?
-  `).get(actor.userId, since);
-  if (Number(row?.n || 0) >= uploadLimitPerMinute()) {
-    throw new InvoiceProposalError('Too many invoice uploads. Try again in a minute.', 429, 'rate_limited');
-  }
+  const stamp = utcTimestamp(now);
+  const limit = uploadLimitPerMinute();
+  await proposalTransaction(db)(async () => {
+    const row = await db.prepare(`
+      SELECT COUNT(*) AS n FROM invoice_proposal_upload_attempts
+      WHERE user_id = ? AND created_at >= ?
+    `).get(actor.userId, since);
+    if (Number(row?.n || 0) >= limit) {
+      throw new InvoiceProposalError('Too many invoice uploads. Try again in a minute.', 429, 'rate_limited');
+    }
+    await db.prepare(`
+      INSERT INTO invoice_proposal_upload_attempts (user_id, created_at) VALUES (?, ?)
+    `).run(actor.userId, stamp);
+  })();
 }
 
 export async function uploadInvoiceProposal(db, { pdf, filename, actor, now = new Date(), draft = null } = {}) {
@@ -644,16 +651,18 @@ export async function listInvoiceProposals(db, { status = 'proposed', limit, off
   const allowed = new Set(['proposed', 'posted', 'rejected', 'all']);
   const filter = allowed.has(status) ? status : 'proposed';
   const page = pageBounds(limit, offset);
-  const rows = filter === 'all'
+  const fetched = filter === 'all'
     ? await db.prepare(
       `SELECT ${PROPOSAL_COLUMNS} FROM invoice_proposals ORDER BY id DESC LIMIT ? OFFSET ?`
-    ).all(page.limit, page.offset)
+    ).all(page.limit + 1, page.offset)
     : await db.prepare(
       `SELECT ${PROPOSAL_COLUMNS} FROM invoice_proposals WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?`
-    ).all(filter, page.limit, page.offset);
+    ).all(filter, page.limit + 1, page.offset);
+  const hasMore = fetched.length > page.limit;
+  const rows = hasMore ? fetched.slice(0, page.limit) : fetched;
   const proposals = [];
   for (const row of rows) proposals.push(await presentRow(db, row, { livePreview: false }));
-  return { proposals, limit: page.limit, offset: page.offset };
+  return { proposals, limit: page.limit, offset: page.offset, has_more: hasMore };
 }
 
 export async function getInvoiceProposal(db, rawId) {
@@ -777,21 +786,22 @@ async function runProposalWrite(fn) {
 
 async function postWorking(db, rawId, actor, working, { edited, now, overrideReason = '' }) {
   const id = requireProposalId(rawId);
+  const row = await loadRow(db, id);
+  await assertCanDecide(db, row, actor);
+  // Match preview stays outside the write lock. createSupplierInvoice matches once inside it.
+  const preview = await previewProposal(db, id, working, { overrideReason });
+  if (!preview.ready) {
+    throw new InvoiceProposalError(
+      'The proposal is not ready to post',
+      400,
+      'proposal_not_ready',
+      { blockers: preview.blockers }
+    );
+  }
+  const baseline = parseJson(row.baseline_json, {});
+  const diffs = edited ? diffWorkingCopies(baseline, working) : [];
   const nested = Boolean(db.inTransaction?.());
   const outcome = await runProposalWrite(() => proposalTransaction(db)(async () => {
-    const row = await loadRow(db, id);
-    await assertCanDecide(db, row, actor);
-    const preview = await previewProposal(db, id, working, { overrideReason });
-    if (!preview.ready) {
-      throw new InvoiceProposalError(
-        'The proposal is not ready to post',
-        400,
-        'proposal_not_ready',
-        { blockers: preview.blockers }
-      );
-    }
-    const baseline = parseJson(row.baseline_json, {});
-    const diffs = edited ? diffWorkingCopies(baseline, working) : [];
     if (diffs.length) {
       await audit(db, actor, 'INVOICE_PROPOSAL_EDITED', id, { diffs }, now);
     }

@@ -103,7 +103,7 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `INVOICE_OCR_MODEL` | With the gateway provider | AI Gateway model id, for example a current Gemini flash model that accepts PDFs. |
 | `AI_GATEWAY_API_KEY` | Off Vercel | Gateway credential. On Vercel, OIDC is enough. Never commit it. |
 | `INVOICE_PDF_MAX_BYTES` | No | Optional cap at or below 4194304 (4 MiB). Invalid values use 4 MiB. |
-| `INVOICE_OCR_TIMEOUT_MS` | No | OCR attempt timeout. Default 20000. Integer 1000–50000. One retry. |
+| `INVOICE_OCR_TIMEOUT_MS` | No | OCR attempt timeout. Default 20000. Clamped to 24500. One retry after 1s. |
 | `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` | No | Signed-in PDF uploads per user. Default 10. Integer 1–600. |
 | `INVOICE_PROPOSAL_SOD` | No | `enforce` (default) or `off`. `enforce` blocks the uploader and the API-key creator. `off` is for a single-person tenant. |
 
@@ -305,7 +305,7 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 
 Dashboard fallback: Settings → Environment Variables → Production and Preview (or All Environments) → Redeploy. Prefer the CLI so operators do not hunt the dashboard for every customer.
 
-Deploy itself: Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) as one Node Function (`includeFiles` keeps `schema.sql`), rewrites `/api/*` to that function, and serves `public/` on the CDN. There is **no cron**.
+Deploy itself: Vercel runs `npm run build` (Vite → `public/`), deploys [`api/index.js`](../api/index.js) for `/api` and [`api/invoice-proposal-upload.js`](../api/invoice-proposal-upload.js) for PDF uploads (`maxDuration` 60). `includeFiles` keeps `schema.sql` on both. Other `/api/*` requests rewrite to `api/index.js`. `public/` is served on the CDN. There is **no cron**.
 
 Repeat as a **second project** for customer B. `npm run turso:customer -- --slug <b> --apply`, then `npm run vercel:customer -- --slug <b> --apply` (creates/links `procureflow-<b>` if this clone is not already linked to it). A checkout linked to customer A will **not** be silently retargeted to B. Leaving A’s URL in place would serve customer A’s data as customer B.
 

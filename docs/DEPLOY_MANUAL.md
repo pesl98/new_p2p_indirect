@@ -150,7 +150,7 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `INVOICE_OCR_MODEL` | AI Gateway model id sent the PDF. Required together with the provider. | Optional. Required only when the provider is `gateway`. | Production and Preview. | No. | A current vision model id from the gateway catalog, such as `google/gemini-2.5-flash`. |
 | `AI_GATEWAY_API_KEY` | Credential for the AI Gateway when the function is not on Vercel OIDC. | Optional on Vercel (OIDC). Required for a laptop that should call the gateway. | Production and Preview if you do not use OIDC. | Yes. | Vercel AI Gateway dashboard. The app never returns it. |
 | `INVOICE_PDF_MAX_BYTES` | Raw PDF size cap. Default and maximum **4194304** (4 MiB). | Optional. | Production and Preview. | No. | An integer from 5 through 4194304. Anything else uses 4 MiB. |
-| `INVOICE_OCR_TIMEOUT_MS` | Per-attempt OCR timeout. Default **20000**. One retry after a timeout or network failure. | Optional. | Production and Preview. | No. | Integer 1000–50000. Anything else uses 20000. The function `maxDuration` is 60. |
+| `INVOICE_OCR_TIMEOUT_MS` | Per-attempt OCR timeout. Default **20000**. One retry after 1 second. | Optional. | Production and Preview. | No. | Integer ≥ 1000, clamped to **24500** so two attempts fit in the 60s upload function. Anything else uses 20000. |
 | `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` | Signed-in PDF uploads per user. Default **10**. | Optional. | Production and Preview. | No. | Integer 1–600. Anything else uses 10. API keys keep their own limit. |
 | `INVOICE_PROPOSAL_SOD` | `enforce` (default) or `off`. | Optional. | Production and Preview. | No. | `off` is for a single-person tenant only. |
 
@@ -317,8 +317,8 @@ Root directory is the repository root. The build command is already in [`vercel.
 What a deploy does:
 
 1. `npm run build` installs the client, runs Vite, deletes `public/`, and copies `client/dist` into `public/`.
-2. Deploys `api/index.js` as one Node function. `includeFiles` keeps `server/src/schema.sql` in the bundle.
-3. Rewrites `/api/(.*)` to that function.
+2. Deploys `api/index.js` as the Node function for `/api`, and `api/invoice-proposal-upload.js` for PDF invoice uploads (`maxDuration` 60). Both include `server/src/schema.sql`.
+3. Rewrites a `Content-Type: application/pdf` post on the two upload URLs to the upload function, and every other `/api/(.*)` path to `api/index.js`.
 4. Serves `public/` from the CDN. `express.static` is ignored on Vercel, so the UI must be in `public/`.
 
 `api/index.js` has to live under `api/`. A `vercel.json` `functions` key of `app.js` at the repo root fails on CLI 59 with `unmatched-function-pattern`.
@@ -826,8 +826,11 @@ Price or quantity outside tolerance sets `status` to `variance_flagged`, `except
 | `actor_rejected` | 400 | Body names a user or actor. |
 | `currency_required` | 400 | `currency` is missing. |
 | `currency_mismatch` | 400 | `currency` is not the deployment currency. The message does not echo the supplied value. |
+| `po_required` | 400 | Neither `po_id` nor `po_number` was sent. |
 | `po_not_found` | 404 | Unknown `po_id` or `po_number`, or the two name different orders. |
 | `po_not_issued` | 400 | PO is `draft`, `closed`, or `cancelled`. |
+| `invalid_lines` | 400 | `lines` is missing or empty. |
+| `link_broken` | 409 | The linked supplier, catalog item, or invoice row is gone. |
 | `vendor_required`, `vendor_not_linked` | 400 | Supplier missing, or `supplier_external_id` is not linked. |
 | `vendor_mismatch` | 400 | Supplier is not the PO vendor. |
 | `po_line_mismatch` | 400 | `po_item_id` is not on that PO. |
@@ -848,7 +851,13 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Put the hex in `WEBHOOK_SIGNING_SECRET`. Put the receiver’s `https` URL in `WEBHOOK_TARGET_URL`. Redeploy. Do not commit either value. `GET /api/integrations/config` with the admin cookie returns `webhook_target_configured`, `webhook_signing_secret_configured`, and `webhook_target_host`. It does not return the secret or the URL.
 
-Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.created`, `invoice.approved`, `invoice_proposal.posted`, `invoice_proposal.rejected`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.created`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `invoice.created` is written when a supplier invoice is posted from the screen or from this route. `invoice_proposal.posted` and `invoice_proposal.rejected` are PDF proposals. `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
+Events written with the business transaction: `po.issued`, `receipt.posted` (goods receipt), `invoice.created`, `invoice.approved`, `invoice_proposal.posted`, `invoice_proposal.rejected`, `payment_run.created`, `payment_run.paid`. Payloads that already carry cent amounts (`po.issued`, `invoice.created`, `invoice.approved`, `payment_run.created`, `payment_run.paid`) also include `currency` (this deployment’s code, default `EUR`). `receipt.posted` has no amount and no `currency` field. Cent field names and values are unchanged. Invoice and payment-run export JSON uses the same `currency` value (it was hardcoded `USD` before Sprint 5). The payment-run CSV adds `currency` as the last column. The invoice CSV already had that column; the value follows `CURRENCY`.
+
+The body a receiver posts is `{ "id": "evt_<n>", "type", "created_at", "data" }`. New types:
+
+- `invoice.created` — emitted when a supplier invoice row is inserted (screen, this JSON route, or a posted PDF proposal). `data`: `invoice_id`, `invoice_number`, `supplier_id`, `supplier_external_id`, `po_id`, `status`, `match_status`, `external_id` (null unless this route sent one), `source` (`ui` or `integration`), `total_cents`, `currency`.
+- `invoice_proposal.posted` — emitted in that same transaction when a PDF proposal is posted, after `invoice.created`. `data`: `proposal_id`, `status` (`posted`), `invoice_id`, `invoice_number`, `supplier_id`, `po_id`, `extracted_currency`, `source`, `match_status`, `totals_override`, `currency`.
+- `invoice_proposal.rejected` — emitted when a PDF proposal is rejected. No invoice is created. `data`: `proposal_id`, `status` (`rejected`), `reason`, `invoice_number`, `supplier_id`, `po_id`, `extracted_currency`, `source`, `currency`.
 
 The receiver gets `X-ProcureFlow-Signature: t=<unix seconds>,v1=<hex>` where `v1` is HMAC-SHA256 of `${t}.${rawBody}` using the signing secret. Reject a timestamp more than five minutes from now. Dedupe on the JSON `id` (`evt_<n>`). A retry signs again with a new timestamp and the same id. The dispatcher, retry schedule, and drain are unchanged.
 
@@ -875,7 +884,7 @@ Size limit: **4 MiB** raw. A non-PDF, including a renamed file whose bytes do no
 
 The bytes are in `invoice_proposal_files`, not on the proposal row. List and detail queries do not read them. A 4 MiB upload and download against a Vercel preview and Turso was not run from this checkout; the cap is the same 4 MiB locally and in production.
 
-Machine upload: `POST /api/integrations/invoice-proposals` with `Authorization: Bearer pfk_…`, scope `invoices:write`, `Content-Type: application/pdf`, and the raw PDF as the body. Optional `Content-Disposition` `filename*` (RFC 5987), `X-Filename`, and `Idempotency-Key`. Rate limit and idempotency match the JSON invoice route. Signed-in uploads use `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` (default 10). The key does not post the invoice. Rejecting writes `invoice_proposal.rejected` in that same database transaction. Posting writes `invoice_proposal.posted` in the same transaction as the invoice, which also writes `invoice.created`. `invoice.approved` is still only written when AP approves the invoice for payment. The post and reject updates match `status = 'proposed'` and return **409** `proposal_not_open` when the row already moved. OCR uses `INVOICE_OCR_TIMEOUT_MS` (default 20 seconds) and retries once. The inbox list defaults to 50 rows and does not recompute a match preview for each row.
+Machine upload: `POST /api/integrations/invoice-proposals` with `Authorization: Bearer pfk_…`, scope `invoices:write`, `Content-Type: application/pdf`, and the raw PDF as the body. Optional `Content-Disposition` `filename*` (RFC 5987), `X-Filename`, and `Idempotency-Key`. Rate limit and idempotency match the JSON invoice route. Signed-in uploads use `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` (default 10) and count the attempt before OCR, including a failure or a call still in flight. The key’s own limit also increments before OCR. The key does not post the invoice. Rejecting writes `invoice_proposal.rejected` in that same database transaction. Posting writes `invoice_proposal.posted` in the same transaction as the invoice, which also writes `invoice.created`. `invoice.approved` is still only written when AP approves the invoice for payment. The post and reject updates match `status = 'proposed'` and return **409** `proposal_not_open` when the row already moved. The match preview runs before that lock. OCR uses `INVOICE_OCR_TIMEOUT_MS` (default 20 seconds, ceiling 24.5 seconds) and retries once after 1 second. On Vercel only those PDF posts use the 60 second function. The inbox list defaults to 50 rows (`offset`, `has_more`) and does not recompute a match preview for each row. The PDF response sends `Content-Security-Policy: frame-ancestors 'self'`. `integration_invoice_links` has an index on `invoice_id` (`CREATE INDEX IF NOT EXISTS`).
 
 The screen workflow is [SYSTEM_MANUAL.md §5.15](SYSTEM_MANUAL.md#515-pdf-invoice-proposals).
 
@@ -962,7 +971,7 @@ Symptom: deploy fails with `unmatched-function-pattern`.
 
 Cause: CLI 59 only accepts `vercel.json` `functions` keys for files under `api/`. A root `app.js` key is invalid.
 
-What to do: leave the committed `vercel.json` as it is (`api/index.js`, `includeFiles` = `server/src/schema.sql`, rewrite `/api/(.*)` → `/api`). Do not point `functions` at `server/src/app.js`.
+What to do: leave the committed `vercel.json` as it is (`api/index.js` and `api/invoice-proposal-upload.js`, `includeFiles` = `server/src/schema.sql`, rewrite `/api/(.*)` → `/api`). Do not point `functions` at `server/src/app.js`.
 
 ### Missing Turso env (HTTP 503 / `TursoConfigError`)
 
