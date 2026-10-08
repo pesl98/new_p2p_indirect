@@ -585,4 +585,39 @@ describe('Turso/SQLite schema migrations', () => {
       null
     );
   });
+
+  test('applySchema lets integration_entity_links store an invoice external id', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+    db.exec(`
+      CREATE TABLE integration_entity_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
+        external_id TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(entity_type, external_id)
+      );
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+        VALUES ('supplier', 'ERP-V-1', 4, '2026-10-06T00:00:00.000Z', '2026-10-06T00:00:00.000Z');
+    `);
+
+    await applySchema(db);
+
+    const kept = db.prepare(`
+      SELECT entity_type, external_id, entity_id FROM integration_entity_links WHERE external_id = 'ERP-V-1'
+    `).get();
+    assert.equal(kept.entity_type, 'supplier');
+    assert.equal(kept.entity_id, 4);
+    db.prepare(`
+      INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+      VALUES ('invoice', 'TSG-INV-1', 9, '2026-10-08T00:00:00.000Z', '2026-10-08T00:00:00.000Z')
+    `).run();
+    const invoice = db.prepare(`
+      SELECT entity_id FROM integration_entity_links WHERE entity_type = 'invoice'
+    `).get();
+    assert.equal(invoice.entity_id, 9);
+  });
 });

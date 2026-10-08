@@ -157,9 +157,9 @@ That creates `api_keys`, `api_key_rate_windows`, `integration_entity_links`, `in
 Operator steps, after the first admin can sign in:
 
 1. Open **Administration → Integrations** (admin session only).
-2. Create a key: name (this is the audit actor), scopes (`vendors:write`, `catalog:write`, `export:read`), optional expiry, requests per minute (default 60).
+2. Create a key: name (this is the audit actor), scopes (`vendors:write`, `catalog:write`, `export:read`, `invoices:write`), optional expiry, requests per minute (default 60).
 3. Copy the `pfk_…` value once into the password manager. The API list never returns it. The database stores SHA-256 only.
-4. The ERP calls `POST /api/integrations/vendors`, `POST /api/integrations/catalog`, and `GET /api/integrations/exports/invoices` or `…/payment-runs` with `Authorization: Bearer pfk_…`. A `pf_session` cookie is not a substitute. The key does not call the rest of `/api`.
+4. The ERP calls `POST /api/integrations/vendors`, `POST /api/integrations/catalog`, `POST /api/integrations/invoices`, and `GET /api/integrations/exports/invoices` or `…/payment-runs` with `Authorization: Bearer pfk_…`. A `pf_session` cookie is not a substitute. The key does not call the rest of `/api`.
 5. Set the two webhook variables on Production and Preview, then redeploy. `GET /api/integrations/config` (admin cookie) reports whether each is set and the target host. It does not return the URL or the secret.
 6. When a delivery is dead, use **Replay** on that screen (or `POST /api/integrations/outbox/:id/replay`). **Deliver pending** runs the outbox now.
 

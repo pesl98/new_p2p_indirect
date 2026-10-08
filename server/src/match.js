@@ -15,22 +15,13 @@ export function priceToleranceCents(poUnitPriceCents) {
 }
 
 /**
- * Run invoice match using integer cents and integer qty.
+ * Read-only 3-way match. Same rules as `run3WayMatch`, no inserts.
  *
- * Goods lines: 3-way (PO vs GRN `quantity_received` vs invoice).
- * Service lines: SES-backed 2-way (PO vs accepted SES `quantity_accepted` vs invoice).
- * Consignment lines: PO vs draw-down `quantity_consumed` vs invoice. GRN is not consulted.
- * Utility and bulk lines: PO vs measured `quantity_consumed` (milli-units) vs invoice. GRN is not consulted.
- * Physical GRN is not required for service lines, consignment draw-downs, or measured consumption.
- *
- * Quantity: fail if prior `po_items.quantity_invoiced` + this claim exceeds
- * the line's receipt basis (GRN or SES) or ordered qty. This function must be
- * called BEFORE incrementing `quantity_invoiced` so prior cumulative is intact.
- *
- * `quantity_invoiced` is still persisted for the claimed amount after match
- * (audit of what the vendor billed) regardless of pass/fail.
+ * Call before incrementing `po_items.quantity_invoiced` so the prior
+ * cumulative is intact. A missing `po_item_id` is skipped, matching the
+ * historical persist path.
  */
-export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
+export async function evaluate3WayMatch(db, invoiceItems) {
   const matchEntries = [];
   let hasPriceVariance = false;
   let hasQuantityVariance = false;
@@ -169,6 +160,28 @@ export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
     overallMatchStatus = 'tolerated_match';
     invoiceStatus = 'matched';
   }
+
+  return { overallMatchStatus, invoiceStatus, matchEntries };
+}
+
+/**
+ * Run invoice match using integer cents and integer qty.
+ *
+ * Goods lines: 3-way (PO vs GRN `quantity_received` vs invoice).
+ * Service lines: SES-backed 2-way (PO vs accepted SES `quantity_accepted` vs invoice).
+ * Consignment lines: PO vs draw-down `quantity_consumed` vs invoice. GRN is not consulted.
+ * Utility and bulk lines: PO vs measured `quantity_consumed` (milli-units) vs invoice. GRN is not consulted.
+ * Physical GRN is not required for service lines, consignment draw-downs, or measured consumption.
+ *
+ * Quantity: fail if prior `po_items.quantity_invoiced` + this claim exceeds
+ * the line's receipt basis (GRN or SES) or ordered qty. This function must be
+ * called BEFORE incrementing `quantity_invoiced` so prior cumulative is intact.
+ *
+ * `quantity_invoiced` is still persisted for the claimed amount after match
+ * (audit of what the vendor billed) regardless of pass/fail.
+ */
+export async function run3WayMatch(db, invoiceId, poId, invoiceItems) {
+  const { overallMatchStatus, invoiceStatus, matchEntries } = await evaluate3WayMatch(db, invoiceItems);
 
   const insertMatch = db.prepare(`
     INSERT INTO match_results (invoice_id, po_id, po_item_id, ordered_qty, received_qty, invoiced_qty, po_unit_price, invoice_unit_price, qty_variance, price_variance, status, message)

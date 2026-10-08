@@ -12,7 +12,8 @@ import { actorFromSession, appendComplianceEvent, utcTimestamp } from './complia
 export const API_KEY_SCOPES = Object.freeze([
   'vendors:write',
   'catalog:write',
-  'export:read'
+  'export:read',
+  'invoices:write'
 ]);
 
 export const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;

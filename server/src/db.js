@@ -650,6 +650,38 @@ async function migratePurchaseOrderChangeOrders(database) {
   await maybe(database.exec(PO_CHANGE_ORDER_ITEMS_TABLE_SQL));
 }
 
+/**
+ * CHECK cannot be ALTERed. Existing Sprint 4 databases allow only
+ * supplier and catalog_item. Rebuild so an inbound invoice can be linked.
+ */
+export const INTEGRATION_ENTITY_LINKS_INVOICE_MIGRATION_SQL = `
+  CREATE TABLE integration_entity_links_migrated (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item', 'invoice')),
+    external_id TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(entity_type, external_id)
+  );
+  INSERT INTO integration_entity_links_migrated
+    (id, entity_type, external_id, entity_id, created_at, updated_at)
+    SELECT id, entity_type, external_id, entity_id, created_at, updated_at
+    FROM integration_entity_links;
+  DROP TABLE integration_entity_links;
+  ALTER TABLE integration_entity_links_migrated RENAME TO integration_entity_links;
+`;
+
+async function migrateIntegrationEntityLinks(database) {
+  const table = await maybe(
+    database.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'integration_entity_links'`
+    ).get()
+  );
+  if (!table?.sql || table.sql.includes("'invoice'")) return;
+  await maybe(database.exec(INTEGRATION_ENTITY_LINKS_INVOICE_MIGRATION_SQL));
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
@@ -669,6 +701,7 @@ export async function applySchema(database) {
   await migrateUsersAuth(database);
   await migrateConsignmentStock(database);
   await migrateMeasuredSettlement(database);
+  await migrateIntegrationEntityLinks(database);
   return database;
 }
 

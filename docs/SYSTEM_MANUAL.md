@@ -601,7 +601,7 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 **API keys**
 
 - `POST /api/integrations/keys` returns `key` once. `api_keys.key_hash` is SHA-256 hex. The list shows `key_prefix` (first 12 characters), scopes, `expires_at`, `last_used_at`, `rate_limit_per_minute`.
-- Scopes: `vendors:write`, `catalog:write`, `export:read`.
+- Scopes: `vendors:write`, `catalog:write`, `export:read`, `invoices:write`.
 - Missing, malformed, unknown, revoked, or expired key: **401**. Wrong scope: **403**. Over the per-key minute window: **429** (default 60, set per key, 1–6000).
 - Non-admin: **403**. No cookie on the admin routes: **401**.
 - Create and revoke append `API_KEY_CREATED` / `API_KEY_REVOKED` with the admin as actor. The plaintext is not in the details.
@@ -609,9 +609,87 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 **Inbound**
 
 - `POST /api/integrations/vendors` and `POST /api/integrations/catalog`, keyed by `external_id` in `integration_entity_links`.
-- Repeat calls update the same supplier or catalog row. `Idempotency-Key` replays the first 2xx body; a different body with the same key is **409**.
-- Catalog `unit_price` is integer cents. `preferred_supplier_external_id` must already be linked. Supplier `code` does not change after create. Omitted optional fields are stored as their defaults, so send the full record each time.
-- A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400**. The key name is `actor_name`, `actor_role` is `integration`, `actor_user_id` is null. The write goes to `audit_logs` and `compliance_audit_events`.
+- Repeat vendor and catalog calls update the same supplier or catalog row. `Idempotency-Key` replays the first 2xx body; a different body with the same key is **409**.
+- Catalog `unit_price` is integer cents. `preferred_supplier_external_id` must already be linked. Supplier `code` does not change after create. Omitted optional vendor and catalog fields are stored as their defaults, so send the full record each time.
+- `POST /api/integrations/invoices` (`invoices:write`) creates a supplier invoice through `createSupplierInvoice`, the same function the invoice screen uses (`createVendorInvoice` is the UI adapter). One transaction runs the insert, the 3-way match (1% of PO unit price, integer cents), the duplicate soft-hold, and the API-key audit. A variance sets `variance_flagged`, which is the existing exception workbench queue. There is no second match path.
+- The PO must already be issued and still open: `issued`, `acknowledged`, `partially_received`, or `received`. `draft`, `closed`, and `cancelled` are **400** `po_not_issued`. Unknown `po_id` or `po_number` is **404** `po_not_found`. The supplier (`supplier_id` or `supplier_external_id`) must be the PO’s supplier (**400** `vendor_mismatch`). Each line’s `po_item_id` must belong to that PO (**400** `po_line_mismatch`).
+- Money is integer cents (`unit_price`, `tax_amount`). `currency` is required and must equal the deployment currency (`CURRENCY`, default `EUR`). Anything else is **400** `currency_mismatch`. This route does not convert.
+- `external_id` is create-once. The same id with the same business payload (invoice number, PO, supplier, dates, tax, notes, lines) is **200** `created: false`, `unchanged: true`, and writes nothing. A different payload is **409** `invoice_immutable` with `invoice_id` and `status`. A posted invoice is not updated, including when it is already `matched`, `variance_flagged`, `approved_for_payment`, `paid`, or `rejected`. That is deliberate: vendor and catalog upserts update in place; invoices do not.
+- Omitted `due_date` becomes `invoice_date` plus 30 UTC days. Omitted line `description` is copied from the PO line. `Idempotency-Key` behaves as on vendor and catalog (replay, or **409** `idempotency_conflict`).
+- The compliance row is `INTEGRATION_INVOICE_CREATED`. `actor_name` is the key name, `actor_role` is `integration`, `actor_user_id` is null, and `details` includes `api_key_id`. The pipeline still writes `3_WAY_MATCHED` as `System 3-Way Matcher` and the duplicate audit as `System Duplicate Detector`, the same actors the UI path uses. A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400** `actor_rejected`.
+- Create does not enqueue a webhook. `invoice.approved` is still inserted in the approve transaction when AP approves, whether the invoice was posted from the screen or from this route. A likely duplicate is `duplicate_status: suspect` and is held by the existing Duplicate Suspects queue.
+- `createSupplierInvoice({ header, lines, actor, source, dryRun: true })` runs the match and the duplicate check and returns `exception.queued` without writing. Sprint 7b (PDF upload, OCR proposals, finance inbox) should call that function. This route has no preview URL.
+
+Example request:
+
+```http
+POST /api/integrations/invoices
+Authorization: Bearer pfk_…
+Idempotency-Key: erp-inv-1001
+Content-Type: application/json
+
+{
+  "external_id": "TSG-INV-1001",
+  "invoice_number": "INV-1001",
+  "po_number": "PO-2026-014",
+  "supplier_id": 3,
+  "currency": "EUR",
+  "invoice_date": "2026-09-04",
+  "tax_amount": 0,
+  "lines": [
+    { "po_item_id": 44, "quantity_invoiced": 2, "unit_price": 74900 }
+  ]
+}
+```
+
+Example response (**201**, perfect match):
+
+```json
+{
+  "external_id": "TSG-INV-1001",
+  "created": true,
+  "unchanged": false,
+  "invoice": {
+    "id": 18,
+    "external_id": "TSG-INV-1001",
+    "invoice_number": "INV-1001",
+    "po_id": 12,
+    "po_number": "PO-2026-014",
+    "supplier_id": 3,
+    "invoice_date": "2026-09-04",
+    "due_date": "2026-10-04",
+    "status": "matched",
+    "match_status": "perfect_match",
+    "duplicate_status": "clear",
+    "duplicate_suspects": [],
+    "exception_queued": false,
+    "currency": "EUR",
+    "subtotal_cents": 149800,
+    "tax_cents": 0,
+    "total_cents": 149800
+  }
+}
+```
+
+A variance response is still **201**. `invoice.status` is `variance_flagged`, `invoice.match_status` is `quantity_variance`, `price_variance`, or `total_variance`, and `exception_queued` is true.
+
+| Code | HTTP | When |
+| --- | --- | --- |
+| `api_key_required`, `api_key_invalid`, `api_key_revoked`, `api_key_expired` | 401 | Key missing, unknown, revoked, or expired. |
+| `api_key_scope` | 403 | Key does not include `invoices:write`. |
+| `rate_limited` | 429 | Per-key fixed window exceeded. `Retry-After` is set. |
+| `actor_rejected` | 400 | Body names a user. |
+| `currency_required`, `currency_mismatch` | 400 | Missing currency, or not the deployment currency. |
+| `po_not_found` | 404 | PO id or number does not exist. |
+| `po_not_issued` | 400 | PO is draft, closed, or cancelled. |
+| `vendor_required`, `vendor_mismatch`, `vendor_not_linked` | 400 | Supplier missing, not the PO vendor, or external id not linked. |
+| `po_line_mismatch` | 400 | Line is missing, repeated, or on another PO. |
+| `invalid_amount`, `invalid_quantity`, `invalid_date`, `invalid_invoice_number`, `invalid_external_id` | 400 | Field validation. |
+| `duplicate_invoice_number` | 409 | `(supplier_id, invoice_number)` already exists. The transaction rolls back. |
+| `invoice_immutable` | 409 | Same `external_id`, different payload. |
+| `idempotency_conflict` | 409 | Same `Idempotency-Key`, different body. |
+
+A body `user_id`, `actor_name`, `created_by`, or the same kind of field is **400**. The key name is `actor_name`, `actor_role` is `integration`, `actor_user_id` is null. The write goes to `audit_logs` and `compliance_audit_events`.
 
 **Outbound**
 
@@ -632,11 +710,11 @@ Machine clients are not users. An admin session (`pf_session`, role `admin`) cre
 
 `WEBHOOK_TARGET_URL` and `WEBHOOK_SIGNING_SECRET` are environment variables for this deployment only. They are not in `tenant_settings` or any other table. `GET /api/integrations/config` returns two booleans and `webhook_target_host`. `vercel:customer` does not set them. Set both on Production and Preview, then redeploy.
 
-`npm run db:migrate` or the next process start creates the tables. No separate migration file.
+`npm run db:migrate` or the next process start creates the tables. No separate migration file. An existing `integration_entity_links` table whose check allowed only `supplier` and `catalog_item` is rebuilt on that run so `entity_type` can be `invoice`. Existing link rows are copied.
 
-**Not in this sprint**
+**Follow-ups**
 
-Inbound supplier invoices (they would have to run through match and exceptions). ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. Foreign exchange and an in-app currency picker. Dutch UI (Sprint 6). The webhook dispatcher and its retry loop are unchanged.
+UBL or Peppol conversion. OCR or PDF intake (Sprint 7b will propose invoices and call `createSupplierInvoice`, including its dry-run). ERP-specific adapters. Service-entry webhooks. Overlapping webhook secrets during rotation. Foreign exchange and an in-app currency picker. The webhook dispatcher and its retry loop are unchanged. Dutch UI shipped in Sprint 6; the integrations screen labels `invoices:write` in Dutch (`Inkomende facturen schrijven`) and still sends the English scope token.
 
 ---
 

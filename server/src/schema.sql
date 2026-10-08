@@ -818,10 +818,10 @@ CREATE TABLE IF NOT EXISTS api_key_rate_windows (
   FOREIGN KEY (api_key_id) REFERENCES api_keys(id)
 );
 
--- External ERP id → local supplier or catalog row. Upserts are keyed here.
+-- External ERP id → local supplier, catalog row, or supplier invoice.
 CREATE TABLE IF NOT EXISTS integration_entity_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item')),
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('supplier', 'catalog_item', 'invoice')),
   external_id TEXT NOT NULL,
   entity_id INTEGER NOT NULL,
   created_at TEXT NOT NULL,
