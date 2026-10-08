@@ -570,7 +570,7 @@ Notes:
   1. Upsert `sourcing_bids`, guarded by the same deadline predicate.
   2. Insert the revision.
   3. Insert the lines.
-- **Doc kind.** Add `rfq: { table: 'sourcing_events', column: 'event_number', prefix: 'RFQ' }` to `docNumbers.js`.
+- **Doc kind.** Add `rfq: { table: 'sourcing_events', column: 'event_number', prefix: 'RFQ' }` to `docNumbers.js`. `event_number` is UNIQUE. Two interactive transactions can both read MAX and then collide on insert. The create retries that whole transaction up to 3 times, recomputing the number each time. After that the API returns **409** `event_number_conflict`.
 - **Line totals.** `lineTotalCents(quantity, unit_price_cents)` (the existing helper). A revision's `total_cents` is the sum over its quoted lines. Bids are excl. VAT, the same basis as the PO `unit_price`.
 - **Nothing is hard-deleted.** Drafts are cancelled, never deleted. `DELETE` returns 405, the same as for suppliers and the catalog.
 
@@ -666,7 +666,7 @@ Unless noted, `compliance_audit_events` actions use `entity_type = 'sourcing_eve
 
 | Action | Actor | Details (JSON) |
 | --- | --- | --- |
-| `SOURCING_EVENT_CREATED` | session | source (`scratch` / `requisition`), source PR id |
+| `SOURCING_EVENT_CREATED` / `SOURCING_EVENT_UPDATED` | session | source, source PR id, `line_count`, `lines_sha256`, `invitation_count`, `invites_sha256` |
 | `SOURCING_EVENT_PUBLISHED` | session | deadline, invitation count, weights |
 | `SOURCING_DEADLINE_EXTENDED` | session | old and new deadline |
 | `SOURCING_EVENT_CLOSED` | `System Sourcing Scheduler` | trigger (`lazy_read` / `tick`) |
@@ -682,7 +682,9 @@ Unless noted, `compliance_audit_events` actions use `entity_type = 'sourcing_eve
 | `SOURCING_AWARD_PROPOSED` (entity `sourcing_award`) | session | type, total, is_lowest, reason, award PR number |
 | `SOURCING_AWARD_APPROVED` / `_REJECTED` | final approver (hook) | award PR number |
 | `SOURCING_SOURCE_REQUISITION_SUPERSEDED` (entity `requisition`) | final approver (hook) | released cents |
-| `SOURCING_FILE_UPLOADED` / `_DOWNLOADED` (bid files after opening) | session or supplier | file id, sha256 |
+| `SOURCING_FILE_UPLOADED` / `SOURCING_FILE_REMOVED` / `_DOWNLOADED` (bid files after opening) | session or supplier | file id, sha256 |
+
+In 8a a draft save does not write one `SOURCING_INVITATION_CREATED` per supplier. The invitations are summarized on `SOURCING_EVENT_CREATED` / `SOURCING_EVENT_UPDATED` (count and sha256) so the interactive transaction stays within §6.1. The per-invitation rows start in 8b, when a link is minted.
 
 ### 5.4 Award to PO through the existing PO path and approvals
 
@@ -790,7 +792,7 @@ In a `tursoHttp` transaction, every statement is one HTTP round-trip on the bato
 
 | Operation | Statements in tx (approx.) |
 | --- | --- |
-| Create draft (header, up to 50 lines as one multi-row insert, audit, compliance ×2) | ~6 |
+| Create draft at the caps (header, 50 lines, 20 invitations, one audit, compliance ×2) | 7, measured |
 | Publish (conditional update, up to 20 token updates as one `UPDATE … CASE`, compliance ×2, audit, outbox) | ~7 |
 | Submit bid (rate window, guarded bid upsert, guarded revision insert, multi-row lines, compliance ×2, outbox) | ~8 |
 | Propose award (conditional event check, award + lines, PR number, PR + lines, approval chain up to 3, audit ×3, compliance ×2) | ~16 |
@@ -798,6 +800,8 @@ In a `tursoHttp` transaction, every statement is one HTTP round-trip on the bato
 | Lazy close, per event (conditional update, compliance ×2, audit, outbox) | ~5 |
 
 The caps of 50 lines, 20 invitations, and 10 files per bid and per event keep these numbers valid.
+
+**Measured in 8a.** A draft save at those caps stays inside one interactive transaction and at or under 25 prepared statements. Lines and invitations use multi-row `INSERT … VALUES`, chunked at 900 bound variables so the statement stays under SQLite's historical 999-variable limit. One compliance row covers the save (`SOURCING_EVENT_CREATED` or `SOURCING_EVENT_UPDATED`) and carries `line_count`, `lines_sha256`, `invitation_count`, and `invites_sha256`. A per-invitation `SOURCING_INVITATION_CREATED` waits until 8b, when a link is minted. Create is 7 statements (number, header, lines, invitations, audit, chain head, compliance insert). Replacing the same caps on update is 9 (delete and insert lines, read and replace invitations, header update, audit, compliance ×2). A test counts the prepared statements inside the transaction for both and asserts ≤ 25. Splitting the write into a non-interactive `batch()` was not used: a partial save is not acceptable, and a `batch()` pipeline can commit a chunk before a later statement fails.
 
 `appendComplianceEvent` costs 2 statements: it reads the chain head, then inserts, and it retries once on a mismatch. Bids that cluster near the deadline will queue behind the single writer. That is acceptable at RFQ volumes (tens of suppliers, not thousands).
 

@@ -869,6 +869,11 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
 
           {tab === 'overview' && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-2">
+              {detail.warnings?.includes('deadline_in_the_past') && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                  {t('sourcing.warning.deadlinePast')}
+                </p>
+              )}
               <p>{detail.description || t('common.none')}</p>
               <p>{t('sourcing.field.category')}: {detail.category ? categoryLabel(detail.category) : t('common.none')}</p>
               <p>{t('sourcing.field.department')}: {detail.department_name}</p>

@@ -33,7 +33,13 @@ router.use((req, res, next) => {
 
 function sendError(res, error) {
   const status = error.statusCode || 500;
-  if (status >= 500) console.error(error);
+  if (status >= 500) {
+    console.error(error);
+    return res.status(status).json({
+      error: 'Sourcing request failed',
+      code: error.code || 'sourcing_error'
+    });
+  }
   const body = { error: error.message || 'Sourcing request failed' };
   if (error.code) body.code = error.code;
   res.status(status).json(body);
@@ -135,6 +141,7 @@ router.get('/events/:id/files/:fileId', async (req, res) => {
     res.set('Content-Type', 'application/pdf');
     res.set('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
     res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Security-Policy', "frame-ancestors 'none'");
     res.set('Cache-Control', 'private, no-store');
     res.send(bytes);
   } catch (error) {

@@ -5,6 +5,7 @@
  * line: estimated_supplier_id defaults to supplier 1 and is not a chosen invitee.
  */
 
+import { createHash } from 'node:crypto';
 import { actorFromSession, appendComplianceEvent } from './complianceAudit.js';
 import { nextDocumentNumber } from './docNumbers.js';
 import { LineTypeError, normalizeLineType, resolveServiceBasis } from './lineType.js';
@@ -12,6 +13,7 @@ import { isUniqueConstraint } from './masterData.js';
 import { lineTotalCents, requireIntegerCents } from './money.js';
 import {
   MAX_EVENT_FILES,
+  MAX_EVENT_FILE_BYTES,
   MAX_EVENT_LINES,
   MAX_INVITATIONS,
   SOURCING_CATEGORIES,
@@ -34,6 +36,9 @@ export class SourcingError extends Error {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EVENT_NUMBER_ATTEMPTS = 3;
+/** Stay under SQLite's historical 999-variable limit, including Turso. */
+const SQL_VARIABLE_BUDGET = 900;
 
 function fail(message, statusCode, code) {
   throw new SourcingError(message, statusCode, code);
@@ -193,15 +198,74 @@ function normalizeEmail(value) {
 }
 
 async function readDepartment(db, actor, value) {
+  let id;
   if (value == null || value === '') {
     if (actor.department_id == null) fail('department_id is required.', 400, 'department_not_found');
-    return Number(actor.department_id);
+    id = Number(actor.department_id);
+  } else {
+    id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) fail('Department was not found.', 400, 'department_not_found');
+    if (actor.role !== 'admin' && id !== Number(actor.department_id)) {
+      fail('That department is not available to this buyer.', 403, 'department_not_allowed');
+    }
   }
-  const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) fail('Department was not found.', 400, 'department_not_found');
   const row = await db.prepare(`SELECT id FROM departments WHERE id = ?`).get(id);
   if (!row) fail('Department was not found.', 400, 'department_not_found');
   return id;
+}
+
+function digest(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function lineDigest(lines) {
+  return digest((lines || []).map((line, index) => ({
+    line_no: index + 1,
+    description: line.description,
+    category: line.category,
+    quantity: line.quantity,
+    unit_of_measure: line.unit_of_measure,
+    line_type: line.line_type,
+    service_basis: line.service_basis,
+    target_unit_price_cents: line.target_unit_price_cents,
+    catalog_item_id: line.catalog_item_id,
+    requisition_item_id: line.requisition_item_id
+  })));
+}
+
+function inviteDigest(invitations) {
+  return digest((invitations || []).map((row) => ({
+    supplier_id: row.supplier_id,
+    supplier_code: row.supplier_code,
+    contact_email: row.contact_email
+  })));
+}
+
+function saveDetails(source, sourceRequisitionId, lines, invitations) {
+  return {
+    source: source || null,
+    source_requisition_id: sourceRequisitionId || null,
+    line_count: lines ? lines.length : null,
+    lines_sha256: lines ? lineDigest(lines) : null,
+    invitation_count: invitations ? invitations.length : null,
+    invites_sha256: invitations ? inviteDigest(invitations) : null
+  };
+}
+
+function isEventNumberConflict(error) {
+  return isUniqueConstraint(error) && /event_number/i.test(String(error.message || ''));
+}
+
+async function insertRows(db, table, columns, rows) {
+  if (!rows.length) return;
+  const chunkSize = Math.max(1, Math.floor(SQL_VARIABLE_BUDGET / columns.length));
+  for (let offset = 0; offset < rows.length; offset += chunkSize) {
+    const chunk = rows.slice(offset, offset + chunkSize);
+    const tuples = chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+    await db.prepare(
+      `INSERT INTO ${table} (${columns.join(', ')}) VALUES ${tuples}`
+    ).run(...chunk.flat());
+  }
 }
 
 function buyerLine(item, { trustCatalog = false } = {}) {
@@ -345,15 +409,14 @@ function targetTotal(lines) {
 }
 
 async function insertLines(db, eventId, lines) {
-  const insert = db.prepare(`
-    INSERT INTO sourcing_event_lines (
-      event_id, line_no, requisition_item_id, catalog_item_id, description, category,
-      quantity, unit_of_measure, line_type, service_basis, target_unit_price_cents, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    await insert.run(
+  await insertRows(
+    db,
+    'sourcing_event_lines',
+    [
+      'event_id', 'line_no', 'requisition_item_id', 'catalog_item_id', 'description', 'category',
+      'quantity', 'unit_of_measure', 'line_type', 'service_basis', 'target_unit_price_cents', 'notes'
+    ],
+    lines.map((line, index) => [
       eventId,
       index + 1,
       line.requisition_item_id,
@@ -366,56 +429,34 @@ async function insertLines(db, eventId, lines) {
       line.service_basis,
       line.target_unit_price_cents,
       line.notes
-    );
-  }
+    ])
+  );
 }
 
 async function insertInvitations(db, eventId, actor, invitations, now) {
-  const insert = db.prepare(`
-    INSERT INTO sourcing_invitations (
-      event_id, supplier_id, contact_name, contact_email, delivery_status, invited_by_user_id, created_at
-    ) VALUES (?, ?, ?, ?, 'pending', ?, ?)
-  `);
-  for (const invitation of invitations) {
-    const result = await insert.run(
+  await insertRows(
+    db,
+    'sourcing_invitations',
+    ['event_id', 'supplier_id', 'contact_name', 'contact_email', 'delivery_status', 'invited_by_user_id', 'created_at'],
+    invitations.map((invitation) => [
       eventId,
       invitation.supplier_id,
       invitation.contact_name,
       invitation.contact_email,
+      'pending',
       actor.id,
       now
-    );
-    let invitationId = Number(result.lastInsertRowid);
-    if (!invitationId) {
-      const created = await db.prepare(`
-        SELECT id FROM sourcing_invitations WHERE event_id = ? AND supplier_id = ?
-      `).get(eventId, invitation.supplier_id);
-      invitationId = Number(created?.id || 0);
-    }
-    await writeCompliance(db, actor, 'SOURCING_INVITATION_CREATED', 'sourcing_invitation', invitationId, {
-      supplier_code: invitation.supplier_code,
-      token_prefix: null,
-      delivery: 'pending'
-    });
-    await writeAudit(
-      db,
-      'sourcing_event',
-      eventId,
-      'INVITATION_CREATED',
-      actor.name,
-      `Invited ${invitation.supplier_code} (${invitation.contact_email})`
-    );
-  }
+    ])
+  );
 }
 
 async function insertEvaluators(db, eventId, actor, userIds, now) {
-  const insert = db.prepare(`
-    INSERT INTO sourcing_evaluators (event_id, user_id, added_by_user_id, created_at)
-    VALUES (?, ?, ?, ?)
-  `);
-  for (const userId of userIds) {
-    await insert.run(eventId, userId, actor.id, now);
-  }
+  await insertRows(
+    db,
+    'sourcing_evaluators',
+    ['event_id', 'user_id', 'added_by_user_id', 'created_at'],
+    userIds.map((userId) => [eventId, userId, actor.id, now])
+  );
 }
 
 async function loadEventRow(db, id) {
@@ -473,35 +514,41 @@ async function replaceLines(db, eventId, lines) {
 
 async function replaceInvitations(db, eventId, actor, invitations, now) {
   const existing = await db.prepare(`
-    SELECT id, supplier_id, token_hash FROM sourcing_invitations WHERE event_id = ?
+    SELECT supplier_id, token_hash FROM sourcing_invitations WHERE event_id = ?
   `).all(eventId);
   const keep = new Set(invitations.map((row) => row.supplier_id));
   for (const row of existing) {
-    if (keep.has(row.supplier_id)) continue;
-    if (row.token_hash) fail('An invitation with a link cannot be removed here.', 409, 'event_state_changed');
-    await db.prepare(`DELETE FROM sourcing_invitations WHERE id = ? AND token_hash IS NULL`).run(row.id);
+    if (row.token_hash && !keep.has(row.supplier_id)) {
+      fail('An invitation with a link cannot be removed here.', 409, 'event_state_changed');
+    }
   }
-  const already = new Set(existing.filter((row) => keep.has(row.supplier_id)).map((row) => row.supplier_id));
-  const fresh = invitations.filter((row) => !already.has(row.supplier_id));
-  await insertInvitations(db, eventId, actor, fresh, now);
-  for (const row of invitations) {
-    if (!already.has(row.supplier_id)) continue;
-    await db.prepare(`
-      UPDATE sourcing_invitations
-      SET contact_name = ?, contact_email = ?
-      WHERE event_id = ? AND supplier_id = ? AND token_hash IS NULL
-    `).run(row.contact_name, row.contact_email, eventId, row.supplier_id);
-  }
+  await db.prepare(`
+    DELETE FROM sourcing_invitations WHERE event_id = ? AND token_hash IS NULL
+  `).run(eventId);
+  const locked = new Set(
+    existing.filter((row) => row.token_hash && keep.has(row.supplier_id)).map((row) => row.supplier_id)
+  );
+  await insertInvitations(
+    db,
+    eventId,
+    actor,
+    invitations.filter((row) => !locked.has(row.supplier_id)),
+    now
+  );
 }
 
 async function replaceEvaluators(db, eventId, actor, userIds, now) {
-  const existing = await db.prepare(`SELECT user_id FROM sourcing_evaluators WHERE event_id = ?`).all(eventId);
-  const keep = new Set(userIds);
-  for (const row of existing) {
-    if (!keep.has(row.user_id)) {
-      await db.prepare(`DELETE FROM sourcing_evaluators WHERE event_id = ? AND user_id = ?`).run(eventId, row.user_id);
-    }
+  if (!userIds.length) {
+    await db.prepare(`DELETE FROM sourcing_evaluators WHERE event_id = ?`).run(eventId);
+    return;
   }
+  const marks = userIds.map(() => '?').join(', ');
+  await db.prepare(`
+    DELETE FROM sourcing_evaluators WHERE event_id = ? AND user_id NOT IN (${marks})
+  `).run(eventId, ...userIds);
+  const existing = await db.prepare(`
+    SELECT user_id FROM sourcing_evaluators WHERE event_id = ?
+  `).all(eventId);
   const already = new Set(existing.map((row) => row.user_id));
   await insertEvaluators(db, eventId, actor, userIds.filter((id) => !already.has(id)), now);
 }
@@ -524,70 +571,79 @@ async function insertEvent(db, actor, fields, lines, invitations, evaluators, so
     if (open) fail('This requisition already has an open RFQ.', 409, 'requisition_in_sourcing');
   }
 
-  try {
-    return await db.transaction(async () => {
-      const year = Number(String(now).slice(0, 4));
-      const eventNumber = await nextDocumentNumber(db, 'rfq', year);
-      const result = await db.prepare(`
-        INSERT INTO sourcing_events (
-          event_number, kind, title, description, category, department_id, owner_user_id,
-          source_requisition_id, status, currency, deadline_at, qa_enabled, qa_deadline_at,
-          weight_price, weight_lead_time, weight_quality, target_total_cents,
-          row_version, created_at, updated_at
-        ) VALUES (?, 'rfq', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-      `).run(
-        eventNumber,
-        fields.title,
-        fields.description,
-        fields.category,
-        fields.department_id,
-        actor.id,
-        fields.source_requisition_id,
-        currency,
-        fields.deadline_at || null,
-        fields.qa_enabled || 0,
-        fields.qa_deadline_at || null,
-        weights.weight_price,
-        weights.weight_lead_time,
-        weights.weight_quality,
-        targetTotal(lines || []),
-        now,
-        now
-      );
-      let eventId = Number(result.lastInsertRowid);
-      if (!eventId) {
-        const created = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = ?`).get(eventNumber);
-        eventId = eventIdFromInsert(result, created?.id);
+  let lastConflict = null;
+  for (let attempt = 1; attempt <= EVENT_NUMBER_ATTEMPTS; attempt += 1) {
+    try {
+      return await db.transaction(async () => {
+        const year = Number(String(now).slice(0, 4));
+        const eventNumber = await nextDocumentNumber(db, 'rfq', year);
+        const result = await db.prepare(`
+          INSERT INTO sourcing_events (
+            event_number, kind, title, description, category, department_id, owner_user_id,
+            source_requisition_id, status, currency, deadline_at, qa_enabled, qa_deadline_at,
+            weight_price, weight_lead_time, weight_quality, target_total_cents,
+            row_version, created_at, updated_at
+          ) VALUES (?, 'rfq', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        `).run(
+          eventNumber,
+          fields.title,
+          fields.description,
+          fields.category,
+          fields.department_id,
+          actor.id,
+          fields.source_requisition_id,
+          currency,
+          fields.deadline_at || null,
+          fields.qa_enabled || 0,
+          fields.qa_deadline_at || null,
+          weights.weight_price,
+          weights.weight_lead_time,
+          weights.weight_quality,
+          targetTotal(lines || []),
+          now,
+          now
+        );
+        let eventId = Number(result.lastInsertRowid);
+        if (!eventId) {
+          const created = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = ?`).get(eventNumber);
+          eventId = eventIdFromInsert(result, created?.id);
+        }
+        if (lines?.length) await insertLines(db, eventId, lines);
+        if (invitations?.length) await insertInvitations(db, eventId, actor, invitations, now);
+        if (evaluators?.length) await insertEvaluators(db, eventId, actor, evaluators, now);
+        const counts = `${lines?.length || 0} lines, ${invitations?.length || 0} invitations`;
+        await writeAudit(
+          db,
+          'sourcing_event',
+          eventId,
+          'CREATED',
+          actor.name,
+          source === 'requisition'
+            ? `RFQ ${eventNumber} created from requisition ${fields.source_requisition_id} (${counts})`
+            : `RFQ ${eventNumber} created from scratch (${counts})`
+        );
+        await writeCompliance(db, actor, 'SOURCING_EVENT_CREATED', 'sourcing_event', eventId, {
+          ...saveDetails(source, fields.source_requisition_id, lines || [], invitations || [])
+        });
+        return eventId;
+      })();
+    } catch (error) {
+      if (error instanceof SourcingError) throw error;
+      if (isUniqueConstraint(error) && /source_requisition/i.test(String(error.message || ''))) {
+        fail('This requisition already has an open RFQ.', 409, 'requisition_in_sourcing');
       }
-      if (lines?.length) await insertLines(db, eventId, lines);
-      if (invitations?.length) await insertInvitations(db, eventId, actor, invitations, now);
-      if (evaluators?.length) await insertEvaluators(db, eventId, actor, evaluators, now);
-      await writeAudit(
-        db,
-        'sourcing_event',
-        eventId,
-        'CREATED',
-        actor.name,
-        source === 'requisition'
-          ? `RFQ ${eventNumber} created from requisition ${fields.source_requisition_id}`
-          : `RFQ ${eventNumber} created from scratch`
-      );
-      await writeCompliance(db, actor, 'SOURCING_EVENT_CREATED', 'sourcing_event', eventId, {
-        source,
-        source_requisition_id: fields.source_requisition_id || null
-      });
-      return eventId;
-    })();
-  } catch (error) {
-    if (error instanceof SourcingError) throw error;
-    if (isUniqueConstraint(error) && /source_requisition/i.test(String(error.message || ''))) {
-      fail('This requisition already has an open RFQ.', 409, 'requisition_in_sourcing');
+      if (isUniqueConstraint(error) && /sourcing_invitations/i.test(String(error.message || ''))) {
+        fail('Each supplier can be invited once.', 409, 'duplicate_invitation');
+      }
+      if (isEventNumberConflict(error)) {
+        lastConflict = error;
+        if (attempt < EVENT_NUMBER_ATTEMPTS) continue;
+        fail('Could not allocate an RFQ number.', 409, 'event_number_conflict');
+      }
+      throw error;
     }
-    if (isUniqueConstraint(error) && /sourcing_invitations/i.test(String(error.message || ''))) {
-      fail('Each supplier can be invited once.', 409, 'duplicate_invitation');
-    }
-    throw error;
   }
+  fail(lastConflict?.message || 'Could not allocate an RFQ number.', 409, 'event_number_conflict');
 }
 
 export async function createEvent(db, actor, input, { currency } = {}) {
@@ -735,7 +791,18 @@ export async function updateEvent(db, actor, id, input) {
       version
     );
     if (!result.changes) return 0;
-    await writeAudit(db, 'sourcing_event', existing.id, 'UPDATED', actor.name, `RFQ ${existing.event_number} draft updated`);
+    const counts = `${lines ? lines.length : 'unchanged'} lines, ${invitations ? invitations.length : 'unchanged'} invitations`;
+    await writeAudit(
+      db,
+      'sourcing_event',
+      existing.id,
+      'UPDATED',
+      actor.name,
+      `RFQ ${existing.event_number} draft updated (${counts})`
+    );
+    await writeCompliance(db, actor, 'SOURCING_EVENT_UPDATED', 'sourcing_event', existing.id, {
+      ...saveDetails(null, existing.source_requisition_id, lines || null, invitations || null)
+    });
     return result.changes;
   })();
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
@@ -875,7 +942,10 @@ export async function getEvent(db, id) {
     invitations,
     evaluators,
     files: files.filter((file) => !file.removed_at),
-    history
+    history,
+    warnings: event.deadline_at && Date.parse(event.deadline_at) < Date.now()
+      ? ['deadline_in_the_past']
+      : []
   };
 }
 
@@ -895,6 +965,13 @@ export async function addEventFile(db, actor, id, { buffer, filename } = {}) {
     `).get(existing.id);
     if (Number(count?.n || 0) >= MAX_EVENT_FILES) {
       fail(`An RFQ can have at most ${MAX_EVENT_FILES} files.`, 400, 'too_many_files');
+    }
+    const used = await db.prepare(`
+      SELECT COALESCE(SUM(size_bytes), 0) AS n FROM sourcing_files
+      WHERE event_id = ? AND owner_kind = 'event' AND removed_at IS NULL
+    `).get(existing.id);
+    if (Number(used?.n || 0) + buffer.length > MAX_EVENT_FILE_BYTES) {
+      fail('The RFQ attachments exceed 40 MB.', 400, 'event_files_too_large');
     }
     const result = await db.prepare(`
       INSERT INTO sourcing_files (
@@ -961,6 +1038,9 @@ export async function removeEventFile(db, actor, eventId, fileId) {
     // reach this path.
     await db.prepare(`DELETE FROM sourcing_file_blobs WHERE file_id = ?`).run(fileId);
     await writeAudit(db, 'sourcing_event', existing.id, 'FILE_REMOVED', actor.name, `PDF file ${fileId} removed from the draft`);
+    await writeCompliance(db, actor, 'SOURCING_FILE_REMOVED', 'sourcing_event', existing.id, {
+      file_id: Number(fileId)
+    });
     return result.changes;
   })();
   if (!changed) fail('File was not found.', 404, 'file_not_found');

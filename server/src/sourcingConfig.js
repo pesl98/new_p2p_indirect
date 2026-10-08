@@ -16,6 +16,8 @@ import {
 export const MAX_EVENT_LINES = 50;
 export const MAX_INVITATIONS = 20;
 export const MAX_EVENT_FILES = 10;
+/** Active buyer PDFs on one RFQ. Removed drafts no longer keep their bytes. */
+export const MAX_EVENT_FILE_BYTES = 40 * 1024 * 1024;
 export const SPEC_LINE_DESCRIPTION = 'Totaalprijs volgens specificatie';
 
 export const SOURCING_CATEGORIES = Object.freeze([
