@@ -181,6 +181,7 @@ The SPA is a tab switcher (`client/src/App.jsx`). There is no React Router.
 | Requisitions (PR) | Everyone | Catalog + ad-hoc PR, submit, contract override, convert |
 | Approvals Inbox | Everyone (inbox filtered by persona id) | Current **pending** step only |
 | Delegations | `approver` / `procurement` / `finance` / `admin` | OOO substitute |
+| Offerteaanvragen | `procurement` / `admin` / `finance`, and only when `SOURCING_ENABLED` is on | RFQ drafts. Finance is read-only. Hidden when the flag is off. |
 | Purchase Orders (PO) | Everyone | Convert, print (`window.print`), change order, status |
 | Goods Receipt (GRN) | Everyone | Company-owned goods lines only |
 | Consignment Stock | Everyone | Supplier-owned whole units; free-text location; issue creates a draw-down PO |
@@ -258,6 +259,7 @@ Matching (eligible contracts are computed `active` or `expiring_soon`): score su
 - Submit fails closed with no mapped department head (and no `role=approver` fallback in that department) or missing FY budget.
 - Carrying `source_contract_id` onto the PO at convert is **out of scope**.
 - Ad-hoc create may still default `estimated_supplier_id`; convert itself does not invent a vendor.
+- An approved PR can start an RFQ only when sourcing is on (§5.16). The default estimated supplier is not copied onto the RFQ.
 
 ### 5.3 Sequential approvals, thresholds, department heads, OOO
 
@@ -309,7 +311,7 @@ Steps are **sequential, not parallel**:
 
 **Shipped — convert** (`POST /api/purchase-orders/from-requisition`)
 
-- Approved PR only. Lines grouped by resolved supplier, in order: convert-time `supplier_mappings` → `estimated_supplier_id` → catalog `preferred_supplier_id`.
+- Approved PR only. A non-cancelled RFQ on that PR returns **409** `requisition_in_sourcing` even if `SOURCING_ENABLED` was turned off afterwards. Cancelling the RFQ unlocks convert. Lines grouped by resolved supplier, in order: convert-time `supplier_mappings` → `estimated_supplier_id` → catalog `preferred_supplier_id`.
 - **Fail closed (400)** if any line has no resolvable supplier. Header `supplier_id` is not a silent default.
 - One issued PO per resolved vendor, all sharing `requisition_id`, each with its own cents total and `PO-YYYY-NNN`. Single-supplier PRs still create exactly one PO. PR becomes `converted_to_po` only after every PO writes, in one transaction.
 - Convert UI: per-line supplier picker (`ConvertRequisitionModal`). Remapping a line can change the split.
@@ -772,6 +774,27 @@ No email inbox. No UBL/Peppol. No auto-post. The webhook drain is unchanged. A p
 
 ---
 
+### 5.16 Offerteaanvragen (RFQ drafts)
+
+**Shipped**
+
+Procurement and admin author an RFQ draft from scratch or from an approved requisition. Finance can open the same screens and cannot save. The sidebar item **Offerteaanvragen** sits between Goedkeuringen (and Delegations, when that role sees it) and Inkooporders. It is absent when `SOURCING_ENABLED` is off.
+
+- `POST /api/sourcing/events` creates a draft. `POST /api/sourcing/events/from-requisition` copies description, category, quantity, line type, service basis, and the catalog item. The PR unit price becomes the internal target in cents. Invitations are not inferred from `estimated_supplier_id`.
+- Lines, or one free-text specification (`spec_only`) that becomes a single lump-sum service line. At most 50 lines and 20 invitations. Weights must sum to 100 (default 70/15/15).
+- Buyer PDFs: `POST /api/sourcing/events/:id/files` with raw `application/pdf`. `%PDF-` magic, 4 MiB cap, at most 10 active files. Bytes live in `sourcing_file_blobs` and are not selected by list or detail. Download is `GET …/files/:fileId` (`Content-Disposition: attachment`).
+- Deadline is a datetime. A value without a zone is Europe/Amsterdam. Document number `RFQ-YYYY-NNN`.
+- `POST …/cancel` with a reason moves a draft to `cancelled`. `DELETE` is **405**.
+- While a non-cancelled RFQ points at a PR, convert-to-PO is **409** `requisition_in_sourcing`. The PR detail then includes `sourcing_event` (`id`, `event_number`, `status`) so the requester sees “In offerteaanvraag RFQ-…”. That key is omitted when the flag is off or no open RFQ exists.
+
+`GET /api/sourcing/me` returns `{ enabled, canSee, canWrite, attention_count, role }`. No cookie is **401**. The flag off is **503** `sourcing_disabled` for a signed-in caller. Requester and approver are **403**.
+
+**Not in this release**
+
+Publishing, magic links, the supplier portal, bids, comparison, award, and purchase orders from an award. The publish button is on the screen and disabled.
+
+---
+
 ## 6. Money model (integer cents)
 
 SQLite columns (`unit_price`, `total_amount`, budget fields, invoice totals, match `price_variance`, user `approval_limit`, contract `annual_value_cents`, payment-run snapshots) store **integer cents** of the deployment currency. EUR and USD both have two decimal places, so switching `CURRENCY` does not migrate or rescale stored values. The API returns cents. Display and audit text use `formatMoney` (`shared/currency.js`, locale `nl-NL`) from `client/src/money.js` and `server/src/money.js`. `formatCents` stays a symbol-free dot-decimal string (`749.00`) for non-display use. Amount fields on the client accept nl-NL major units (`1.295,50`, comma decimal, dot thousands) via `parseMajorAmount` / `toCents`. A pasted `749.00` still parses. The API and the database still store integer cents. `shared/currency.js` is unchanged.
@@ -795,6 +818,7 @@ Allocated with **MAX of the numeric suffix** for the current calendar year (`ser
 | Kind | Pattern | Table / column |
 | --- | --- | --- |
 | Requisition | `PR-YYYY-NNN` | `purchase_requisitions.pr_number` |
+| RFQ | `RFQ-YYYY-NNN` | `sourcing_events.event_number` |
 | Purchase order | `PO-YYYY-NNN` | `purchase_orders.po_number` |
 | Goods receipt | `GRN-YYYY-NNN` | `goods_receipts.grn_number` |
 | Service entry | `SES-YYYY-NNN` | `service_entry_sheets.ses_number` |
@@ -839,6 +863,8 @@ Full env table: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Keys (no values): [`.env.exa
 | `WEBHOOK_TARGET_URL` | Optional. HTTPS receiver for this customer. Not stored in the database. |
 | `WEBHOOK_SIGNING_SECRET` | Optional. HMAC key. Never returned. Not written by `vercel:customer`. |
 | `CURRENCY` | Optional. `EUR` (default) or `USD`. Anything else refuses to boot. Display locale `nl-NL`. Not written by the CLIs. |
+| `SOURCING_ENABLED` | Optional. `1`, `true`, or `yes` turns buyer RFQ drafts on. Unset leaves them off. Not written by the CLIs. Production only until a live RFQ. |
+| `SOURCING_PDF_MAX_BYTES` | Optional. RFQ PDF cap at or below 4 MiB. |
 
 There is **no platform cron**. `npm start` retries pending webhooks every 30 seconds. Vercel relies on the attempt at write time plus **Deliver pending** / replay. See [§5.14](#514-integrations).
 

@@ -5,6 +5,7 @@ import { purchasing } from './parts/purchasing.js';
 import { receiving } from './parts/receiving.js';
 import { payables } from './parts/payables.js';
 import { master } from './parts/master.js';
+import { sourcing } from './parts/sourcing.js';
 
 export const nlNL = {
   ...common,
@@ -13,5 +14,6 @@ export const nlNL = {
   ...purchasing,
   ...receiving,
   ...payables,
-  ...master
+  ...master,
+  ...sourcing
 };

@@ -1,5 +1,5 @@
 /**
- * Sequential document numbers (PR-/PO-/GRN-/SES-/CSN-/CSI-/CO-/CNT-/PAY-/UTA-/UCN-/BVL-/BFL-/BDR-YYYY-NNN).
+ * Sequential document numbers (PR-/PO-/GRN-/SES-/CSN-/CSI-/CO-/CNT-/PAY-/UTA-/UCN-/BVL-/BFL-/BDR-/RFQ-YYYY-NNN).
  *
  * Uses MAX of the numeric suffix for the current year, not COUNT(*)+1.
  * COUNT(*)+1 collides after deletes or when numbers are not dense (seed gaps).
@@ -20,7 +20,8 @@ const DOC_KINDS = {
   ucn: { table: 'utility_consumptions', column: 'consumption_number', prefix: 'UCN' },
   bvl: { table: 'bulk_containers', column: 'container_number', prefix: 'BVL' },
   bfl: { table: 'bulk_fills', column: 'fill_number', prefix: 'BFL' },
-  bdr: { table: 'bulk_draws', column: 'draw_number', prefix: 'BDR' }
+  bdr: { table: 'bulk_draws', column: 'draw_number', prefix: 'BDR' },
+  rfq: { table: 'sourcing_events', column: 'event_number', prefix: 'RFQ' }
 };
 
 export async function nextDocumentNumber(db, kind, year = new Date().getFullYear()) {

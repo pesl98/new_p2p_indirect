@@ -18,6 +18,8 @@ import {
   sessionActor,
   withSessionActor
 } from '../requestActor.js';
+import { sourcingEnabled } from '../sourcingConfig.js';
+import { findOpenSourcingEvent } from '../sourcingService.js';
 
 const router = express.Router();
 
@@ -128,14 +130,25 @@ router.get('/:id', async (req, res) => {
       ORDER BY po.id ASC
     `).all(id);
 
-    res.json({
+    const body = {
       ...nestSourceContract(pr),
       items: annotateResolvedSuppliers(items),
       approvals,
       logs,
       purchase_orders: purchaseOrders,
       purchase_order: purchaseOrders[0] || null
-    });
+    };
+    if (sourcingEnabled()) {
+      const openEvent = await findOpenSourcingEvent(db, id);
+      if (openEvent) {
+        body.sourcing_event = {
+          id: openEvent.id,
+          event_number: openEvent.event_number,
+          status: openEvent.status
+        };
+      }
+    }
+    res.json(body);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

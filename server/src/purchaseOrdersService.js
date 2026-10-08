@@ -1,4 +1,5 @@
 import { nextDocumentNumber } from './docNumbers.js';
+import { findOpenSourcingEvent } from './sourcingService.js';
 import { formatMoney, asCents } from './money.js';
 import { withDeploymentCurrency } from './currencyConfig.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
@@ -10,10 +11,11 @@ import {
 } from './webhookOutbox.js';
 
 export class PurchaseOrderError extends Error {
-  constructor(message, statusCode = 400) {
+  constructor(message, statusCode = 400, code = null) {
     super(message);
     this.name = 'PurchaseOrderError';
     this.statusCode = statusCode;
+    this.code = code;
   }
 }
 
@@ -177,6 +179,14 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
   }
   if (pr.status !== 'approved') {
     throw new PurchaseOrderError('Requisition must be in "approved" state to generate a Purchase Order.');
+  }
+  const sourcingEvent = await findOpenSourcingEvent(db, requisition_id);
+  if (sourcingEvent) {
+    throw new PurchaseOrderError(
+      'This requisition is in an open sourcing event and cannot be converted.',
+      409,
+      'requisition_in_sourcing'
+    );
   }
 
   const prItems = await loadRequisitionItems(db, requisition_id);

@@ -24,6 +24,7 @@ import {
   UserCog,
   UserCheck,
   FileCheck,
+  FileQuestion,
   Users,
   ScrollText,
   KeyRound
@@ -35,7 +36,7 @@ function dbModeLabel(mode) {
   return t('shell.dbConnected');
 }
 
-export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, paymentRunDraftCount, duplicateSuspectCount, currentUser }) {
+export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount, varianceInvoicesCount, buyerInboxCount, apAgingOverdueCount, paymentRunDraftCount, duplicateSuspectCount, canSeeSourcing, sourcingAttentionCount, currentUser }) {
   const [dbMode, setDbMode] = useState(null);
 
   useEffect(() => {
@@ -75,6 +76,16 @@ export default function Sidebar({ activeTab, onTabChange, pendingApprovalsCount,
           label: t('shell.nav.delegations'),
           icon: UserCheck,
           desc: t('shell.nav.delegationsDesc')
+        }]
+      : []),
+    ...(canSeeSourcing
+      ? [{
+          id: 'sourcing',
+          label: t('shell.nav.sourcing'),
+          icon: FileQuestion,
+          badge: sourcingAttentionCount > 0 ? sourcingAttentionCount : null,
+          badgeColor: 'bg-amber-500 text-white',
+          desc: t('shell.nav.sourcingDesc')
         }]
       : []),
     {

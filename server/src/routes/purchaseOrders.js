@@ -159,7 +159,9 @@ router.post('/from-requisition', async (req, res) => {
   } catch (error) {
     const status = error.statusCode || 500;
     if (status >= 500) console.error('Error generating PO:', error);
-    res.status(status).json({ error: error.message });
+    const body = { error: error.message };
+    if (error.code) body.code = error.code;
+    res.status(status).json(body);
   }
 });
 

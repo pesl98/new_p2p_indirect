@@ -103,6 +103,9 @@ export const common = {
   'role.adminCfo': 'Beheerder / CFO',
 
   'status.draft': 'Concept',
+  'status.published': 'Gepubliceerd',
+  'status.evaluated': 'Beoordeeld',
+  'status.awarded': 'Gegund',
   'status.submitted': 'Ingediend',
   'status.pending': 'In behandeling',
   'status.pendingApproval': 'Wacht op goedkeuring',

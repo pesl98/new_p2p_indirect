@@ -70,8 +70,8 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
 | 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | `91f7e541e8a9e9a6e7972dd3ab6fee7c26dc3ddf` | merged |
 | 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | `cdefb448106f0c5a52d583e9abe69f02facc8802` | merged |
-| 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) (draft, base `main`) | Sprint 8.0 — Transaction isolation and preview database | | in progress |
-| 8a | | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | | Sprint 8a — Data model and buyer RFQ authoring | | planned |
+| 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
+| 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | | Sprint 8a — Data model and buyer RFQ authoring | | in progress |
 | 8b | | Supplier portal: magic links, sealed bids, copy-link delivery | | Sprint 8b — Supplier portal and sealed bids | | planned |
 | 8c | | Comparison, scoring, award requisition, SoD, and POs | | Sprint 8c — Comparison, scoring, award, and POs | | planned |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
@@ -370,11 +370,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Concurrent requests on one warm instance never share an interactive transaction. A Vercel Preview deployment uses its own database or refuses to serve. A guarded check can remove a leftover `invoice_proposals.pdf_bytes` column without rebuilding the table.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/55 (#55, draft). Base is `main` at `cdefb448106f0c5a52d583e9abe69f02facc8802`. Do not merge until the Architect reviews and Peter OKs.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/55 (#55). Base was `main` at `cdefb448106f0c5a52d583e9abe69f02facc8802`.
 
-**Merge SHA:**
+**Merge SHA:** `ca4eb1372ffee56215726b30d4a53a2acb020603`
 
-**Status:** in progress.
+**Status:** merged.
 
 ### Done when
 
@@ -392,7 +392,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **SQLite serializes instead of opening a second connection.** better-sqlite3 has one connection, and an in-memory database cannot be shared with a second connection. A foreign transaction waits, and that wait ends with `sqlite_transaction_timeout` after 15 seconds. A statement from outside the current async store waits until the open transaction commits or rolls back, so it is not executed inside it. The synchronous return value is unchanged when no foreign transaction is open.
 - **Preview seed is batched.** `insertDemoData` writes in non-interactive batches of 40 statements (`BEGIN` … `COMMIT` in one pipeline on Turso) so a preview load does not hold one interactive transaction across every insert.
 - **Preview fail-closed.** Preview reads `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN`. Those two are enough: a missing production URL does not 503. When a production URL or `TURSO_AUTH_TOKEN` is visible (including the copy `vercel:customer` writes onto Preview), the normalised host and the token are compared. Scheme, path, and query are ignored, and a legacy `name.turso.io` host matches the regional `name.<region>.turso.io` host. The escape hatch `ALLOW_PREVIEW_PRODUCTION_DATABASE=allow` applies only when no valid preview database is configured, and it is logged as an error. Preview never falls through to local SQLite. On `new-p2p-indirect` before this sprint, Preview had no Turso variables, so those deploys (including 7b `f94a732` and `2496b85`) returned 503 and did not open production.
-- **Follow-ups, not fixed here.** A Hrana `base_url` is used as the next fetch URL and should have the pipeline path appended. A `close` that fails after a successful `COMMIT` is reported as a transaction error. A failed `BEGIN` can leave the server stream open until Turso expires it.
+- **Follow-ups, not fixed here.** A Hrana `base_url` is used as the next fetch URL and should have the pipeline path appended. A `close` that fails after a successful `COMMIT` is reported as a transaction error. A failed `BEGIN` can leave the server stream open until Turso expires it. A Turso `batch()` pipeline can commit a partial chunk if a statement in the middle of the pipeline errors. The rest of that pipeline still runs, so a later statement is not a rollback of the earlier ones.
 - **Preview seed is not `npm run seed`.** The destructive wipe stays the local demo command. The preview command skips when `elena.rostova@company.com` is already present and refuses when the database has other users or departments.
 - **Leftover column.** No startup migration drops `pdf_bytes`. An admin `GET` is metadata only (`PRAGMA` and counts). The repair copies bytes and drops the column in the same transaction. The script is read-only unless `--apply`. `--turso` targets `TURSO_DATABASE_URL` and does not open a local file. It was not run against a customer database.
 - **Peter, 2026-10-08.** The Preview/Prod split is this sprint. The other sourcing decisions are recorded in [SOURCING-PLAN.md](SOURCING-PLAN.md) and bind 8a–8d. They are not built here.
@@ -400,7 +400,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ## Sprint 8a — Data model and buyer RFQ authoring
 
-**Date:**
+**Date:** 2026-10-08
 
 **Goal:** Procurement can create, edit, and cancel RFQ drafts from scratch or from an approved requisition. Drafts hold lines, buyer PDFs, invitees (no links yet), weights, and evaluators. Nothing is visible to suppliers yet.
 
@@ -408,7 +408,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Merge SHA:**
 
-**Status:** planned.
+**Status:** in progress. Draft PR, not merged. The Architect reviews, Peter OKs, the Architect merges.
 
 ### Done when
 
@@ -421,7 +421,17 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ### Decisions
 
-- **Not started.** Scope is [SOURCING-PLAN.md](SOURCING-PLAN.md) §8, Sprint 8a. Peter's 2026-10-08 decisions that bind this sprint: PDF attachments only, limits of 50 lines / 20 invitations / 10 files × 4 MiB, no supplier accounts, no public tenders.
+- **Scope.** [SOURCING-PLAN.md](SOURCING-PLAN.md) §8 Sprint 8a, with the 2026-10-08 (Peter) block in §10 where it overrides earlier text. PDF attachments only. Limits 50 lines, 20 invitations, 10 files × 4 MiB. No supplier accounts, no public tenders, no portal, no magic links, no bids, no comparison, no award, no mail, no CORS.
+- **Schema.** The full §4 block is appended to `schema.sql` as `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` / `CREATE TRIGGER IF NOT EXISTS`, including the bid and award tables later sprints will fill. No `ALTER` and no `DROP` of existing data tables. Money is integer cents. Applying the block twice changes nothing.
+- **Status machine.** `sourcingStatus.js` encodes the whole graph and fails closed. The only transition this API performs is `draft` → `cancelled`. A body that names another status is **409** `invalid_transition`. `publishBlockers` is implemented for 8b and is not exposed as a route. The publish button on the screen stays disabled, with the note that publishing is available in 8b.
+- **Invitations.** Never copied from requisition lines. `estimated_supplier_id` defaults to supplier 1 in the requisition writer, so copying it would invite the wrong vendor. The buyer invites active suppliers explicitly. A non-active supplier is **400** `supplier_not_active`.
+- **Flag.** `SOURCING_ENABLED` is off unless the value is `1`, `true`, or `yes` (case-insensitive), matching the other deployment flags. Unset, empty, `0`, `false`, and `no` stay off. The router checks it on each request. Session auth runs first, so a call with no cookie is **401** whether or not the flag is on. A signed-in caller gets **503** `sourcing_disabled`. The nav item is hidden when `GET /api/sourcing/me` does not return `canSee`.
+- **Roles.** The router is `procurement`, `admin`, and `finance`. Finance writes are **403** `read_only`, including target prices. Edits are the owner or an admin. Requester and approver never reach the router (**403**). An evaluator who is not one of those three roles does not get the screen in 8a; scoring is 8c.
+- **Requisition lock.** `convertRequisitionToPurchaseOrders` refuses with **409** `requisition_in_sourcing` while a non-cancelled event points at that PR. The check is the row, not the flag: turning the flag off later does not unlock the PR. Cancelling the draft removes the lock. Detail JSON gains `sourcing_event` only when the flag is on and such a row exists, so the requester can see the banner without calling `/api/sourcing`. With the flag off the key is absent and the requisition payload is unchanged.
+- **Files.** Metadata in `sourcing_files`, bytes in `sourcing_file_blobs`. List and detail SQL never select the blob table. Download is the only read. Checks reuse the 7b helpers: `Content-Type: application/pdf`, `%PDF-` magic, 4 MiB cap (`SOURCING_PDF_MAX_BYTES`, clamped like the invoice cap). The 10-file cap counts rows with `removed_at` null, so a buyer can replace a PDF; the bytes stay because the blob trigger is append-only.
+- **Numbers and money.** `RFQ-YYYY-NNN` via `nextDocumentNumber` kind `rfq`. A naive `YYYY-MM-DDTHH:mm` deadline is Europe/Amsterdam; a `Z` or numeric offset is stored as UTC. Weights omitted stay 70/15/15. If any weight is sent, all three are required and must sum to 100. A comma amount is converted in the client with `toCents`; the server accepts integer cents only.
+- **Audit.** Readable lines in `audit_logs`. Compliance ledger rows for create (`SOURCING_EVENT_CREATED`), cancel (`SOURCING_EVENT_CANCELLED`), invitation (`SOURCING_INVITATION_CREATED`), and file upload (`SOURCING_FILE_UPLOADED`). Ordinary edits stay in `audit_logs` only.
+- **Left alone.** The 7b sprint-log row was already merged at `cdefb448` before this sprint, so it was not rewritten. The Turso `batch()` partial-chunk follow-up is recorded on 8.0 and is not fixed here. `vercel:customer` still writes only its three variables.
 
 ## Sprint 8b — Supplier portal and sealed bids
 

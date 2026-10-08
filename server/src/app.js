@@ -30,6 +30,7 @@ import authRouter from './routes/auth.js';
 import complianceRouter from './routes/compliance.js';
 import integrationsRouter from './routes/integrations.js';
 import invoiceProposalPdfColumnRouter from './routes/invoiceProposalPdfColumn.js';
+import sourcingRouter from './routes/sourcing.js';
 import { loadIntegrationConfig } from './integrationConfig.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
@@ -136,6 +137,7 @@ export function createApp(options = {}) {
   app.use('/api/compliance', complianceRouter);
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/admin/invoice-proposal-pdf-column', invoiceProposalPdfColumnRouter);
+  app.use('/api/sourcing', sourcingRouter);
 
   app.get('/api/health', (req, res) => {
     const db = req.db || peekCachedDb();

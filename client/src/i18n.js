@@ -55,6 +55,9 @@ export function hasMessage(key) {
 
 const STATUS = {
   draft: 'status.draft',
+  published: 'status.published',
+  evaluated: 'status.evaluated',
+  awarded: 'status.awarded',
   submitted: 'status.submitted',
   pending: 'status.pending',
   pending_approval: 'status.pendingApproval',

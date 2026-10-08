@@ -157,6 +157,8 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `INVOICE_OCR_TIMEOUT_MS` | Per-attempt OCR timeout. Default **20000**. One retry after 1 second. | Optional. | Production and Preview. | No. | Integer ≥ 1000, clamped to **24500** so two attempts fit in the 60s upload function. Anything else uses 20000. |
 | `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` | Signed-in PDF uploads per user. Default **10**. | Optional. | Production and Preview. | No. | Integer 1–600. Anything else uses 10. API keys keep their own limit. |
 | `INVOICE_PROPOSAL_SOD` | `enforce` (default) or `off`. | Optional. | Production and Preview. | No. | `off` is for a single-person tenant only. |
+| `SOURCING_ENABLED` | Turns buyer RFQ drafts on. `1`, `true`, or `yes` (any case). Unset, empty, `0`, `false`, `no`, or anything else is off. | Optional. Leave unset until this customer should author RFQs. | Production only until a customer runs a live RFQ. Preview stays off. Not written by the CLIs. | No. | `1` |
+| `SOURCING_PDF_MAX_BYTES` | Raw PDF cap for buyer RFQ attachments. Default and maximum **4194304** (4 MiB). | Optional. Only read when sourcing is on. | Same environment as `SOURCING_ENABLED`. | No. | An integer from 5 through 4194304. Anything else uses 4 MiB. |
 
 ### 3.1 SSO and login flags the CLIs do not write
 
@@ -951,6 +953,14 @@ The bytes are in `invoice_proposal_files`, not on the proposal row. List and det
 Machine upload: `POST /api/integrations/invoice-proposals` with `Authorization: Bearer pfk_…`, scope `invoices:write`, `Content-Type: application/pdf`, and the raw PDF as the body. Optional `Content-Disposition` `filename*` (RFC 5987), `X-Filename`, and `Idempotency-Key`. Rate limit and idempotency match the JSON invoice route. Signed-in uploads use `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` (default 10) and count the attempt before OCR, including a failure or a call still in flight. The key’s own limit also increments before OCR. The key does not post the invoice. Rejecting writes `invoice_proposal.rejected` in that same database transaction. Posting writes `invoice_proposal.posted` in the same transaction as the invoice, which also writes `invoice.created`. `invoice.approved` is still only written when AP approves the invoice for payment. The post and reject updates match `status = 'proposed'` and return **409** `proposal_not_open` when the row already moved. The match preview runs before that lock. OCR uses `INVOICE_OCR_TIMEOUT_MS` (default 20 seconds, ceiling 24.5 seconds) and retries once after 1 second. On Vercel only those PDF posts use the 60 second function. The inbox list defaults to 50 rows (`offset`, `has_more`) and does not recompute a match preview for each row. The PDF response sends `Content-Security-Policy: frame-ancestors 'self'`. `integration_invoice_links` has an index on `invoice_id` (`CREATE INDEX IF NOT EXISTS`).
 
 The screen workflow is [SYSTEM_MANUAL.md §5.15](SYSTEM_MANUAL.md#515-pdf-invoice-proposals).
+
+### 8.10 Buyer RFQ drafts
+
+Leave `SOURCING_ENABLED` unset and `/api/sourcing` returns **503** `sourcing_disabled` to a signed-in user. A request with no cookie is still **401**. The sidebar item is hidden. Requisition list and detail JSON stay as they are, and convert-to-PO is unchanged while no RFQ row exists.
+
+To turn drafts on for this customer only, set `SOURCING_ENABLED=1` on **Production** and redeploy. `1`, `true`, and `yes` are on. Preview stays off until that customer runs a live RFQ. `vercel:customer` does not write this variable. The additive tables arrive with the next `db:migrate` or the next cold start (`CREATE TABLE IF NOT EXISTS` only; nothing is dropped).
+
+`SOURCING_PDF_MAX_BYTES` can set a smaller cap for the buyer PDFs. It cannot raise the 4 MiB ceiling. Publishing, supplier links, and bids are not in this release.
 
 ---
 

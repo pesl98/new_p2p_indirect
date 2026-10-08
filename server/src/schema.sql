@@ -926,3 +926,276 @@ CREATE TABLE IF NOT EXISTS invoice_proposal_upload_attempts (
 CREATE INDEX IF NOT EXISTS invoice_proposal_upload_attempts_user
   ON invoice_proposal_upload_attempts (user_id, created_at);
 
+-- Sourcing (RFQ). One database per customer, so no org_id.
+-- Additive only: CREATE TABLE / INDEX / TRIGGER IF NOT EXISTS. Existing tables stay as they are.
+-- Bid prices are sealed until deadline_at; only sourcingBidReadModel.js and
+-- the portal (own bid) may read sourcing_bid_lines / sourcing_bid_revisions.
+-- List and detail queries must not read sourcing_file_blobs.
+CREATE TABLE IF NOT EXISTS sourcing_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_number TEXT UNIQUE NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'rfq' CHECK (kind IN ('rfq', 'tender')),
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT CHECK (category IS NULL OR category IN ('IT Hardware', 'Software & Cloud', 'Office Supplies', 'Facilities & MRO', 'Consulting & Professional Services', 'Marketing & Events', 'Travel & Subscriptions')),
+  department_id INTEGER NOT NULL,
+  owner_user_id INTEGER NOT NULL,
+  source_requisition_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'closed', 'evaluated', 'awarded', 'cancelled')),
+  currency TEXT NOT NULL,
+  deadline_at TEXT,
+  qa_enabled INTEGER NOT NULL DEFAULT 0 CHECK (qa_enabled IN (0, 1)),
+  qa_deadline_at TEXT,
+  weight_price INTEGER NOT NULL DEFAULT 70 CHECK (weight_price BETWEEN 0 AND 100),
+  weight_lead_time INTEGER NOT NULL DEFAULT 15 CHECK (weight_lead_time BETWEEN 0 AND 100),
+  weight_quality INTEGER NOT NULL DEFAULT 15 CHECK (weight_quality BETWEEN 0 AND 100),
+  target_total_cents INTEGER,
+  published_at TEXT, closed_at TEXT, evaluated_at TEXT, awarded_at TEXT,
+  cancelled_at TEXT, cancel_reason TEXT,
+  cancelled_before_deadline INTEGER CHECK (cancelled_before_deadline IS NULL OR cancelled_before_deadline IN (0, 1)),
+  row_version INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (weight_price + weight_lead_time + weight_quality = 100),
+  CHECK (status = 'draft' OR status = 'cancelled' OR deadline_at IS NOT NULL),
+  CHECK (status != 'cancelled' OR (cancel_reason IS NOT NULL AND length(trim(cancel_reason)) > 0)),
+  FOREIGN KEY (department_id) REFERENCES departments(id),
+  FOREIGN KEY (owner_user_id) REFERENCES users(id),
+  FOREIGN KEY (source_requisition_id) REFERENCES purchase_requisitions(id)
+);
+CREATE INDEX IF NOT EXISTS sourcing_events_status_deadline ON sourcing_events (status, deadline_at);
+CREATE INDEX IF NOT EXISTS sourcing_events_owner ON sourcing_events (owner_user_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS sourcing_events_open_source_pr
+  ON sourcing_events (source_requisition_id)
+  WHERE source_requisition_id IS NOT NULL AND status != 'cancelled';
+
+CREATE TABLE IF NOT EXISTS sourcing_event_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  line_no INTEGER NOT NULL,
+  requisition_item_id INTEGER,
+  catalog_item_id INTEGER,
+  description TEXT NOT NULL,
+  category TEXT NOT NULL,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  unit_of_measure TEXT NOT NULL DEFAULT 'each',
+  line_type TEXT NOT NULL DEFAULT 'goods' CHECK (line_type IN ('goods', 'service')),
+  service_basis TEXT CHECK (service_basis IS NULL OR service_basis IN ('lump_sum', 'hours', 'days')),
+  target_unit_price_cents INTEGER CHECK (target_unit_price_cents IS NULL OR target_unit_price_cents >= 0),
+  notes TEXT,
+  UNIQUE (event_id, line_no),
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (requisition_item_id) REFERENCES requisition_items(id),
+  FOREIGN KEY (catalog_item_id) REFERENCES catalog_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_invitations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  contact_name TEXT,
+  contact_email TEXT NOT NULL,
+  token_hash TEXT UNIQUE,
+  token_prefix TEXT,
+  token_version INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT,
+  revoked_at TEXT, revoked_by_user_id INTEGER, revoke_reason TEXT,
+  first_opened_at TEXT, last_seen_at TEXT,
+  declined_at TEXT, decline_reason TEXT,
+  delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK (delivery_status IN ('pending', 'sent', 'failed', 'skipped', 'copied')),
+  invited_by_user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (event_id, supplier_id),
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (invited_by_user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS sourcing_invitations_event ON sourcing_invitations (event_id);
+
+CREATE TABLE IF NOT EXISTS sourcing_portal_rate_windows (
+  scope_key TEXT NOT NULL,
+  window_start INTEGER NOT NULL,
+  request_count INTEGER NOT NULL,
+  PRIMARY KEY (scope_key, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_bids (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  invitation_id INTEGER NOT NULL UNIQUE,
+  supplier_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'withdrawn')),
+  current_revision INTEGER NOT NULL DEFAULT 1,
+  first_submitted_at TEXT NOT NULL,
+  last_submitted_at TEXT NOT NULL,
+  withdrawn_at TEXT,
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (invitation_id) REFERENCES sourcing_invitations(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+CREATE INDEX IF NOT EXISTS sourcing_bids_event ON sourcing_bids (event_id, status);
+
+CREATE TABLE IF NOT EXISTS sourcing_bid_revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bid_id INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  submission_id TEXT NOT NULL,
+  total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
+  quoted_line_count INTEGER NOT NULL,
+  validity_until TEXT,
+  default_lead_time_days INTEGER CHECK (default_lead_time_days IS NULL OR default_lead_time_days BETWEEN 0 AND 730),
+  supplier_note TEXT,
+  content_sha256 TEXT NOT NULL,
+  submitted_at TEXT NOT NULL,
+  UNIQUE (bid_id, revision),
+  UNIQUE (bid_id, submission_id),
+  FOREIGN KEY (bid_id) REFERENCES sourcing_bids(id)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_bid_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bid_id INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  event_line_id INTEGER NOT NULL,
+  quoted INTEGER NOT NULL DEFAULT 1 CHECK (quoted IN (0, 1)),
+  unit_price_cents INTEGER CHECK (unit_price_cents IS NULL OR unit_price_cents > 0),
+  line_total_cents INTEGER CHECK (line_total_cents IS NULL OR line_total_cents >= 0),
+  lead_time_days INTEGER CHECK (lead_time_days IS NULL OR lead_time_days BETWEEN 0 AND 730),
+  comment TEXT,
+  CHECK (quoted = 0 OR (unit_price_cents IS NOT NULL AND line_total_cents IS NOT NULL)),
+  UNIQUE (bid_id, revision, event_line_id),
+  FOREIGN KEY (bid_id) REFERENCES sourcing_bids(id),
+  FOREIGN KEY (event_line_id) REFERENCES sourcing_event_lines(id)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  invitation_id INTEGER,
+  question TEXT NOT NULL,
+  asked_at TEXT NOT NULL,
+  answer TEXT,
+  answered_by_user_id INTEGER,
+  answered_at TEXT,
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'all')),
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (invitation_id) REFERENCES sourcing_invitations(id),
+  FOREIGN KEY (answered_by_user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS sourcing_questions_event ON sourcing_questions (event_id, visibility);
+
+CREATE TABLE IF NOT EXISTS sourcing_evaluators (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  coi_status TEXT NOT NULL DEFAULT 'pending' CHECK (coi_status IN ('pending', 'none_declared', 'conflict_declared')),
+  coi_declared_at TEXT,
+  coi_note TEXT,
+  added_by_user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (event_id, user_id),
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  bid_id INTEGER NOT NULL,
+  evaluator_user_id INTEGER NOT NULL,
+  quality_score INTEGER NOT NULL CHECK (quality_score BETWEEN 0 AND 10),
+  comment TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (event_id, bid_id, evaluator_user_id),
+  FOREIGN KEY (bid_id) REFERENCES sourcing_bids(id),
+  FOREIGN KEY (evaluator_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_awards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  award_type TEXT NOT NULL CHECK (award_type IN ('full', 'split')),
+  status TEXT NOT NULL DEFAULT 'pending_approval' CHECK (status IN ('pending_approval', 'approved', 'rejected')),
+  award_requisition_id INTEGER,
+  total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
+  lowest_total_cents INTEGER,
+  is_lowest INTEGER NOT NULL CHECK (is_lowest IN (0, 1)),
+  has_expired_validity INTEGER NOT NULL DEFAULT 0 CHECK (has_expired_validity IN (0, 1)),
+  reason TEXT,
+  comparison_snapshot_json TEXT NOT NULL,
+  proposed_by_user_id INTEGER NOT NULL,
+  proposed_at TEXT NOT NULL,
+  decided_at TEXT,
+  CHECK ((is_lowest = 1 AND has_expired_validity = 0) OR (reason IS NOT NULL AND length(trim(reason)) >= 10)),
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (award_requisition_id) REFERENCES purchase_requisitions(id),
+  FOREIGN KEY (proposed_by_user_id) REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sourcing_awards_one_open
+  ON sourcing_awards (event_id) WHERE status IN ('pending_approval', 'approved');
+CREATE INDEX IF NOT EXISTS sourcing_awards_requisition ON sourcing_awards (award_requisition_id);
+
+CREATE TABLE IF NOT EXISTS sourcing_award_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  award_id INTEGER NOT NULL,
+  event_line_id INTEGER NOT NULL,
+  bid_id INTEGER NOT NULL,
+  bid_revision INTEGER NOT NULL,
+  supplier_id INTEGER NOT NULL,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents > 0),
+  line_total_cents INTEGER NOT NULL,
+  is_line_lowest INTEGER NOT NULL CHECK (is_line_lowest IN (0, 1)),
+  UNIQUE (award_id, event_line_id),
+  FOREIGN KEY (award_id) REFERENCES sourcing_awards(id),
+  FOREIGN KEY (event_line_id) REFERENCES sourcing_event_lines(id),
+  FOREIGN KEY (bid_id) REFERENCES sourcing_bids(id),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+);
+
+CREATE TABLE IF NOT EXISTS sourcing_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('event', 'bid')),
+  invitation_id INTEGER,
+  filename TEXT NOT NULL,
+  content_type TEXT NOT NULL CHECK (content_type = 'application/pdf'),
+  size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+  sha256 TEXT NOT NULL,
+  uploaded_by_user_id INTEGER,
+  removed_at TEXT,
+  created_at TEXT NOT NULL,
+  CHECK ((owner_kind = 'event' AND invitation_id IS NULL AND uploaded_by_user_id IS NOT NULL)
+      OR (owner_kind = 'bid' AND invitation_id IS NOT NULL)),
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (invitation_id) REFERENCES sourcing_invitations(id)
+);
+CREATE INDEX IF NOT EXISTS sourcing_files_event ON sourcing_files (event_id, owner_kind);
+CREATE INDEX IF NOT EXISTS sourcing_files_invitation ON sourcing_files (invitation_id);
+
+CREATE TABLE IF NOT EXISTS sourcing_file_blobs (
+  file_id INTEGER PRIMARY KEY,
+  bytes BLOB NOT NULL,
+  FOREIGN KEY (file_id) REFERENCES sourcing_files(id)
+);
+
+CREATE TRIGGER IF NOT EXISTS sourcing_bid_revisions_no_update BEFORE UPDATE ON sourcing_bid_revisions
+BEGIN SELECT RAISE(ABORT, 'sourcing_bid_revisions is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_bid_revisions_no_delete BEFORE DELETE ON sourcing_bid_revisions
+BEGIN SELECT RAISE(ABORT, 'sourcing_bid_revisions is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_bid_lines_no_update BEFORE UPDATE ON sourcing_bid_lines
+BEGIN SELECT RAISE(ABORT, 'sourcing_bid_lines is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_bid_lines_no_delete BEFORE DELETE ON sourcing_bid_lines
+BEGIN SELECT RAISE(ABORT, 'sourcing_bid_lines is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_award_lines_no_update BEFORE UPDATE ON sourcing_award_lines
+BEGIN SELECT RAISE(ABORT, 'sourcing_award_lines is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_award_lines_no_delete BEFORE DELETE ON sourcing_award_lines
+BEGIN SELECT RAISE(ABORT, 'sourcing_award_lines is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_file_blobs_no_update BEFORE UPDATE ON sourcing_file_blobs
+BEGIN SELECT RAISE(ABORT, 'sourcing_file_blobs is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS sourcing_bid_revisions_deadline BEFORE INSERT ON sourcing_bid_revisions
+WHEN (SELECT e.status != 'published' OR e.deadline_at <= NEW.submitted_at
+      FROM sourcing_bids b JOIN sourcing_events e ON e.id = b.event_id WHERE b.id = NEW.bid_id)
+BEGIN SELECT RAISE(ABORT, 'sourcing bid after deadline'); END;
+

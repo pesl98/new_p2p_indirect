@@ -23,7 +23,7 @@ import { t, presentError, statusLabel, categoryLabel, priorityLabel } from '../i
 import { formatLineQuantity, lineTypeFromCategory, lineTypeLabel, lineTypeWithBasisLabel, serviceBasisLabel, serviceRateLabel } from '../lineType';
 import ConvertRequisitionModal from '../components/ConvertRequisitionModal';
 
-export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
+export default function RequisitionsView({ currentUser, onNavigate, focusId, sourcingCanWrite = false }) {
   const [requisitions, setRequisitions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -978,11 +978,34 @@ export default function RequisitionsView({ currentUser, onNavigate, focusId }) {
               </div>
             </div>
 
-            <div className="p-4 border-t border-slate-200 flex justify-end space-x-2">
+            <div className="p-4 border-t border-slate-200 flex items-center justify-end gap-2">
+              {selectedPR.sourcing_event && (
+                <p className="mr-auto text-xs font-semibold text-amber-800">
+                  {t('sourcing.pr.banner', { number: selectedPR.sourcing_event.event_number })}
+                </p>
+              )}
+              {selectedPR.status === 'approved' && sourcingCanWrite && !selectedPR.sourcing_event && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('sourcing', { requisitionId: selectedPR.id })}
+                  className="px-4 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg text-xs font-semibold"
+                >
+                  {t('sourcing.pr.start')}
+                </button>
+              )}
               {selectedPR.status === 'approved' && (
                 <button
-                  onClick={() => openConvert(selectedPR.id)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold"
+                  type="button"
+                  disabled={Boolean(selectedPR.sourcing_event)}
+                  title={selectedPR.sourcing_event ? t('sourcing.pr.convertLocked') : t('purchasing.pr.convertTitle')}
+                  onClick={() => {
+                    if (!selectedPR.sourcing_event) openConvert(selectedPR.id);
+                  }}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold text-white ${
+                    selectedPR.sourcing_event
+                      ? 'bg-indigo-300 cursor-not-allowed'
+                      : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
                 >
                   {t('purchasing.pr.convert')}
                 </button>

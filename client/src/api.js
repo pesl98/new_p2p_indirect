@@ -313,7 +313,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(poData)
     });
-    return jsonOk(r, t('errors.poCreate'));
+    let data = null;
+    try {
+      data = await r.json();
+    } catch {
+      throw new Error(t('errors.poCreate'));
+    }
+    if (!r.ok) throw new Error(data.code || data.error || t('errors.poCreate'));
+    return data;
   },
   updatePOStatus: async (id, status, notes) => {
     const r = await apiFetch(`${API_BASE}/purchase-orders/${id}/status`, {
@@ -722,7 +729,60 @@ export const api = {
       body: JSON.stringify({ reason })
     });
     return proposalJson(r, t('errors.proposalReject'));
-  }
+  },
+
+  getSourcingAccess: async () => {
+    const r = await apiFetch(`${API_BASE}/sourcing/me`);
+    if (!r.ok) return { canSee: false, canWrite: false, enabled: false, attention_count: 0 };
+    return r.json();
+  },
+  listSourcingEvents: (query = {}) => {
+    const params = new URLSearchParams();
+    if (query.status && query.status !== 'all') params.set('status', query.status);
+    if (query.source_requisition_id) params.set('source_requisition_id', String(query.source_requisition_id));
+    const qs = params.toString();
+    return apiFetch(`${API_BASE}/sourcing/events${qs ? `?${qs}` : ''}`).then((r) => proposalJson(r, t('errors.sourcing')));
+  },
+  getSourcingEvent: (id) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}`).then((r) => proposalJson(r, t('errors.sourcing'))),
+  createSourcingEvent: (data) =>
+    apiFetch(`${API_BASE}/sourcing/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  createSourcingEventFromRequisition: (data) =>
+    apiFetch(`${API_BASE}/sourcing/events/from-requisition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  updateSourcingEvent: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  cancelSourcingEvent: (id, reason) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  uploadSourcingFile: (eventId, file) =>
+    apiFetch(`${API_BASE}/sourcing/events/${eventId}/files`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/pdf',
+        'X-Filename': file.name || 'bijlage.pdf'
+      },
+      body: file
+    }).then((r) => proposalJson(r, t('errors.sourcingFile'))),
+  removeSourcingFile: (eventId, fileId) =>
+    apiFetch(`${API_BASE}/sourcing/events/${eventId}/files/${fileId}/remove`, {
+      method: 'POST'
+    }).then((r) => proposalJson(r, t('errors.sourcingFile'))),
+  sourcingFileUrl: (eventId, fileId) => `${API_BASE}/sourcing/events/${eventId}/files/${fileId}`
 };
 
 async function proposalJson(response, fallbackMessage) {
