@@ -4,6 +4,8 @@ Owner: Peter (`pesl98`). Program routed by Software Architect.
 
 This file is the register for the daily sprint program. **Every future feature PR appends a row** to the sprint table below (number, title, merge SHA when known, date) and sets that sprint’s status.
 
+The narrative of what has shipped is [PROGRAM-REPORT.md](PROGRAM-REPORT.md). This file stays the register.
+
 ## How we run dailies
 
 Each day is one sprint with a single goal and, preferably, one pull request.
@@ -42,7 +44,7 @@ Peter’s order. Do not start a later item inside an earlier sprint’s PR.
 5. **Currency selection** — Sprint 5. One deployment currency, default EUR, shared formatter, locale `nl-NL`. No in-app picker and no foreign exchange.
 6. **Translation / i18n** — Dutch (Netherlands) UI so the product is useful for NL users. Sprint 6. It was not part of Sprint 5.
 
-Item 6 is Sprint 6 (below). A docs-only program report (PR #51) may still be open. This sprint does not depend on it and does not wait for it.
+Item 6 is Sprint 6 (below).
 
 ## Recent history on `main` (before this program)
 
@@ -65,7 +67,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 3 | 2026-10-06 | Audit and compliance reporting: append-only evidence and verification-style reports | [#48](https://github.com/pesl98/new_p2p_indirect/pull/48) | Sprint 3 — Audit and compliance reporting | `4472b2725a70f7743a978ecfb5cdd02488aca72e` | merged |
 | 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
-| 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | | in progress |
+| 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -256,13 +258,11 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 
 **Goal:** Make the user-facing UI Dutch (Netherlands) so an NL customer can work in the product, with a catalog the team can extend, and accept comma decimals on amount fields.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/52 (#52, draft).
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/52 (#52).
 
-**Merge SHA:** (blank until merge).
+**Merge SHA:** `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (squash-merged).
 
-**Status:** in progress.
-
-A docs-only program report (PR #51) may still be open. This sprint does not depend on it and does not change `PROGRAM-REPORT.md`.
+**Status:** merged.
 
 ### Done when
 
