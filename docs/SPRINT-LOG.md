@@ -68,7 +68,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 4 | 2026-10-06 | Integrations: scoped API keys, master-data upserts, signed webhooks, and ERP export | [#49](https://github.com/pesl98/new_p2p_indirect/pull/49) | Sprint 4 — Integrations | `d050d330ef7c8c58080d2f102053a6838a69e7ab` | merged |
 | 5 | 2026-10-06 | EUR as the deployment currency: one shared formatter, `CURRENCY` env, currency code on outbound money | [#50](https://github.com/pesl98/new_p2p_indirect/pull/50) | Sprint 5 — EUR currency | `8a025b4ff35e6eee3346cadec8ee13b12b288850` | merged |
 | 6 | 2026-10-07 | Dutch (Netherlands) UI: message catalog, default locale `nl-NL`, comma decimal amount entry | [#52](https://github.com/pesl98/new_p2p_indirect/pull/52) | Sprint 6 — Dutch (NL) i18n | `a41ec42a327afe2c0d28211c7e9a17d3343450a5` | merged |
-| 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | | Sprint 7a — Inbound supplier invoices API | | in progress |
+| 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | | in progress |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -289,7 +289,7 @@ Provisioning (optional, default off): `SSO_PROVISIONING=1` and/or an admin `PUT 
 
 **Goal:** Let an ERP, e-invoicing hub, or scanning service post a supplier invoice with a scoped API key, through the same match, duplicate, and exception pipeline as an invoice entered on screen.
 
-**PR:** opened with this change (draft). Fill the number here after the pull request exists. Do not merge until Architect dual-ACK and Peter OK.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/53 (#53). Draft. Do not merge until Architect dual-ACK and Peter OK.
 
 **Merge SHA:**
 
