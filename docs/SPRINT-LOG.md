@@ -73,7 +73,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
-| 8c | 2026-10-09 | Comparison, scoring, award requisition, SoD, and POs | | Sprint 8c — Comparison, scoring, award, and POs | | in review |
+| 8c | 2026-10-09 | Comparison, scoring, award requisition, SoD, and POs | [#58](https://github.com/pesl98/new_p2p_indirect/pull/58) | Sprint 8c — Comparison, scoring, award, and POs | | in review |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
 
 ## Sprint 1 — Full authorization rewrite
@@ -485,11 +485,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** After the deadline, buyers compare bids, score them, and propose a full or split award. The award goes through the existing approval chain with segregation of duties. After approval, a buyer creates one issued purchase order per awarded supplier.
 
-**PR:**
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/58 (#58, draft). Base is `main`. Do not merge until the Architect reviews and Peter OKs.
 
 **Merge SHA:**
 
-**Status:** in review. Draft PR to `main`. Do not merge until the Architect reviews and Peter OKs.
+**Status:** in review.
 
 ### Done when
 
