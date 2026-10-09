@@ -774,24 +774,27 @@ No email inbox. No UBL/Peppol. No auto-post. The webhook drain is unchanged. A p
 
 ---
 
-### 5.16 Offerteaanvragen (RFQ drafts)
+### 5.16 Offerteaanvragen (RFQ)
 
 **Shipped**
 
-Procurement and admin author an RFQ draft from scratch or from an approved requisition. Finance can open the same screens and cannot save. The sidebar item **Offerteaanvragen** sits between Goedkeuringen (and Delegations, when that role sees it) and Inkooporders. It is absent when `SOURCING_ENABLED` is off.
+Procurement and admin author an RFQ from scratch or from an approved requisition, publish it, and copy one link per supplier. Finance can open the same screens and cannot save. The sidebar item **Offerteaanvragen** sits between Goedkeuringen (and Delegations, when that role sees it) and Inkooporders. It is absent when `SOURCING_ENABLED` is off.
 
 - `POST /api/sourcing/events` creates a draft. `POST /api/sourcing/events/from-requisition` copies description, category, quantity, line type, service basis, and the catalog item. The PR unit price becomes the internal target in cents. Invitations are not inferred from `estimated_supplier_id`.
 - Lines, or one free-text specification (`spec_only`) that becomes a single lump-sum service line. At most 50 lines and 20 invitations. Weights must sum to 100 (default 70/15/15).
-- Buyer PDFs: `POST /api/sourcing/events/:id/files` with raw `application/pdf`. `%PDF-` magic, 4 MiB cap, at most 10 active files. Bytes live in `sourcing_file_blobs` and are not selected by list or detail. Download is `GET …/files/:fileId` (`Content-Disposition: attachment`).
-- Deadline is a datetime. A value without a zone is Europe/Amsterdam. Document number `RFQ-YYYY-NNN`.
-- `POST …/cancel` with a reason moves a draft to `cancelled`. `DELETE` is **405**.
+- Buyer PDFs: `POST /api/sourcing/events/:id/files` with raw `application/pdf`. `%PDF-` magic, 4 MiB cap, at most 10 active files and 40 MiB of active files, and at most 10 uploads a minute per buyer. Bytes live in `sourcing_file_blobs` and are not selected by list or detail. Download is `GET …/files/:fileId` (`Content-Disposition: attachment`, `nosniff`, `frame-ancestors 'none'`).
+- Deadline is a datetime. A value without a zone is Europe/Amsterdam. Document number `RFQ-YYYY-NNN`. A deadline in the past can be saved on a draft and is refused at publish.
+- `POST …/publish` moves a draft to `published` and returns each supplier link once. The buyer copies it. Optional SMTP sends the same link and does not store it. `POST …/invitations/:id/rotate` and `…/revoke` replace or kill one link. `POST …/deadline` can only move a published deadline later.
+- `POST …/cancel` with a reason cancels a draft or a published RFQ. Published invitees get a notice without the link. `DELETE` is **405**.
 - While a non-cancelled RFQ points at a PR, convert-to-PO is **409** `requisition_in_sourcing`. The PR detail then includes `sourcing_event` (`id`, `event_number`, `status`) so the requester sees “In offerteaanvraag RFQ-…”. That key is omitted when the flag is off or no open RFQ exists.
+- Suppliers open `/portal.html` (Dutch or English). The page is not the buyer app and does not use the buyer session. They can submit, revise, and withdraw a quote, attach PDFs, and ask questions until the deadline. After the deadline the portal refuses changes.
+- Before the deadline the buyer sees who was invited, who opened the link, and who submitted, but not prices or bid files. After the deadline the owner sees the prices on **Vergelijking**. A published RFQ closes itself the next time it is read after the deadline.
 
 `GET /api/sourcing/me` returns `{ enabled, canSee, canWrite, attention_count, role }`. No cookie is **401**. The flag off is **503** `sourcing_disabled` for a signed-in caller. Requester and approver are **403**.
 
 **Not in this release**
 
-Publishing, magic links, the supplier portal, bids, comparison, award, and purchase orders from an award. The publish button is on the screen and disabled.
+Scoring, award, and purchase orders from an award. Mail for a question answer, a bid receipt, or an award. An integration key cannot read or write RFQs yet.
 
 ---
 

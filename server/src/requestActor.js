@@ -40,17 +40,23 @@ export function isIntegrationMachineRoute(req) {
   return false;
 }
 
+export function isPortalRoute(req) {
+  const path = requestPath(req);
+  return path === '/api/portal' || path.startsWith('/api/portal/');
+}
+
 export function isPublicApiRequest(req) {
   if (req.method === 'GET' && req.path === '/api/health') return true;
   if (req.path === '/api/auth' || req.path.startsWith('/api/auth/')) return true;
   return false;
 }
 
-/** Fail closed: every /api route except health, /api/auth/*, and integration machine routes needs a session. */
+/** Fail closed: every /api route except health, /api/auth/*, portal, and integration machine routes needs a session. */
 export function requireApiSession(req, res, next) {
   if (!req.path.startsWith('/api')) return next();
   if (isPublicApiRequest(req)) return next();
   if (isIntegrationMachineRoute(req)) return next();
+  if (isPortalRoute(req)) return next();
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }

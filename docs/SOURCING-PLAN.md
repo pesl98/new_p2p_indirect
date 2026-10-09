@@ -792,7 +792,7 @@ In a `tursoHttp` transaction, every statement is one HTTP round-trip on the bato
 
 | Operation | Statements in tx (approx.) |
 | --- | --- |
-| Create draft at the caps (header, 50 lines, 20 invitations, one audit, compliance ×2) | 7, measured |
+| Create draft at the caps (number, header, 50 lines, 20 invitations, one audit, one compliance row) | ≤ 25, measured |
 | Publish (conditional update, up to 20 token updates as one `UPDATE … CASE`, compliance ×2, audit, outbox) | ~7 |
 | Submit bid (rate window, guarded bid upsert, guarded revision insert, multi-row lines, compliance ×2, outbox) | ~8 |
 | Propose award (conditional event check, award + lines, PR number, PR + lines, approval chain up to 3, audit ×3, compliance ×2) | ~16 |
@@ -801,7 +801,7 @@ In a `tursoHttp` transaction, every statement is one HTTP round-trip on the bato
 
 The caps of 50 lines, 20 invitations, and 10 files per bid and per event keep these numbers valid.
 
-**Measured in 8a.** A draft save at those caps stays inside one interactive transaction and at or under 25 prepared statements, on the local adapter and on the Turso HTTP client. Lines and invitations use multi-row `INSERT … VALUES`, chunked at 900 bound variables so the statement stays under SQLite's historical 999-variable limit. Fifty lines bind 600 values. One compliance row covers the save (`SOURCING_EVENT_CREATED` or `SOURCING_EVENT_UPDATED`) and carries `line_count`, `lines_sha256`, `invitation_count`, and `invites_sha256`. A per-invitation `SOURCING_INVITATION_CREATED` waits until 8b, when a link is minted. Create is 7 statements (number, header, lines, invitations, audit, chain head, compliance insert) inside `BEGIN IMMEDIATE`. Resaving the same invitations keeps their ids: the update reads them and writes only suppliers that were added, removed, or edited, so the capped resave is 7 statements as well (delete and insert lines, read invitations, header, audit, compliance ×2). A test counts the prepared statements inside the transaction for both and asserts ≤ 25. Splitting the write into a non-interactive `batch()` was not used: a partial save is not acceptable, and a `batch()` pipeline can commit a chunk before a later statement fails.
+**Measured in 8a.** A draft save at those caps stays inside one interactive transaction and at or under 25 prepared statements, on the local adapter and on the Turso HTTP client. Lines and invitations use multi-row `INSERT … VALUES`, chunked at 900 bound variables so the statement stays under SQLite's historical 999-variable limit. Fifty lines bind 600 values. One compliance row covers the save (`SOURCING_EVENT_CREATED` or `SOURCING_EVENT_UPDATED`) and carries `line_count`, `lines_sha256`, `invitation_count`, and `invites_sha256`. A per-invitation `SOURCING_INVITATION_CREATED` waits until 8b, when a link is minted. The tested budget is **≤ 25**, not a fixed 7 and not a 7–13 band. A create whose insert returns `lastInsertRowid` is seven prepared statements: the document-number select, the header insert, the lines insert, the invitations insert, the audit insert, the chain-head read, and the compliance insert. A resave is a different, longer transaction (it replaces lines and re-reads invitations) and is still under the cap. The Turso pipeline count is a second counter: each INSERT is followed by `SELECT last_insert_rowid()` inside `run()`, so that count is higher than the prepared-statement count. Those two counters are not added together, and neither one is "7–13". A test counts prepared statements inside the transaction on both clients and asserts ≤ 25. Splitting the write into a non-interactive `batch()` was not used: a partial save is not acceptable, and a `batch()` pipeline can commit a chunk before a later statement fails.
 
 `appendComplianceEvent` costs 2 statements: it reads the chain head, then inserts, and it retries once on a mismatch. Bids that cluster near the deadline will queue behind the single writer. That is acceptable at RFQ volumes (tens of suppliers, not thousands).
 
@@ -809,7 +809,7 @@ The caps of 50 lines, 20 invitations, and 10 files per bid and per event keep th
 
 **Correctness does not depend on closing.** Bid writes are gated twice: by `deadline_at > now` inside the INSERT and by the trigger. Price visibility is gated by `now >= deadline_at`.
 
-**Lazy close.** `closeDueEvents(db, now, { limit: 20 })` runs at the start of every sourcing list or detail call, whether from the buyer app, the portal, or an integration.
+**Lazy close.** `closeDueEvents(db, now, { limit: 20 })` runs at the start of a sourcing list. A request that names one RFQ (detail, comparison, bid file, extend, and the portal calls for that invitation) closes **that** RFQ when it is due, even if older events already fill the batch of 20. The list still closes only the oldest 20. The `now` is the request clock.
 1. One bounded `SELECT id … WHERE status='published' AND deadline_at <= ? LIMIT 20`.
 2. For each event, a small transaction runs a conditional `UPDATE … SET status='closed' WHERE id=? AND status='published'`.
 3. Audit and `sourcing_event.closed` are written only if a row changed, so concurrent readers are idempotent.

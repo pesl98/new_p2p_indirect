@@ -70,7 +70,11 @@ export function publishBlockers(event, { now = new Date(), lineCount = 0, invita
   if (weights !== 100) blockers.push('weights_invalid');
   const deadline = event?.deadline_at ? Date.parse(event.deadline_at) : NaN;
   const instant = now instanceof Date ? now.getTime() : Date.parse(now);
-  if (!Number.isFinite(deadline) || !Number.isFinite(instant) || deadline < instant + PUBLISH_LEAD_MS) {
+  if (!Number.isFinite(deadline) || !Number.isFinite(instant)) {
+    blockers.push('deadline_too_soon');
+  } else if (deadline <= instant) {
+    blockers.push('deadline_in_the_past');
+  } else if (deadline < instant + PUBLISH_LEAD_MS) {
     blockers.push('deadline_too_soon');
   }
   return blockers;

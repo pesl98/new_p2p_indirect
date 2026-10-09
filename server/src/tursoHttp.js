@@ -495,6 +495,24 @@ export class TursoHttpClient {
     return this._transaction(fn, 'BEGIN IMMEDIATE');
   }
 
+  /**
+   * A failed BEGIN still opens a Hrana stream and returns its baton.
+   * Drop that stream before the error leaves the transaction. Leaving it
+   * open is the 8.0 follow-up: the 8a create retry, hitting BUSY on BEGIN,
+   * kept one stream per attempt.
+   */
+  async _closeLeftoverStream() {
+    const tx = currentTx(this);
+    if (!tx?.baton) return;
+    try {
+      await this._pipeline([{ type: 'close' }], { keepOpen: true });
+    } catch {
+      // The server may already have dropped the stream.
+    }
+    tx.baton = null;
+    tx.baseUrl = null;
+  }
+
   _transaction(fn, beginSql) {
     const client = this;
     const run = async (...args) => {
@@ -523,7 +541,12 @@ export class TursoHttpClient {
       return txLocal.run(ctx, async () => {
         ctx.depth = 1;
         try {
-          await client._execute(beginSql, [], { keepOpen: true });
+          try {
+            await client._execute(beginSql, [], { keepOpen: true });
+          } catch (beginError) {
+            await client._closeLeftoverStream();
+            throw beginError;
+          }
           try {
             const result = await fn(...args);
             await client._execute('COMMIT', [], { keepOpen: true });
@@ -532,10 +555,10 @@ export class TursoHttpClient {
           } catch (error) {
             try {
               await client._execute('ROLLBACK', [], { keepOpen: true });
-              await client._pipeline([{ type: 'close' }], { keepOpen: true });
             } catch {
               // ignore rollback failures
             }
+            await client._closeLeftoverStream();
             throw error;
           }
         } finally {
