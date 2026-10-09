@@ -140,6 +140,13 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
   const [approved, setApproved] = useState([]);
   const [supplierQuery, setSupplierQuery] = useState('');
   const [pickedSupplier, setPickedSupplier] = useState('');
+  const [linkNotice, setLinkNotice] = useState([]);
+  const [comparison, setComparison] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [answerText, setAnswerText] = useState('');
+  const [answerVisibility, setAnswerVisibility] = useState('private');
+  const [extendValue, setExtendValue] = useState('');
+  const [revokeReason, setRevokeReason] = useState('');
 
   const loadList = async (status = filter) => {
     setLoading(true);
@@ -204,6 +211,8 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
       setDetail(event);
       setTab('overview');
       setCancelReason('');
+      setLinkNotice([]);
+      setComparison(null);
       setScreen('detail');
     } catch (err) {
       setError(presentError(err, 'errors.sourcing'));
@@ -328,8 +337,91 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
     }
   };
 
-  const ownerCanEdit = canWrite && detail?.status === 'draft'
-    && (currentUser?.role === 'admin' || Number(detail?.owner_user_id) === Number(currentUser?.id));
+  const isOwner = currentUser?.role === 'admin' || Number(detail?.owner_user_id) === Number(currentUser?.id);
+  const ownerCanEdit = canWrite && detail?.status === 'draft' && isOwner;
+  const ownerCanManage = canWrite && (detail?.status === 'draft' || detail?.status === 'published') && isOwner;
+
+  const publish = async (source = detail) => {
+    if (!source?.id) return;
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await api.publishSourcingEvent(source.id, { row_version: source.row_version });
+      setDetail(saved);
+      setLinkNotice((saved.invitations || []).filter((row) => row.portal_url));
+      setScreen('detail');
+      setTab('suppliers');
+      await loadList(filter);
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openTab = async (key) => {
+    setTab(key);
+    if (!detail?.id) return;
+    try {
+      if (key === 'comparison') setComparison(await api.getSourcingComparison(detail.id));
+      if (key === 'qa') setQuestions(await api.listSourcingQuestions(detail.id) || []);
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcing'));
+    }
+  };
+
+  const rotateLink = async (invitation) => {
+    setError('');
+    try {
+      const saved = await api.rotateSourcingLink(detail.id, invitation.id);
+      setLinkNotice([{ ...invitation, portal_url: saved.portal_url }]);
+      setDetail(await api.getSourcingEvent(detail.id));
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    }
+  };
+
+  const revokeLink = async (invitationId) => {
+    setError('');
+    try {
+      await api.revokeSourcingLink(detail.id, invitationId, revokeReason);
+      setRevokeReason('');
+      setDetail(await api.getSourcingEvent(detail.id));
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    }
+  };
+
+  const extendDeadline = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await api.extendSourcingDeadline(detail.id, {
+        row_version: detail.row_version,
+        deadline_at: extendValue
+      });
+      setDetail(saved);
+      setExtendValue('');
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const answerQuestion = async (questionId) => {
+    setError('');
+    try {
+      await api.answerSourcingQuestion(detail.id, questionId, {
+        answer: answerText,
+        visibility: answerVisibility
+      });
+      setAnswerText('');
+      setQuestions(await api.listSourcingQuestions(detail.id));
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -816,13 +908,14 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
               </button>
               <button
                 type="button"
-                disabled
-                className="px-4 py-2 bg-slate-200 text-slate-500 rounded-lg text-sm font-semibold cursor-not-allowed"
-                title={t('sourcing.publishLater')}
+                disabled={!draft.id || saving}
+                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
+                title={draft.id ? t('sourcing.publish') : t('sourcing.publishLater')}
+                onClick={() => publish(draft)}
               >
                 {t('sourcing.publish')}
               </button>
-              <span className="text-xs text-slate-500">{t('sourcing.publishLater')}</span>
+              {!draft.id && <span className="text-xs text-slate-500">{t('sourcing.publishLater')}</span>}
             </div>
           </section>
         </form>
@@ -855,12 +948,14 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
               ['lines', 'sourcing.tab.lines'],
               ['suppliers', 'sourcing.tab.suppliers'],
               ['files', 'sourcing.tab.files'],
+              ['comparison', 'sourcing.tab.comparison'],
+              ['qa', 'sourcing.tab.qa'],
               ['history', 'sourcing.tab.history']
             ].map(([key, label]) => (
               <button
                 key={key}
                 type="button"
-                onClick={() => setTab(key)}
+                onClick={() => openTab(key)}
                 className={`px-3 py-1.5 rounded-full text-xs font-semibold ${tab === key ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200'}`}
               >
                 {t(label)}
@@ -874,6 +969,27 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
                   {t('sourcing.warning.deadlinePast')}
                 </p>
+              )}
+              {detail.warnings?.includes('few_invitations') && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                  {t('sourcing.warning.few')}
+                </p>
+              )}
+              {ownerCanEdit && (
+                <button type="button" disabled={saving} onClick={() => publish(detail)} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-semibold">
+                  {t('sourcing.publishNow')}
+                </button>
+              )}
+              {ownerCanManage && detail.status === 'published' && (
+                <div className="flex flex-wrap gap-2 items-end pt-2">
+                  <label className="text-sm">
+                    {t('sourcing.extend')}
+                    <input type="datetime-local" className="mt-1 block rounded border border-slate-200 px-2 py-1.5" value={extendValue} onChange={(event) => setExtendValue(event.target.value)} />
+                  </label>
+                  <button type="button" disabled={saving || !extendValue} onClick={extendDeadline} className="px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    {t('sourcing.extend')}
+                  </button>
+                </div>
               )}
               <p>{detail.description || t('common.none')}</p>
               <p>{t('sourcing.field.category')}: {detail.category ? categoryLabel(detail.category) : t('common.none')}</p>
@@ -925,17 +1041,101 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
           )}
 
           {tab === 'suppliers' && (
-            <ul className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-              {detail.invitations.length === 0 && (
-                <li className="px-4 py-3 text-sm text-slate-500">{t('sourcing.supplier.empty')}</li>
+            <div className="space-y-3">
+              {linkNotice.length > 0 && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm space-y-2">
+                  <p className="font-semibold">{t('sourcing.links.title')}</p>
+                  <p>{t('sourcing.links.body')}</p>
+                  {linkNotice.map((row) => (
+                    <label key={row.id} className="block">
+                      {row.supplier_name || row.contact_email}
+                      <input readOnly className="mt-1 w-full rounded border border-indigo-200 bg-white px-2 py-1.5 font-mono text-xs" value={row.portal_url} />
+                    </label>
+                  ))}
+                </div>
               )}
-              {detail.invitations.map((row) => (
-                <li key={row.id} className="px-4 py-3 text-sm">
-                  <span className="font-medium">{row.supplier_name}</span>
-                  <span className="text-slate-500"> · {row.contact_name || t('common.none')} · {row.contact_email}</span>
-                </li>
+              <ul className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+                {detail.invitations.length === 0 && (
+                  <li className="px-4 py-3 text-sm text-slate-500">{t('sourcing.supplier.empty')}</li>
+                )}
+                {detail.invitations.map((row) => (
+                  <li key={row.id} className="px-4 py-3 text-sm space-y-2">
+                    <p>
+                      <span className="font-medium">{row.supplier_name}</span>
+                      <span className="text-slate-500"> · {row.contact_name || t('common.none')} · {row.contact_email}</span>
+                    </p>
+                    {row.portal_status && (
+                      <p className="text-slate-600">
+                        {t(`sourcing.portalStatus.${row.portal_status}`)}
+                        {row.submitted_at ? ` · ${formatAmsterdam(row.submitted_at)}` : ''}
+                        {` · ${t('sourcing.comparison.revision')} ${row.revision_count || 0}`}
+                        {` · ${t('sourcing.comparison.files')} ${row.attachment_count || 0}`}
+                      </p>
+                    )}
+                    {ownerCanManage && detail.status === 'published' && !row.revoked_at && (
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" className="text-indigo-700 font-semibold" onClick={() => rotateLink(row)}>{t('sourcing.links.rotate')}</button>
+                        <button type="button" className="text-rose-700" onClick={() => revokeLink(row.id)}>{t('sourcing.links.revoke')}</button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {ownerCanManage && detail.status === 'published' && (
+                <label className="block text-sm text-slate-600">
+                  {t('sourcing.links.revokeReason')}
+                  <input className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5" value={revokeReason} onChange={(event) => setRevokeReason(event.target.value)} />
+                </label>
+              )}
+            </div>
+          )}
+
+          {tab === 'comparison' && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-3">
+              {!comparison && <p className="text-slate-500">{t('common.loading')}</p>}
+              {comparison?.sealed && (
+                <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-3">
+                  <p className="font-semibold">{t('sourcing.comparison.sealedTitle')}</p>
+                  <p className="mt-1">{t('sourcing.comparison.sealedBody', { time: formatAmsterdam(comparison.deadline_at) })}</p>
+                  {comparison.prices_hidden && <p className="mt-1">{t('sourcing.comparison.hidden')}</p>}
+                </div>
+              )}
+              {comparison && !comparison.sealed && <p className="font-semibold">{t('sourcing.comparison.open')}</p>}
+              <ul className="divide-y divide-slate-100">
+                {(comparison?.invitations || []).map((row) => (
+                  <li key={row.id} className="py-2">
+                    <span className="font-medium">{row.supplier_name}</span>
+                    <span className="text-slate-500"> · {t(`sourcing.portalStatus.${row.portal_status}`)}</span>
+                  </li>
+                ))}
+              </ul>
+              {!comparison?.sealed && (comparison?.bids || []).map((bid) => (
+                <div key={bid.invitation_id} className="border-t border-slate-100 pt-2">
+                  <p>{t('sourcing.comparison.total')}: {formatMoney(bid.total_cents)} · {t('sourcing.comparison.revision')} {bid.revision}</p>
+                </div>
               ))}
-            </ul>
+            </div>
+          )}
+
+          {tab === 'qa' && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-3">
+              {questions.length === 0 && <p className="text-slate-500">{t('sourcing.qa.empty')}</p>}
+              {questions.map((row) => (
+                <article key={row.id} className="border-t border-slate-100 pt-2">
+                  <p className="font-medium">{row.supplier_code}: {row.question}</p>
+                  {row.answer ? <p className="text-slate-600">{row.answer}</p> : ownerCanManage && (
+                    <div className="mt-2 flex flex-wrap gap-2 items-end">
+                      <input className="flex-1 rounded border border-slate-200 px-2 py-1.5" value={answerText} onChange={(event) => setAnswerText(event.target.value)} placeholder={t('sourcing.qa.answer')} />
+                      <select className="rounded border border-slate-200 px-2 py-1.5" value={answerVisibility} onChange={(event) => setAnswerVisibility(event.target.value)}>
+                        <option value="private">{t('sourcing.qa.private')}</option>
+                        <option value="all">{t('sourcing.qa.all')}</option>
+                      </select>
+                      <button type="button" className="px-3 py-1.5 bg-slate-900 text-white rounded-lg" onClick={() => answerQuestion(row.id)}>{t('sourcing.qa.send')}</button>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
           )}
 
           {tab === 'files' && (
@@ -989,7 +1189,7 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
             </ul>
           )}
 
-          {ownerCanEdit && (
+          {ownerCanManage && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-wrap gap-2 items-end">
               <label className="text-sm text-slate-600 flex-1">
                 {t('sourcing.cancelReason')}

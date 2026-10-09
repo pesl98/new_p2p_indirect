@@ -122,6 +122,73 @@ export async function appendComplianceEvent(db, input) {
   }
 }
 
+function complianceEventFromInput(input) {
+  const actorName = String(input.actor_name || '').trim();
+  if (!actorName) throw new ComplianceAuditError('compliance event requires actor_name');
+  if (!input.action || !input.entity_type) {
+    throw new ComplianceAuditError('compliance event requires action and entity_type');
+  }
+  const createdAt = input.created_at || utcTimestamp();
+  return {
+    action: String(input.action),
+    actor_user_id: input.actor_user_id == null || input.actor_user_id === ''
+      ? null
+      : Number(input.actor_user_id),
+    actor_name: actorName,
+    actor_role: input.actor_role || null,
+    entity_type: String(input.entity_type),
+    entity_id: input.entity_id == null || input.entity_id === '' ? null : Number(input.entity_id),
+    details: input.details == null ? null : String(input.details),
+    created_at: createdAt
+  };
+}
+
+/**
+ * One chain read and one multi-row insert for several events.
+ * The hash of each row uses the previous row in this batch, so a publish
+ * can record one row per invitation without a statement per supplier.
+ */
+export async function appendComplianceEvents(db, inputs) {
+  const list = Array.isArray(inputs) ? inputs.filter(Boolean) : [];
+  if (!list.length) return [];
+
+  const writeOnce = async () => {
+    const prev = await db.prepare(
+      `SELECT row_hash FROM compliance_audit_events ORDER BY id DESC LIMIT 1`
+    ).get();
+    let prevHash = prev?.row_hash || GENESIS_HASH;
+    const rows = list.map((input) => {
+      const event = complianceEventFromInput(input);
+      const rowHash = complianceRowHash(prevHash, canonicalCompliancePayload(event));
+      const row = { ...event, prev_hash: prevHash, row_hash: rowHash };
+      prevHash = rowHash;
+      return row;
+    });
+    const columns = [
+      'created_at', 'action', 'actor_user_id', 'actor_name', 'actor_role',
+      'entity_type', 'entity_id', 'details', 'prev_hash', 'row_hash'
+    ];
+    const chunkSize = Math.max(1, Math.floor(900 / columns.length));
+    for (let offset = 0; offset < rows.length; offset += chunkSize) {
+      const chunk = rows.slice(offset, offset + chunkSize);
+      const tuples = chunk.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+      await db.prepare(
+        `INSERT INTO compliance_audit_events (${columns.join(', ')}) VALUES ${tuples}`
+      ).run(...chunk.flatMap((row) => columns.map((column) => row[column])));
+    }
+    return rows;
+  };
+
+  try {
+    return await writeOnce();
+  } catch (error) {
+    if (/prev_hash mismatch/i.test(String(error?.message || ''))) {
+      return writeOnce();
+    }
+    throw error;
+  }
+}
+
 export async function recordLocalLoginSuccess(db, user) {
   return appendComplianceEvent(db, {
     ...actorFromSession(user),

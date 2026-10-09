@@ -31,6 +31,7 @@ import complianceRouter from './routes/compliance.js';
 import integrationsRouter from './routes/integrations.js';
 import invoiceProposalPdfColumnRouter from './routes/invoiceProposalPdfColumn.js';
 import sourcingRouter from './routes/sourcing.js';
+import portalRouter from './routes/portal.js';
 import { loadIntegrationConfig } from './integrationConfig.js';
 import { getDb, peekCachedDb, TURSO_REQUIRED_MSG, TursoConfigError } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
@@ -87,7 +88,6 @@ export function createApp(options = {}) {
   warnIfInsecureSessionSecret(authConfig);
 
   const app = express();
-  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: false, limit: '512kb' }));
 
@@ -97,6 +97,7 @@ export function createApp(options = {}) {
       req.authConfig = authConfig;
       req.integrationConfig = integrationConfig;
       req.currency = currencyConfig.currency;
+      req.now = typeof options.now === 'function' ? options.now : () => new Date();
       next();
     } catch (error) {
       if (config.onVercel || error instanceof TursoConfigError) {
@@ -107,6 +108,9 @@ export function createApp(options = {}) {
   });
 
   app.use(attachSession);
+  // Portal is bearer-only and must not inherit credentialed CORS.
+  app.use('/api/portal', portalRouter);
+  app.use(cors({ origin: true, credentials: true }));
   app.use(requireApiSession);
 
   app.use('/api/auth', authRouter);

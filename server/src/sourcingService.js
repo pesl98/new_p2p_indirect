@@ -1,16 +1,17 @@
 /**
- * Buyer RFQ drafts. Create, edit, cancel, invite, and attach PDFs.
- * Publishing, magic links, bids, comparison, and award are later sprints.
+ * Buyer RFQ authoring, publish, and lifecycle.
  * Money is integer cents. Invitations are never copied from a requisition
  * line: estimated_supplier_id defaults to supplier 1 and is not a chosen invitee.
+ * Bid prices are not read here. That stays in sourcingBidReadModel.js.
  */
 
 import { createHash } from 'node:crypto';
-import { actorFromSession, appendComplianceEvent } from './complianceAudit.js';
+import { actorFromSession, appendComplianceEvent, appendComplianceEvents, utcTimestamp } from './complianceAudit.js';
 import { nextDocumentNumber } from './docNumbers.js';
 import { LineTypeError, normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { isUniqueConstraint } from './masterData.js';
 import { lineTotalCents, requireIntegerCents } from './money.js';
+import { sendMail } from './mail/index.js';
 import {
   MAX_EVENT_FILES,
   MAX_EVENT_FILE_BYTES,
@@ -24,7 +25,11 @@ import {
   sha256Pdf,
   utcIso
 } from './sourcingConfig.js';
-import { assertTransition } from './sourcingStatus.js';
+import { buyerInvitationActivity, loadBuyerComparison, presentInvitationActivity, readBuyerBidFile } from './sourcingBidReadModel.js';
+import { invitationExpiry, mintPortalToken, portalLink, portalTokenSecret } from './sourcingPortalTokens.js';
+import { BUYER_UPLOADS_PER_MINUTE, consumeRateWindow } from './sourcingRates.js';
+import { assertTransition, publishBlockers } from './sourcingStatus.js';
+import { enqueueWebhook, kickWebhookDispatch, WEBHOOK_EVENTS } from './webhookOutbox.js';
 
 export class SourcingError extends Error {
   constructor(message, statusCode = 400, code = 'sourcing_error') {
@@ -40,8 +45,17 @@ const EVENT_NUMBER_ATTEMPTS = 3;
 /** Stay under SQLite's historical 999-variable limit, including Turso. */
 const SQL_VARIABLE_BUDGET = 900;
 
-function fail(message, statusCode, code) {
-  throw new SourcingError(message, statusCode, code);
+function fail(message, statusCode, code, extra) {
+  const error = new SourcingError(message, statusCode, code);
+  if (extra?.retryAfterSeconds) error.retryAfterSeconds = extra.retryAfterSeconds;
+  throw error;
+}
+
+/** Jittered wait between RFQ-number retries. Inclusive range 100–300 ms. */
+export function createRetryDelayMs(random = Math.random) {
+  const unit = Number(random());
+  const fraction = Number.isFinite(unit) ? Math.min(1, Math.max(0, unit)) : 0;
+  return 100 + Math.min(200, Math.floor(fraction * 201));
 }
 
 function hasOwn(obj, key) {
@@ -689,7 +703,7 @@ async function insertEvent(db, actor, fields, lines, invitations, evaluators, so
       }
       if (isEventNumberConflict(error) || isBusyConflict(error)) {
         if (attempt < EVENT_NUMBER_ATTEMPTS) {
-          await wait(20 * attempt);
+          await wait(createRetryDelayMs());
           continue;
         }
         fail('Could not allocate an RFQ number.', 409, 'event_number_conflict');
@@ -861,24 +875,27 @@ export async function updateEvent(db, actor, id, input) {
   return getEvent(db, existing.id);
 }
 
-export async function cancelEvent(db, actor, id, input = {}) {
+export async function cancelEvent(db, actor, id, input = {}, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  await closeDueEvents(db, nowDate, { limit: 20 });
   const existing = await loadEventRow(db, id);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
-  if (existing.status !== 'draft') {
-    fail('Only a draft RFQ can be cancelled in this release.', 409, 'event_state_changed');
+  if (existing.status !== 'draft' && existing.status !== 'published') {
+    fail('This RFQ cannot be cancelled from its current status.', 409, 'event_state_changed');
   }
   assertTransition(existing.status, 'cancelled');
   const reason = requireText(input.reason, 2000, 'cancel_reason_required', 'A cancel reason is required.');
-  const now = utcIso();
+  const now = utcIso(nowDate);
   const beforeDeadline = !existing.deadline_at || existing.deadline_at > now ? 1 : 0;
+  const fromStatus = existing.status;
   const changed = await db.immediateTransaction(async () => {
     const result = await db.prepare(`
       UPDATE sourcing_events
       SET status = 'cancelled', cancel_reason = ?, cancelled_at = ?,
           cancelled_before_deadline = ?, row_version = row_version + 1, updated_at = ?
-      WHERE id = ? AND status = 'draft'
-    `).run(reason, now, beforeDeadline, now, existing.id);
+      WHERE id = ? AND status = ?
+    `).run(reason, now, beforeDeadline, now, existing.id, fromStatus);
     if (!result.changes) return 0;
     await writeAudit(
       db,
@@ -890,15 +907,44 @@ export async function cancelEvent(db, actor, id, input = {}) {
     );
     await writeCompliance(db, actor, 'SOURCING_EVENT_CANCELLED', 'sourcing_event', existing.id, {
       reason,
-      before_deadline: beforeDeadline === 1
+      before_deadline: beforeDeadline === 1,
+      from_status: fromStatus
     });
+    if (fromStatus === 'published') {
+      await enqueueWebhook(db, {
+        eventType: WEBHOOK_EVENTS.SOURCING_EVENT_CANCELLED,
+        entityType: 'sourcing_event',
+        entityId: existing.id,
+        data: {
+          event_number: existing.event_number,
+          status: 'cancelled',
+          cancel_reason: reason
+        },
+        now: nowDate
+      });
+    }
     return result.changes;
   })();
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
-  return getEvent(db, existing.id);
+  kickWebhookDispatch(db);
+  const view = await getEvent(db, existing.id, nowDate);
+  if (fromStatus === 'published') {
+    const notice = await notifyInvitees(db, existing, {
+      subject: `Offerteaanvraag ${existing.event_number} geannuleerd`,
+      text: [
+        `Offerteaanvraag ${existing.event_number} (${existing.title}) is geannuleerd.`,
+        `Reden: ${reason}`,
+        'U hoeft geen offerte meer in te dienen. De link toont de geannuleerde status.'
+      ].join('\n'),
+      tag: 'sourcing_cancelled'
+    }, options);
+    view.notice = notice;
+  }
+  return view;
 }
 
-export async function listEvents(db, query = {}) {
+export async function listEvents(db, query = {}, now = new Date()) {
+  await closeDueEvents(db, now, { limit: 20 });
   const params = [];
   let sql = `
     SELECT
@@ -935,7 +981,8 @@ const FILE_META_SQL = `
   ORDER BY id ASC
 `;
 
-export async function getEvent(db, id) {
+export async function getEvent(db, id, now = new Date()) {
+  await closeDueEvents(db, now, { limit: 20 });
   const event = await db.prepare(`
     SELECT
       e.id, e.event_number, e.kind, e.title, e.description, e.category, e.department_id,
@@ -966,12 +1013,14 @@ export async function getEvent(db, id) {
   const invitations = await db.prepare(`
     SELECT
       i.id, i.supplier_id, i.contact_name, i.contact_email, i.delivery_status, i.created_at,
+      i.token_prefix, i.token_version, i.expires_at, i.revoked_at, i.declined_at, i.first_opened_at,
       s.name AS supplier_name, s.code AS supplier_code, s.status AS supplier_status
     FROM sourcing_invitations i
     JOIN suppliers s ON s.id = i.supplier_id
     WHERE i.event_id = ?
     ORDER BY i.id ASC
   `).all(event.id);
+  const activity = await buyerInvitationActivity(db, event.id);
   const evaluators = await db.prepare(`
     SELECT ev.user_id, ev.coi_status, ev.created_at, u.name AS user_name, u.role AS user_role
     FROM sourcing_evaluators ev
@@ -991,11 +1040,14 @@ export async function getEvent(db, id) {
     ...event,
     qa_enabled: Number(event.qa_enabled) === 1,
     lines,
-    invitations,
+    invitations: invitations.map((row) => ({
+      ...row,
+      ...presentInvitationActivity(row, activity, now)
+    })),
     evaluators,
     files: files.filter((file) => !file.removed_at),
     history,
-    warnings: event.deadline_at && Date.parse(event.deadline_at) < Date.now()
+    warnings: event.deadline_at && Date.parse(event.deadline_at) < (now instanceof Date ? now.getTime() : Date.now())
       ? ['deadline_in_the_past']
       : []
   };
@@ -1009,6 +1061,24 @@ export async function addEventFile(db, actor, id, { buffer, filename } = {}) {
   if (!isPdfBuffer(buffer)) fail('The file is not a PDF.', 400, 'not_a_pdf');
   const safeName = safePdfFilename(filename);
   const now = utcIso();
+  const active = await db.prepare(`
+    SELECT COUNT(*) AS n FROM sourcing_files
+    WHERE event_id = ? AND owner_kind = 'event' AND removed_at IS NULL
+  `).get(existing.id);
+  if (Number(active?.n || 0) >= MAX_EVENT_FILES) {
+    fail(`An RFQ can have at most ${MAX_EVENT_FILES} files.`, 400, 'too_many_files');
+  }
+  const usedBytes = await db.prepare(`
+    SELECT COALESCE(SUM(size_bytes), 0) AS n FROM sourcing_files
+    WHERE event_id = ? AND owner_kind = 'event' AND removed_at IS NULL
+  `).get(existing.id);
+  if (Number(usedBytes?.n || 0) + buffer.length > MAX_EVENT_FILE_BYTES) {
+    fail('The RFQ attachments exceed 40 MB.', 400, 'event_files_too_large');
+  }
+  const uploadRate = await consumeRateWindow(db, `buyer:${actor.id}:upload`, BUYER_UPLOADS_PER_MINUTE, new Date(now));
+  if (uploadRate.limited) {
+    fail('Too many uploads. Try again in a minute.', 429, 'rate_limited', { retryAfterSeconds: uploadRate.retryAfterSeconds });
+  }
   const digest = sha256Pdf(buffer);
   const fileId = await db.immediateTransaction(async () => {
     const count = await db.prepare(`
@@ -1121,6 +1191,443 @@ export async function removeEventFile(db, actor, eventId, fileId) {
   })();
   if (!changed) fail('File was not found.', 404, 'file_not_found');
   return { id: Number(fileId), removed_at: now };
+}
+
+export async function closeDueEvents(db, now = new Date(), { limit = 20 } = {}) {
+  const instant = utcIso(now instanceof Date ? now : new Date(now));
+  const due = await db.prepare(`
+    SELECT id, event_number FROM sourcing_events
+    WHERE status = 'published' AND deadline_at <= ?
+    ORDER BY deadline_at ASC
+    LIMIT ?
+  `).all(instant, limit);
+  const closed = [];
+  for (const row of due || []) {
+    const changed = await db.immediateTransaction(async () => {
+      const result = await db.prepare(`
+        UPDATE sourcing_events
+        SET status = 'closed', closed_at = ?, row_version = row_version + 1, updated_at = ?
+        WHERE id = ? AND status = 'published' AND deadline_at <= ?
+      `).run(instant, instant, row.id, instant);
+      if (!result.changes) return 0;
+      await writeAudit(db, 'sourcing_event', row.id, 'CLOSED', 'system', `RFQ ${row.event_number} closed at the deadline`);
+      await appendComplianceEvent(db, {
+        actor_user_id: null,
+        actor_name: 'system',
+        actor_role: 'system',
+        action: 'SOURCING_EVENT_CLOSED',
+        entity_type: 'sourcing_event',
+        entity_id: row.id,
+        details: JSON.stringify({ deadline_at: instant }),
+        created_at: utcTimestamp(now instanceof Date ? now : new Date(now))
+      });
+      await enqueueWebhook(db, {
+        eventType: WEBHOOK_EVENTS.SOURCING_EVENT_CLOSED,
+        entityType: 'sourcing_event',
+        entityId: row.id,
+        data: { event_number: row.event_number, status: 'closed' },
+        now: now instanceof Date ? now : new Date(now)
+      });
+      return 1;
+    })();
+    if (changed) closed.push(row.id);
+  }
+  if (closed.length) kickWebhookDispatch(db);
+  return closed;
+}
+
+function requireRowVersion(input, existing) {
+  if (input.row_version == null || input.row_version === '') {
+    fail('row_version is required.', 400, 'row_version_required');
+  }
+  const version = Number(input.row_version);
+  if (!Number.isInteger(version) || version !== Number(existing.row_version)) {
+    fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+  }
+  return version;
+}
+
+async function applyInvitationTokens(db, eventId, minted, expiresAt) {
+  if (!minted.length) return;
+  const hashCase = minted.map(() => 'WHEN ? THEN ?').join(' ');
+  const prefixCase = minted.map(() => 'WHEN ? THEN ?').join(' ');
+  const marks = minted.map(() => '?').join(', ');
+  await db.prepare(`
+    UPDATE sourcing_invitations
+    SET token_hash = CASE id ${hashCase} END,
+        token_prefix = CASE id ${prefixCase} END,
+        token_version = token_version + 1,
+        expires_at = ?,
+        revoked_at = NULL,
+        delivery_status = 'pending'
+    WHERE event_id = ? AND id IN (${marks})
+  `).run(
+    ...minted.flatMap((row) => [row.id, row.token_hash]),
+    ...minted.flatMap((row) => [row.id, row.token_prefix]),
+    expiresAt,
+    eventId,
+    ...minted.map((row) => row.id)
+  );
+}
+
+async function notifyInvitees(db, event, message, options = {}) {
+  const invitations = await db.prepare(`
+    SELECT id, contact_email, revoked_at FROM sourcing_invitations
+    WHERE event_id = ? AND revoked_at IS NULL
+    ORDER BY id ASC
+  `).all(event.id);
+  const deliveries = [];
+  for (const invitation of invitations) {
+    const result = await sendMail({
+      to: invitation.contact_email,
+      subject: message.subject,
+      text: message.text,
+      tag: message.tag
+    }, { transport: options.mailTransport, env: options.env });
+    deliveries.push({
+      invitation_id: invitation.id,
+      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'skipped'
+    });
+  }
+  if (deliveries.length) {
+    const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
+    const marks = deliveries.map(() => '?').join(', ');
+    await db.prepare(`
+      UPDATE sourcing_invitations
+      SET delivery_status = CASE id ${statusCase} ELSE delivery_status END
+      WHERE event_id = ? AND id IN (${marks})
+    `).run(
+      ...deliveries.flatMap((row) => [row.invitation_id, row.delivery_status === 'skipped' ? 'copied' : row.delivery_status]),
+      event.id,
+      ...deliveries.map((row) => row.invitation_id)
+    );
+  }
+  const status = deliveries.some((row) => row.delivery_status === 'failed')
+    ? 'failed'
+    : deliveries.some((row) => row.delivery_status === 'sent')
+      ? 'sent'
+      : 'copied';
+  return {
+    text: message.text,
+    delivery_status: status,
+    invitations: deliveries.length
+  };
+}
+
+export async function publishEvent(db, actor, id, input = {}, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const secret = portalTokenSecret(options.env);
+  if (!secret) fail('Portal links are not configured.', 503, 'portal_not_configured');
+  const existing = await loadEventRow(db, id);
+  if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
+  assertOwner(actor, existing);
+  const version = requireRowVersion(input, existing);
+  const lineCountRow = await db.prepare(`SELECT COUNT(*) AS n FROM sourcing_event_lines WHERE event_id = ?`).get(existing.id);
+  const invitations = await db.prepare(`
+    SELECT id, supplier_id, contact_email, token_hash FROM sourcing_invitations
+    WHERE event_id = ? ORDER BY id ASC
+  `).all(existing.id);
+  const blockers = publishBlockers(existing, {
+    now: nowDate,
+    lineCount: Number(lineCountRow?.n || 0),
+    invitationCount: invitations.length
+  });
+  if (blockers.length) {
+    const error = new SourcingError('The RFQ cannot be published yet.', 409, blockers[0]);
+    error.blockers = blockers;
+    throw error;
+  }
+  assertTransition('draft', 'published');
+  const now = utcIso(nowDate);
+  const expiresAt = invitationExpiry(existing.deadline_at);
+  const minted = invitations.map((row) => {
+    const token = mintPortalToken(secret);
+    return {
+      id: row.id,
+      contact_email: row.contact_email,
+      ...token,
+      portal_url: portalLink(token.token, options.env)
+    };
+  });
+  const target = Number(existing.target_total_cents || 0);
+  const fewInvitations = target >= 1_000_000 && invitations.length < 3;
+  await db.immediateTransaction(async () => {
+    const result = await db.prepare(`
+      UPDATE sourcing_events
+      SET status = 'published', published_at = ?, row_version = row_version + 1, updated_at = ?
+      WHERE id = ? AND status = 'draft' AND row_version = ?
+    `).run(now, now, existing.id, version);
+    if (!result.changes) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+    await applyInvitationTokens(db, existing.id, minted, expiresAt);
+    await writeAudit(
+      db,
+      'sourcing_event',
+      existing.id,
+      'PUBLISHED',
+      actor.name,
+      `RFQ ${existing.event_number} published to ${minted.length} suppliers`
+    );
+    await appendComplianceEvents(db, [
+      {
+        ...actorFromSession(actor),
+        action: 'SOURCING_EVENT_PUBLISHED',
+        entity_type: 'sourcing_event',
+        entity_id: existing.id,
+        details: JSON.stringify({
+          invitation_count: minted.length,
+          deadline_at: existing.deadline_at
+        }),
+        created_at: utcTimestamp(nowDate)
+      },
+      ...minted.map((row) => ({
+        ...actorFromSession(actor),
+        action: 'SOURCING_INVITATION_SENT',
+        entity_type: 'sourcing_invitation',
+        entity_id: row.id,
+        details: JSON.stringify({
+          invitation_id: row.id,
+          event_id: existing.id,
+          token_prefix: row.token_prefix
+        }),
+        created_at: utcTimestamp(nowDate)
+      }))
+    ]);
+    await enqueueWebhook(db, {
+      eventType: WEBHOOK_EVENTS.SOURCING_EVENT_PUBLISHED,
+      entityType: 'sourcing_event',
+      entityId: existing.id,
+      data: {
+        event_number: existing.event_number,
+        status: 'published',
+        deadline_at: existing.deadline_at,
+        invitation_count: minted.length
+      },
+      now: nowDate
+    });
+  })();
+  kickWebhookDispatch(db);
+  const deliveries = [];
+  for (const row of minted) {
+    const result = await sendMail({
+      to: row.contact_email,
+      subject: `Uitnodiging offerteaanvraag ${existing.event_number}`,
+      text: [
+        `U bent uitgenodigd voor offerteaanvraag ${existing.event_number}: ${existing.title}.`,
+        'Open alleen deze link:',
+        row.portal_url,
+        `Sluitingstijd: ${existing.deadline_at}.`,
+        'De link is persoonlijk. Stuur hem niet door.'
+      ].join('\n'),
+      tag: 'sourcing_invitation'
+    }, { transport: options.mailTransport, env: options.env });
+    deliveries.push({
+      id: row.id,
+      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'copied'
+    });
+  }
+  if (deliveries.length) {
+    const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
+    const marks = deliveries.map(() => '?').join(', ');
+    await db.prepare(`
+      UPDATE sourcing_invitations
+      SET delivery_status = CASE id ${statusCase} END
+      WHERE event_id = ? AND id IN (${marks})
+    `).run(
+      ...deliveries.flatMap((row) => [row.id, row.delivery_status]),
+      existing.id,
+      ...deliveries.map((row) => row.id)
+    );
+  }
+  const view = await getEvent(db, existing.id, nowDate);
+  const links = new Map(minted.map((row) => [row.id, row.portal_url]));
+  view.invitations = view.invitations.map((row) => (
+    links.has(row.id) ? { ...row, portal_url: links.get(row.id) } : row
+  ));
+  if (fewInvitations) view.warnings = [...(view.warnings || []), 'few_invitations'];
+  return view;
+}
+
+export async function extendDeadline(db, actor, id, input = {}, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const existing = await loadEventRow(db, id);
+  if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
+  assertOwner(actor, existing);
+  if (existing.status !== 'published') fail('Only a published RFQ can have its deadline extended.', 409, 'event_state_changed');
+  const version = requireRowVersion(input, existing);
+  const deadline = parseDeadline(input.deadline_at);
+  if (deadline == null) fail('The deadline is not a valid date and time.', 400, 'invalid_deadline');
+  if (!existing.deadline_at || deadline <= existing.deadline_at) {
+    fail('The deadline can only be moved later.', 409, 'deadline_not_later');
+  }
+  if (Date.parse(deadline) < nowDate.getTime() + 60 * 60 * 1000) {
+    fail('The deadline must be at least one hour from now.', 409, 'deadline_too_soon');
+  }
+  const expiresAt = invitationExpiry(deadline);
+  const now = utcIso(nowDate);
+  const changed = await db.immediateTransaction(async () => {
+    const result = await db.prepare(`
+      UPDATE sourcing_events
+      SET deadline_at = ?, row_version = row_version + 1, updated_at = ?
+      WHERE id = ? AND status = 'published' AND row_version = ? AND (deadline_at IS NULL OR deadline_at < ?)
+    `).run(deadline, now, existing.id, version, deadline);
+    if (!result.changes) return 0;
+    await db.prepare(`
+      UPDATE sourcing_invitations
+      SET expires_at = ?
+      WHERE event_id = ? AND revoked_at IS NULL
+    `).run(expiresAt, existing.id);
+    await writeAudit(db, 'sourcing_event', existing.id, 'DEADLINE_EXTENDED', actor.name, `Deadline moved to ${deadline}`);
+    await writeCompliance(db, actor, 'SOURCING_DEADLINE_EXTENDED', 'sourcing_event', existing.id, {
+      deadline_at: deadline,
+      previous_deadline_at: existing.deadline_at
+    });
+    return 1;
+  })();
+  if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+  const notice = await notifyInvitees(db, existing, {
+    subject: `Sluitingstijd gewijzigd voor ${existing.event_number}`,
+    text: [
+      `De sluitingstijd van offerteaanvraag ${existing.event_number} is verplaatst naar ${deadline}.`,
+      'Gebruik de link die u al hebt ontvangen.'
+    ].join('\n'),
+    tag: 'sourcing_deadline_extended'
+  }, options);
+  const view = await getEvent(db, existing.id, nowDate);
+  view.notice = notice;
+  return view;
+}
+
+export async function rotateInvitationLink(db, actor, eventId, invitationId, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const secret = portalTokenSecret(options.env);
+  if (!secret) fail('Portal links are not configured.', 503, 'portal_not_configured');
+  const existing = await loadEventRow(db, eventId);
+  if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
+  assertOwner(actor, existing);
+  if (existing.status === 'draft' || existing.status === 'cancelled') {
+    fail('A link can be rotated only while the RFQ is open.', 409, 'event_state_changed');
+  }
+  const invitation = await db.prepare(`
+    SELECT id, contact_email, token_version FROM sourcing_invitations
+    WHERE id = ? AND event_id = ?
+  `).get(invitationId, existing.id);
+  if (!invitation) fail('Invitation was not found.', 404, 'invitation_not_found');
+  const token = mintPortalToken(secret);
+  const expiresAt = invitationExpiry(existing.deadline_at);
+  const now = utcIso(nowDate);
+  await db.immediateTransaction(async () => {
+    const result = await db.prepare(`
+      UPDATE sourcing_invitations
+      SET token_hash = ?, token_prefix = ?, token_version = token_version + 1,
+          expires_at = ?, revoked_at = NULL, revoked_by_user_id = NULL, revoke_reason = NULL,
+          delivery_status = 'pending'
+      WHERE id = ? AND event_id = ?
+    `).run(token.token_hash, token.token_prefix, expiresAt, invitation.id, existing.id);
+    if (!result.changes) fail('Invitation was not found.', 404, 'invitation_not_found');
+    await writeAudit(db, 'sourcing_event', existing.id, 'LINK_ROTATED', actor.name, `Invitation ${invitation.id} link rotated`);
+    await writeCompliance(db, actor, 'SOURCING_LINK_ROTATED', 'sourcing_invitation', invitation.id, {
+      invitation_id: invitation.id,
+      token_prefix: token.token_prefix
+    });
+  })();
+  const portalUrl = portalLink(token.token, options.env);
+  const sent = await sendMail({
+    to: invitation.contact_email,
+    subject: `Nieuwe link voor ${existing.event_number}`,
+    text: [
+      `Er is een nieuwe link voor offerteaanvraag ${existing.event_number}.`,
+      'De vorige link werkt niet meer.',
+      portalUrl
+    ].join('\n'),
+    tag: 'sourcing_link_rotated'
+  }, { transport: options.mailTransport, env: options.env });
+  const delivery = sent.status === 'sent' ? 'sent' : sent.status === 'failed' ? 'failed' : 'copied';
+  await db.prepare(`UPDATE sourcing_invitations SET delivery_status = ? WHERE id = ?`).run(delivery, invitation.id);
+  return {
+    invitation_id: invitation.id,
+    token_prefix: token.token_prefix,
+    portal_url: portalUrl,
+    delivery_status: delivery,
+    expires_at: expiresAt
+  };
+}
+
+export async function revokeInvitationLink(db, actor, eventId, invitationId, input = {}, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const existing = await loadEventRow(db, eventId);
+  if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
+  assertOwner(actor, existing);
+  const reason = requireText(input.reason, 2000, 'revoke_reason_required', 'A revoke reason is required.');
+  const invitation = await db.prepare(`
+    SELECT id, revoked_at FROM sourcing_invitations WHERE id = ? AND event_id = ?
+  `).get(invitationId, existing.id);
+  if (!invitation) fail('Invitation was not found.', 404, 'invitation_not_found');
+  if (invitation.revoked_at) fail('The link is already revoked.', 409, 'link_already_revoked');
+  const now = utcIso(nowDate);
+  await db.immediateTransaction(async () => {
+    const result = await db.prepare(`
+      UPDATE sourcing_invitations
+      SET revoked_at = ?, revoked_by_user_id = ?, revoke_reason = ?
+      WHERE id = ? AND event_id = ? AND revoked_at IS NULL
+    `).run(now, actor.id, reason, invitation.id, existing.id);
+    if (!result.changes) return 0;
+    await writeAudit(db, 'sourcing_event', existing.id, 'LINK_REVOKED', actor.name, `Invitation ${invitation.id} link revoked: ${reason}`);
+    await writeCompliance(db, actor, 'SOURCING_LINK_REVOKED', 'sourcing_invitation', invitation.id, {
+      invitation_id: invitation.id,
+      reason
+    });
+    return 1;
+  })();
+  return { invitation_id: invitation.id, revoked_at: now };
+}
+
+export async function answerQuestion(db, actor, eventId, questionId, input = {}, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const existing = await loadEventRow(db, eventId);
+  if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
+  assertOwner(actor, existing);
+  const answer = requireText(input.answer, 8000, 'answer_required', 'An answer is required.');
+  const visibility = input.visibility === 'all' ? 'all' : 'private';
+  const now = utcIso(nowDate);
+  const changed = await db.prepare(`
+    UPDATE sourcing_questions
+    SET answer = ?, answered_by_user_id = ?, answered_at = ?, visibility = ?
+    WHERE id = ? AND event_id = ? AND answer IS NULL
+  `).run(answer, actor.id, now, visibility, questionId, existing.id);
+  if (!changed.changes) fail('Question was not found.', 404, 'question_not_found');
+  await writeCompliance(db, actor, 'SOURCING_QUESTION_ANSWERED', 'sourcing_event', existing.id, {
+    question_id: Number(questionId),
+    visibility
+  });
+  return { id: Number(questionId), answer, visibility, answered_at: now };
+}
+
+export async function listQuestions(db, eventId) {
+  const event = await loadEventRow(db, eventId);
+  if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  return db.prepare(`
+    SELECT q.id, q.invitation_id, q.question, q.asked_at, q.answer, q.answered_at, q.visibility,
+           s.code AS supplier_code
+    FROM sourcing_questions q
+    LEFT JOIN sourcing_invitations i ON i.id = q.invitation_id
+    LEFT JOIN suppliers s ON s.id = i.supplier_id
+    WHERE q.event_id = ?
+    ORDER BY q.id ASC
+  `).all(event.id);
+}
+
+export async function buyerComparison(db, actor, id, now = new Date()) {
+  await closeDueEvents(db, now, { limit: 20 });
+  const event = await loadEventRow(db, id);
+  if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  return loadBuyerComparison(db, event, actor, now);
+}
+
+export async function buyerBidFile(db, actor, eventId, fileId, now = new Date()) {
+  await closeDueEvents(db, now, { limit: 20 });
+  const event = await loadEventRow(db, eventId);
+  if (!event) fail('RFQ was not found.', 404, 'file_not_found');
+  return readBuyerBidFile(db, event, actor, fileId, now);
 }
 
 export async function sourcingAccess(db, actor) {

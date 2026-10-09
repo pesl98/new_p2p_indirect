@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -11,6 +12,7 @@ import { applySchema, createMemoryDatabase, schemaPath } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { convertRequisitionToPurchaseOrders } from './purchaseOrdersService.js';
 import { sourcingEnabled, parseDeadline } from './sourcingConfig.js';
+import { createRetryDelayMs } from './sourcingService.js';
 import { assertTransition, canTransition, publishBlockers, SourcingStatusError } from './sourcingStatus.js';
 import { SqliteAdapter } from './sqliteAdapter.js';
 import { withCookie } from './testSession.js';
@@ -154,6 +156,22 @@ describe('sourcing status machine', () => {
     assert.ok(publishBlockers({ ...event, deadline_at: '2026-10-08T12:30:00.000Z' }, {
       now, lineCount: 1, invitationCount: 1
     }).includes('deadline_too_soon'));
+    assert.ok(publishBlockers({ ...event, deadline_at: '2026-10-08T11:00:00.000Z' }, {
+      now, lineCount: 1, invitationCount: 1
+    }).includes('deadline_in_the_past'));
+    assert.equal(publishBlockers({ ...event, deadline_at: '2026-10-08T12:00:00.000Z' }, {
+      now, lineCount: 1, invitationCount: 1
+    }).includes('deadline_in_the_past'), true);
+  });
+
+  test('create retries wait a jittered 100–300 ms', () => {
+    const samples = Array.from({ length: 40 }, (_, index) => createRetryDelayMs(() => index / 39));
+    assert.equal(Math.min(...samples), 100);
+    assert.equal(Math.max(...samples), 300);
+    for (const delay of samples) {
+      assert.equal(Number.isInteger(delay), true);
+      assert.ok(delay >= 100 && delay <= 300);
+    }
   });
 });
 
@@ -857,6 +875,46 @@ describe('sourcing HTTP', () => {
     }));
   });
 
+  test('a buyer is limited to 10 PDF uploads a minute', async () => {
+    const { db, app } = await boot();
+    await withFlag('1', () => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Uploadlimiet' })
+      }));
+      assert.equal(created.status, 201);
+      const eventId = created.body.id;
+      const upload = () => fetch(`${base}/api/sourcing/events/${eventId}/files`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(3),
+          'Content-Type': 'application/pdf',
+          'X-Filename': 'specificatie.pdf'
+        },
+        body: PDF
+      });
+      const ids = [];
+      for (let n = 0; n < 10; n += 1) {
+        const saved = await json(await upload());
+        assert.equal(saved.status, 201, JSON.stringify(saved.body));
+        ids.push(saved.body.id);
+      }
+      for (const id of ids) {
+        const removed = await json(await fetch(`${base}/api/sourcing/events/${eventId}/files/${id}/remove`, {
+          method: 'POST',
+          headers: authHeaders(3)
+        }));
+        assert.equal(removed.status, 200, JSON.stringify(removed.body));
+      }
+      const limited = await json(await upload());
+      assert.equal(limited.status, 429);
+      assert.equal(limited.body.code, 'rate_limited');
+      assert.ok(Number(limited.headers.get('retry-after')) >= 1);
+      assert.equal(JSON.stringify(limited.body).includes('SQLITE'), false);
+    }));
+  });
+
   test('removing a draft file deletes the blob and download returns 404', async () => {
     const { db, app } = await boot();
     await withFlag('1', () => withServer(app, async (base) => {
@@ -933,7 +991,7 @@ describe('sourcing HTTP', () => {
     }));
   });
 
-  test('a published event cannot be cancelled through the draft transition', async () => {
+  test('a published event can be cancelled and a closed event cannot', async () => {
     const { db, app } = await boot();
     const now = '2026-10-08T12:00:00.000Z';
     await db.prepare(`
@@ -946,12 +1004,27 @@ describe('sourcing HTTP', () => {
       const cancelled = await json(await fetch(`${base}/api/sourcing/events/${event.id}/cancel`, {
         method: 'POST',
         headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'Te vroeg' })
+        body: JSON.stringify({ reason: 'Niet meer nodig' })
       }));
-      assert.equal(cancelled.status, 409);
-      assert.equal(cancelled.body.code, 'event_state_changed');
+      assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+      assert.equal(cancelled.body.status, 'cancelled');
+      assert.equal(cancelled.body.cancelled_before_deadline, 1);
       const row = await db.prepare(`SELECT status FROM sourcing_events WHERE id = ?`).get(event.id);
-      assert.equal(row.status, 'published');
+      assert.equal(row.status, 'cancelled');
+
+      await db.prepare(`
+        INSERT INTO sourcing_events (
+          event_number, title, department_id, owner_user_id, status, currency, deadline_at, closed_at, created_at, updated_at
+        ) VALUES ('RFQ-2026-051', 'Closed', 1, 3, 'closed', 'EUR', '2026-01-01T00:00:00.000Z', ?, ?, ?)
+      `).run(now, now, now);
+      const closed = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = 'RFQ-2026-051'`).get();
+      const denied = await json(await fetch(`${base}/api/sourcing/events/${closed.id}/cancel`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Te laat' })
+      }));
+      assert.equal(denied.status, 409);
+      assert.equal(denied.body.code, 'event_state_changed');
     }));
   });
 
@@ -1558,6 +1631,282 @@ describe('sourcing HTTP', () => {
     const lineInserts = opened.pipeline.calls.filter((call) => /INSERT INTO sourcing_event_lines/i.test(call.sql));
     assert.ok(lineInserts.length >= 1);
     assert.equal(Math.max(...lineInserts.map((call) => call.argc)), 600);
+  });
+
+  async function counted(watch, fn) {
+    const start = watch.counts.length;
+    const result = await fn();
+    return { result, counts: watch.counts.slice(start) };
+  }
+
+  function pipelineInner(calls) {
+    const begin = calls.findIndex((call) => /^BEGIN IMMEDIATE\b/i.test(String(call.sql || '').trim()));
+    const commit = calls.findIndex((call, index) => index > begin && /^COMMIT\b/i.test(String(call.sql || '').trim()));
+    if (begin < 0) return [];
+    return calls.slice(begin + 1, commit < 0 ? undefined : commit)
+      .filter((call) => !/^(begin|commit|rollback)\b/i.test(String(call.sql || '').trim()));
+  }
+
+  function assertBudget(label, counts) {
+    assert.equal(counts.length, 1, `${label} transactions ${JSON.stringify(counts)}`);
+    assert.ok(counts[0] > 0 && counts[0] <= 25, `${label} used ${counts[0]} prepared statements`);
+    return counts[0];
+  }
+
+  test('publish, submit, revise, close, and cancel stay within 25 statements at the caps', async () => {
+    const prev = {
+      secret: process.env.PORTAL_TOKEN_SECRET,
+      base: process.env.APP_BASE_URL,
+      mail: process.env.MAIL_PROVIDER
+    };
+    process.env.PORTAL_TOKEN_SECRET = '0123456789abcdef0123456789abcdef';
+    process.env.APP_BASE_URL = 'https://procure.example';
+    process.env.MAIL_PROVIDER = 'none';
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const { db } = await boot();
+    await seedCapSuppliers(db);
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    const watch = watchTransactions(db);
+    const measured = {};
+    try {
+      await withFlag('1', () => withServer(app, async (base) => {
+        const supplierIds = [2, ...Array.from({ length: 19 }, (_, index) => index + 4)];
+        const created = await json(await fetch(`${base}/api/sourcing/events`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Vol tot de rand',
+            deadline_at: '2026-10-08T14:00:00.000Z',
+            ...capPayload(supplierIds)
+          })
+        }));
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        const published = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ row_version: created.body.row_version })
+        })));
+        assert.equal(published.result.status, 200, JSON.stringify(published.result.body));
+        const portalUrl = published.result.body.invitations.find((row) => row.portal_url)?.portal_url;
+        const token = new URLSearchParams(String(portalUrl).split('#')[1] || '').get('t');
+        for (let n = 0; n < 10; n += 1) {
+          const uploaded = await json(await fetch(`${base}/api/portal/files`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/pdf',
+              'X-Filename': `offerte-${n}.pdf`
+            },
+            body: PDF
+          }));
+          assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+        }
+        const view = await json(await fetch(`${base}/api/portal`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }));
+        const bidBody = (price) => ({
+          submission_id: randomUUID(),
+          lines: view.body.event.lines.map((line) => ({
+            event_line_id: line.id,
+            quoted: true,
+            unit_price_cents: price
+          }))
+        });
+        const submitted = await counted(watch, async () => json(await fetch(`${base}/api/portal/bids`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(bidBody(100))
+        })));
+        assert.equal(submitted.result.status, 201, JSON.stringify(submitted.result.body));
+        const revised = await counted(watch, async () => json(await fetch(`${base}/api/portal/bids`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(bidBody(110))
+        })));
+        assert.equal(revised.result.status, 201, JSON.stringify(revised.result.body));
+        assert.equal(revised.result.body.revision, 2);
+        clock.ms = Date.parse('2026-10-08T14:00:00.000Z');
+        const closed = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+          headers: authHeaders(3)
+        })));
+        assert.equal(closed.result.body.status, 'closed');
+        const repeat = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+          headers: authHeaders(3)
+        })));
+        assert.equal(repeat.counts.length, 0);
+        const second = await json(await fetch(`${base}/api/sourcing/events`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Annuleren op de limiet',
+            deadline_at: '2026-10-08T18:00:00.000Z',
+            ...capPayload(supplierIds)
+          })
+        }));
+        const secondPublished = await json(await fetch(`${base}/api/sourcing/events/${second.body.id}/publish`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ row_version: second.body.row_version })
+        }));
+        assert.equal(secondPublished.status, 200, JSON.stringify(secondPublished.body));
+        const cancelled = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${second.body.id}/cancel`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'Niet meer nodig' })
+        })));
+        assert.equal(cancelled.result.body.status, 'cancelled');
+        measured.publish = assertBudget('publish', published.counts);
+        measured.submit = assertBudget('submit', submitted.counts);
+        measured.revise = assertBudget('revise', revised.counts);
+        measured.close = assertBudget('close', closed.counts);
+        measured.cancel = assertBudget('cancel', cancelled.counts);
+      }));
+      console.log(`STATEMENTS sqlite ${JSON.stringify(measured)}`);
+    } finally {
+      watch.restore();
+      if (prev.secret == null) delete process.env.PORTAL_TOKEN_SECRET;
+      else process.env.PORTAL_TOKEN_SECRET = prev.secret;
+      if (prev.base == null) delete process.env.APP_BASE_URL;
+      else process.env.APP_BASE_URL = prev.base;
+      if (prev.mail == null) delete process.env.MAIL_PROVIDER;
+      else process.env.MAIL_PROVIDER = prev.mail;
+    }
+  });
+
+  test('the same cap flow stays within 25 statements on the Turso client', async () => {
+    const prev = {
+      secret: process.env.PORTAL_TOKEN_SECRET,
+      base: process.env.APP_BASE_URL,
+      mail: process.env.MAIL_PROVIDER
+    };
+    process.env.PORTAL_TOKEN_SECRET = '0123456789abcdef0123456789abcdef';
+    process.env.APP_BASE_URL = 'https://procure.example';
+    process.env.MAIL_PROVIDER = 'none';
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const opened = await openSeededTurso((db) => seedCapSuppliers(db));
+    const app = createApp({ db: opened.client, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    const watch = watchTransactions(opened.client);
+    const measured = {};
+    try {
+      await withFlag('1', () => withServer(app, async (base) => {
+        const supplierIds = [2, ...Array.from({ length: 19 }, (_, index) => index + 4)];
+        const created = await json(await fetch(`${base}/api/sourcing/events`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Vol tot de rand',
+            deadline_at: '2026-10-08T14:00:00.000Z',
+            ...capPayload(supplierIds)
+          })
+        }));
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        const beforePublish = opened.pipeline.calls.length;
+        const published = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ row_version: created.body.row_version })
+        })));
+        const publishPipe = pipelineInner(opened.pipeline.calls.slice(beforePublish));
+        assert.ok(publishPipe.length <= 25, `publish pipeline ${publishPipe.length}`);
+        const portalUrl = published.result.body.invitations.find((row) => row.portal_url)?.portal_url;
+        const token = new URLSearchParams(String(portalUrl).split('#')[1] || '').get('t');
+        for (let n = 0; n < 10; n += 1) {
+          const uploaded = await json(await fetch(`${base}/api/portal/files`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/pdf',
+              'X-Filename': `offerte-${n}.pdf`
+            },
+            body: PDF
+          }));
+          assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+        }
+        const view = await json(await fetch(`${base}/api/portal`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }));
+        const bidBody = (price) => ({
+          submission_id: randomUUID(),
+          lines: view.body.event.lines.map((line) => ({
+            event_line_id: line.id,
+            quoted: true,
+            unit_price_cents: price
+          }))
+        });
+        const beforeSubmit = opened.pipeline.calls.length;
+        const submitted = await counted(watch, async () => json(await fetch(`${base}/api/portal/bids`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(bidBody(100))
+        })));
+        const submitPipe = pipelineInner(opened.pipeline.calls.slice(beforeSubmit));
+        assert.equal(submitted.result.status, 201, JSON.stringify(submitted.result.body));
+        assert.ok(submitPipe.length <= 25, `submit pipeline ${submitPipe.length}`);
+        const beforeRevise = opened.pipeline.calls.length;
+        const revised = await counted(watch, async () => json(await fetch(`${base}/api/portal/bids`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(bidBody(110))
+        })));
+        const revisePipe = pipelineInner(opened.pipeline.calls.slice(beforeRevise));
+        assert.equal(revised.result.status, 201, JSON.stringify(revised.result.body));
+        assert.ok(revisePipe.length <= 25, `revise pipeline ${revisePipe.length}`);
+        clock.ms = Date.parse('2026-10-08T14:00:00.000Z');
+        const beforeClose = opened.pipeline.calls.length;
+        const closed = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${created.body.id}`, {
+          headers: authHeaders(3)
+        })));
+        const closePipe = pipelineInner(opened.pipeline.calls.slice(beforeClose));
+        assert.equal(closed.result.body.status, 'closed');
+        assert.ok(closePipe.length <= 25, `close pipeline ${closePipe.length}`);
+        const second = await json(await fetch(`${base}/api/sourcing/events`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: 'Annuleren op de limiet',
+            deadline_at: '2026-10-08T18:00:00.000Z',
+            ...capPayload(supplierIds)
+          })
+        }));
+        const secondPublished = await json(await fetch(`${base}/api/sourcing/events/${second.body.id}/publish`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ row_version: second.body.row_version })
+        }));
+        assert.equal(secondPublished.status, 200, JSON.stringify(secondPublished.body));
+        const beforeCancel = opened.pipeline.calls.length;
+        const cancelled = await counted(watch, async () => json(await fetch(`${base}/api/sourcing/events/${second.body.id}/cancel`, {
+          method: 'POST',
+          headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'Niet meer nodig' })
+        })));
+        const cancelPipe = pipelineInner(opened.pipeline.calls.slice(beforeCancel));
+        assert.equal(cancelled.result.body.status, 'cancelled');
+        assert.ok(cancelPipe.length <= 25, `cancel pipeline ${cancelPipe.length}`);
+        measured.publish = assertBudget('publish', published.counts);
+        measured.submit = assertBudget('submit', submitted.counts);
+        measured.revise = assertBudget('revise', revised.counts);
+        measured.close = assertBudget('close', closed.counts);
+        measured.cancel = assertBudget('cancel', cancelled.counts);
+        measured.pipeline = {
+          publish: publishPipe.length,
+          submit: submitPipe.length,
+          revise: revisePipe.length,
+          close: closePipe.length,
+          cancel: cancelPipe.length
+        };
+      }));
+      console.log(`STATEMENTS turso ${JSON.stringify(measured)}`);
+    } finally {
+      watch.restore();
+      await opened.close();
+      if (prev.secret == null) delete process.env.PORTAL_TOKEN_SECRET;
+      else process.env.PORTAL_TOKEN_SECRET = prev.secret;
+      if (prev.base == null) delete process.env.APP_BASE_URL;
+      else process.env.APP_BASE_URL = prev.base;
+      if (prev.mail == null) delete process.env.MAIL_PROVIDER;
+      else process.env.MAIL_PROVIDER = prev.mail;
+    }
   });
 
   test('convert still issues a PO when no RFQ points at the requisition', async () => {

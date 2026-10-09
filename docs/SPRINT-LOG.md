@@ -71,8 +71,8 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 7a | 2026-10-08 | Inbound supplier invoices API: `invoices:write` posts a supplier invoice through the same match, duplicate, and exception pipeline | [#53](https://github.com/pesl98/new_p2p_indirect/pull/53) | Sprint 7a — Inbound supplier invoices API | `91f7e541e8a9e9a6e7972dd3ab6fee7c26dc3ddf` | merged |
 | 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | `cdefb448106f0c5a52d583e9abe69f02facc8802` | merged |
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
-| 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) (draft, base `main`) | Sprint 8a — Data model and buyer RFQ authoring | | in progress |
-| 8b | | Supplier portal: magic links, sealed bids, copy-link delivery | | Sprint 8b — Supplier portal and sealed bids | | planned |
+| 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
+| 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | | Sprint 8b — Supplier portal and sealed bids | | in progress |
 | 8c | | Comparison, scoring, award requisition, SoD, and POs | | Sprint 8c — Comparison, scoring, award, and POs | | planned |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
 
@@ -404,11 +404,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Procurement can create, edit, and cancel RFQ drafts from scratch or from an approved requisition. Drafts hold lines, buyer PDFs, invitees (no links yet), weights, and evaluators. Nothing is visible to suppliers yet.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/56 (#56, draft). Base is `main` at `ca4eb1372ffee56215726b30d4a53a2acb020603`. Do not merge until the Architect reviews and Peter OKs.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/56 (#56). Base was `main` at `ca4eb1372ffee56215726b30d4a53a2acb020603`.
 
-**Merge SHA:**
+**Merge SHA:** `b2d2b01e18109946d489d4a5080a999775671da4` (squash-merged).
 
-**Status:** in progress.
+**Status:** merged.
 
 ### Done when
 
@@ -431,37 +431,52 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **Files.** Metadata in `sourcing_files`, bytes in `sourcing_file_blobs`. List and detail SQL never select the blob table. Download is the only read. Checks reuse the 7b helpers: `Content-Type: application/pdf`, `%PDF-` magic, 4 MiB cap (`SOURCING_PDF_MAX_BYTES`, clamped like the invoice cap). The active cap stays 10 (`removed_at IS NULL`). Removing a file while the RFQ is still `draft` deletes that `sourcing_file_blobs` row in the same transaction. The file metadata and the `FILE_REMOVED` audit row stay. Download of a removed file is **404** `file_not_found`. `bytes` is `NOT NULL` and `sourcing_file_blobs_no_update` rejects UPDATE, so the row is deleted rather than nulled. Remove is draft-only, so a later status does not drop blobs through this route.
 - **Architect, on #56.** Anonymous callers stay **401** before **503**. Auth runs first, so they cannot learn whether the flag is on. Draft-only cancel stays for 8a; cancel from `published` is 8b (with an invitee notice), and cancel from `closed` or `evaluated` is 8c. No supplier is copied onto invitations; the buyer picks them. `SOURCING_ENABLED` keeps accepting `1`, `true`, and `yes`.
 - **Numbers and money.** `RFQ-YYYY-NNN` via `nextDocumentNumber` kind `rfq`. Create uses `BEGIN IMMEDIATE`, so a second writer waits for the lock instead of failing with `SQLITE_BUSY_SNAPSHOT`. A UNIQUE collision or a busy/locked error retries that transaction up to 3 times, with a short backoff, and recomputes the number each time. After that the API returns **409** `event_number_conflict` and the message "Could not allocate an RFQ number." The client does not see the SQLite text. A naive `YYYY-MM-DDTHH:mm` deadline is Europe/Amsterdam; a `Z` or numeric offset is stored as UTC. Weights omitted stay 70/15/15. If any weight is sent, all three are required and must sum to 100. A comma amount is converted in the client with `toCents`; the server accepts integer cents only.
-- **Transaction budget.** [SOURCING-PLAN.md](SOURCING-PLAN.md) §6.1 budgets about 25 statements per interactive transaction. A draft save at the caps (50 lines and 20 invitations) used to be about 135, because each line was its own insert and each invitation wrote its own compliance and audit rows. The save now uses one multi-row insert per table, chunked at 900 bound variables, and one compliance row per save (`SOURCING_EVENT_CREATED` / `SOURCING_EVENT_UPDATED`) with the counts and a sha256 of the lines and of the invitations. Create is 7 statements inside `BEGIN IMMEDIATE`. Resaving the same invitations keeps each invitation id and is also 7 statements. A test counts prepared statements at the caps on the local adapter and on the Turso HTTP client and asserts ≤ 25. The largest line insert binds 600 values. Per-supplier `SOURCING_INVITATION_CREATED` waits until 8b, when links are minted.
+- **Transaction budget.** [SOURCING-PLAN.md](SOURCING-PLAN.md) §6.1 budgets about 25 statements per interactive transaction. A draft save at the caps (50 lines and 20 invitations) used to be about 135, because each line was its own insert and each invitation wrote its own compliance and audit rows. The save now uses one multi-row insert per table, chunked at 900 bound variables, and one compliance row per save (`SOURCING_EVENT_CREATED` / `SOURCING_EVENT_UPDATED`) with the counts and a sha256 of the lines and of the invitations. A save at the caps is 7–13 statements inside `BEGIN IMMEDIATE`, not a single fixed count: the SQLite prepared-statement count is the low end, and the Turso pipeline adds `SELECT last_insert_rowid()` beside each INSERT. Resaving the same invitations keeps each invitation id and stays in that same range. A test counts prepared statements at the caps on the local adapter and on the Turso HTTP client and asserts ≤ 25. The largest line insert binds 600 values. Per-supplier `SOURCING_INVITATION_CREATED` waits until 8b, when links are minted.
 - **Audit.** Readable lines in `audit_logs`. The compliance chain covers create, update (`SOURCING_EVENT_UPDATED`), cancel, file upload, and file remove (`SOURCING_FILE_REMOVED`). Draft invitation rows are summarized on the event compliance row (count plus hash) rather than one ledger row each.
 - **Departments.** A buyer who is not an admin can only *choose* their own department (**403** `department_not_allowed`). Sending the department the draft already has is allowed, including when that department is the requisition's and not the buyer's. Carol (Facilities) can therefore resave a draft raised from a Marketing requisition. Changing the department of a requisition-based RFQ is **409** `department_locked`. The editor disables that field. An admin can still move a from-scratch draft to any department that exists.
 - **Deadlines and files, nits taken now.** A deadline already in the past is stored and the detail payload warns with `deadline_in_the_past`. Refusing that deadline is enforced at publish in 8b, not on the draft. Active buyer PDFs on one RFQ cannot sum past 40 MiB (**400** `event_files_too_large`); a removed file does not count. Download sets `Content-Security-Policy: frame-ancestors 'none'` and `X-Content-Type-Options: nosniff`. A 500 returns `Sourcing request failed` and the server logs the real error.
 - **Invitations.** A later save updates, inserts, or deletes by supplier. An invitation that is still on the draft keeps its id, so 8b can hang a magic link on it. The capped resave stays inside the 25-statement budget.
 - **File remove.** The delete runs only when `sourcing_events.status` is still `draft` inside the write. Zero rows because the RFQ is no longer a draft returns **409** `event_state_changed`, and the blob stays.
-- **Follow-ups (not in 8a).** Upload rate limit of 10 per minute per buyer (plan §6.3) is not built. Past deadlines are warned on drafts and refused only when publishing, in 8b.
+- **Follow-ups (not in 8a).** Upload rate limit of 10 per minute per buyer (plan §6.3) and refusing a past deadline at publish were left for 8b. Both landed in 8b.
 - **Left alone.** The 7b sprint-log row was already merged at `cdefb448` before this sprint, so it was not rewritten. The Turso `batch()` partial-chunk follow-up is recorded on 8.0 and is not fixed here. `vercel:customer` still writes only its three variables.
 
 ## Sprint 8b — Supplier portal and sealed bids
 
-**Date:**
+**Date:** 2026-10-09
 
 **Goal:** Publishing creates one magic link per invitation. Suppliers submit and revise bids until the deadline in a separate portal. The server keeps prices sealed.
 
-**PR:**
+**PR:** (filled when the draft PR is open). Base is `main` at `b2d2b01e18109946d489d4a5080a999775671da4`. Do not merge until the Architect reviews and Peter OKs.
 
 **Merge SHA:**
 
-**Status:** planned.
+**Status:** in progress.
 
 ### Done when
 
-- A submit before the deadline is accepted. A submit at or after the deadline gets 409, writes no rows, and a direct insert is blocked by the trigger.
-- Before the deadline, no buyer or integration endpoint returns a price, total, lead time, or bid file. After the deadline, the owner sees prices and the open event is logged once.
-- Supplier A gets 404 on B's bid, files, and questions. Revoked, rotated, expired, and forged tokens return the same 401 body.
-- The portal is Dutch and English. Sealing is enforced by the application.
+- A submit 1 ms before the deadline is accepted. A submit at or after the deadline gets 409, writes no bid rows, and a direct insert is blocked by the trigger. The late attempt is `SOURCING_BID_REJECTED_LATE`.
+- Before the deadline, no buyer endpoint returns a price, total, lead time, or bid file. After the deadline, the owner sees prices and `SOURCING_BIDS_OPENED` is written once per user per event.
+- Supplier A gets 404 on B's files and does not see B's bid or private question. Revoked, rotated, expired, and forged tokens return the same 401 body.
+- The portal is Dutch and English, on `portal.html`, with no buyer shell. Sealing is enforced by the application.
+- Publish, bid submit, revise, close, and cancel at the caps stay within 25 statements.
 
 ### Decisions
 
-- **Not started.** Needs 8.0 merged first. Peter's 2026-10-08 decisions that bind this sprint: magic links only (no supplier accounts), portal NL + EN from day one, sealing is app-enforced, PDF only.
+- **Scope.** [SOURCING-PLAN.md](SOURCING-PLAN.md) §8 Sprint 8b, with §10 (Peter, 2026-10-08) where it overrides earlier text. Magic links only. Email is `none` (copy the link) unless `smtp` is configured. No HTTP mail provider, no supplier accounts, no public tenders. PDF only. Limits 50 lines, 20 invitations, 10 files × 4 MiB, 40 MiB total.
+- **Links.** `pfi_<rand>.<tag>`. The tag is the first 16 bytes of HMAC-SHA256(`PORTAL_TOKEN_SECRET`, `pfi:v1:` + rand). The database stores SHA-256 of the full token and a 12-character prefix. A bad tag is rejected before any database write. Lookup is by the hash, then a constant-time compare. Expiry is the deadline plus 30 days. Rotate replaces the hash in place and bumps `token_version`. The plaintext token is returned only on publish and rotate, in the fragment `/portal.html#t=…`, and is not stored. Invitation ids from 8a stay stable.
+- **Publish.** `draft` → `published` only when `publishBlockers` is empty. A deadline already past is `deadline_in_the_past`. A deadline under one hour ahead is `deadline_too_soon`. Missing lines, invitations, or weights are blockers. Above € 10.000 with fewer than 3 invitations, the response warns `few_invitations` and still publishes. One `UPDATE … CASE` writes every token. One multi-row compliance insert writes `SOURCING_EVENT_PUBLISHED` and one `SOURCING_INVITATION_SENT` per invitation. The hash-chain trigger sees the earlier rows of that insert.
+- **Bids.** Submit and revise are one guarded upsert plus one multi-row line insert. `submission_id` replay returns the first receipt. Withdraw keeps the revisions. A line can be "niet aangeboden". Anything at or after the deadline is 409. The trigger `sourcing_bid_revisions_deadline` blocks a direct insert as well.
+- **Close and cancel.** `closeDueEvents` runs at the start of buyer list/detail and portal reads and writes. It closes at most 20 due events, each in its own conditional transaction, and writes audit, compliance, and `sourcing_event.closed` only when a row changed. A second call is a no-op. There is no cron in this sprint; the function is what a later tick will call. Cancel from `published` notifies invitees (copy text, or SMTP when configured) and does not put the token in the notice. The portal shows the cancelled state. Cancel from `closed` or `evaluated` stays 8c.
+- **Sealing.** `bidPricesVisible` is true only when `now >= deadline_at` and the event was not cancelled before the deadline. `sourcingBidReadModel.js` is the only buyer reader of bid prices, bid lines, and bid files. The portal reads only the caller's own bid. A scan test fails if another `server/src` module names those tables. `provision.js` is exempt: it lists table names for a reset and does not read prices. Before the deadline the buyer sees portal status, `submitted_at`, revision count, and attachment count. After the deadline the owner, an admin, finance, or an evaluator with `coi_status = none_declared` sees prices. The first such view writes `SOURCING_BIDS_OPENED` once. The comparison screen in this sprint is that sealed panel plus the prices after the deadline. The scoring matrix is 8c.
+- **Portal.** `/api/portal` is mounted before the global CORS middleware, ignores `pf_session`, and authenticates the bearer token. Responses are `no-store`, `no-referrer`, `nosniff`, `DENY`, and carry no `Access-Control-Allow-Origin`. Downloads add `Content-Security-Policy: frame-ancestors 'none'`. `portal.html` is a second Vite entry with the same CSP and no third-party fonts. Catalogs are NL and EN in `client/src/i18n/parts/portal.js`. The page does not use the buyer `t()` helper.
+- **Rate limits.** Portal: 60 requests per minute per invitation, 10 submits per minute, 10 uploads per minute, and 20 failed lookups per 10 minutes per IP hash after the HMAC check. Buyer uploads: 10 per minute per user (plan §6.3). The file cap is checked before the rate window, so an 11th file is still `400 too_many_files` and does not consume the window. A removed buyer file does not count toward 40 MiB. A removed bid file still counts toward the bid's 40 MiB, because the blob is kept.
+- **Mail.** `MAIL_PROVIDER` `none` (default) or `smtp`. A missing or invalid SMTP setting skips the send and the buyer still gets the copy-link text. Mail runs after commit. A failure does not roll back the publish.
+- **8a nits folded in.** A Turso `BEGIN` that fails still closes the stream it opened. Create-number retries wait a jittered 100–300 ms instead of 20/40 ms. The 10/minute buyer upload limit is on. The sprint log marks 8a merged at `b2d2b01e18109946d489d4a5080a999775671da4`.
+- **Statement counts at the caps** (50 lines, 20 invitations, 10 bid files), one interactive transaction each. Prepared statements, on both the SQLite adapter and the Turso client: publish 6, submit 7, revise 7, close 5, cancel 5. Turso pipeline statements, including each `SELECT last_insert_rowid()`: publish 9, submit 11, revise 11, close 8, cancel 8. All of these are under 25.
+- **Webhooks.** `sourcing_event.published`, `sourcing_event.closed`, `sourcing_event.cancelled`, and `sourcing_bid.submitted`. The bid payload is event number, supplier code, supplier external id, revision, `submitted_at`, and `content_sha256`. No amounts.
+- **Flag.** Unchanged from 8a. Off unless `SOURCING_ENABLED` is `1`, `true`, or `yes`. Portal calls then get **503** `sourcing_disabled`. A missing `PORTAL_TOKEN_SECRET` (shorter than 32 characters) is **503** `portal_not_configured` on publish and on the portal. A 500 is `Sourcing request failed` or `Portal request failed`.
+- **Follow-ups (not in 8b).** Q&A-answer mail, bid-receipt mail, and award notices are 8d, with the HTTP mail provider. The scoring matrix, award, and cancel from `closed` or `evaluated` are 8c. `POST /api/sourcing/tick`, `sourcing:read` / `sourcing:write`, the global CORS allowlist, and the demo seed are 8d. Sealing is still application-level: anyone with the Turso token can read the rows. Encryption at rest stays later. Old rate-window rows are not purged. The Turso `batch()` partial-chunk follow-up stays on 8.0.
+- **Left alone.** `vercel:customer` still writes only its three variables. The new env vars are manual, like the webhook and SSO settings.
 
 ## Sprint 8c — Comparison, scoring, award, and POs
 

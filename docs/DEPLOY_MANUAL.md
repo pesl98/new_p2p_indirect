@@ -158,7 +158,11 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` | Signed-in PDF uploads per user. Default **10**. | Optional. | Production and Preview. | No. | Integer 1–600. Anything else uses 10. API keys keep their own limit. |
 | `INVOICE_PROPOSAL_SOD` | `enforce` (default) or `off`. | Optional. | Production and Preview. | No. | `off` is for a single-person tenant only. |
 | `SOURCING_ENABLED` | Turns buyer RFQ drafts on. `1`, `true`, or `yes` (any case). Unset, empty, `0`, `false`, `no`, or anything else is off. | Optional. Leave unset until this customer should author RFQs. | Production only until a customer runs a live RFQ. Preview stays off. Not written by the CLIs. | No. | `1` |
-| `SOURCING_PDF_MAX_BYTES` | Raw PDF cap for buyer RFQ attachments. Default and maximum **4194304** (4 MiB). | Optional. Only read when sourcing is on. | Same environment as `SOURCING_ENABLED`. | No. | An integer from 5 through 4194304. Anything else uses 4 MiB. |
+| `SOURCING_PDF_MAX_BYTES` | Raw PDF cap for buyer and supplier RFQ attachments. Default and maximum **4194304** (4 MiB). | Optional. Only read when sourcing is on. | Same environment as `SOURCING_ENABLED`. | No. | An integer from 5 through 4194304. Anything else uses 4 MiB. |
+| `PORTAL_TOKEN_SECRET` | HMAC secret for supplier magic links. Minimum 32 characters. | Required to publish an RFQ or open `/api/portal`. | Production only, with `SOURCING_ENABLED`. | No. | Any string of at least 32 characters. Shorter or unset is **503** `portal_not_configured`. |
+| `MAIL_PROVIDER` | `none` (default, buyer copies the link) or `smtp`. | Optional. | Same environment as sourcing, if mail is wanted. | No. | Anything else is treated as not configured and the send is skipped. |
+| `MAIL_FROM` | From address for invitation, deadline, and cancellation mail. | Required only when `MAIL_PROVIDER=smtp`. | With the SMTP URL. | No. | A mailbox the customer's relay will send as. |
+| `MAIL_SMTP_URL` | Customer SMTP relay, `smtp://` (STARTTLS) or `smtps://`. | Required only when `MAIL_PROVIDER=smtp`. | With `MAIL_FROM`. | No. | Include credentials in the URL. They are not written by the CLIs. |
 
 ### 3.1 SSO and login flags the CLIs do not write
 
@@ -956,9 +960,11 @@ The screen workflow is [SYSTEM_MANUAL.md §5.15](SYSTEM_MANUAL.md#515-pdf-invoic
 
 ### 8.10 Buyer RFQ drafts
 
-Leave `SOURCING_ENABLED` unset and `/api/sourcing` returns **503** `sourcing_disabled` to a signed-in user. A request with no cookie is still **401**. The sidebar item is hidden. Requisition list and detail JSON stay as they are, and convert-to-PO is unchanged while no RFQ row exists.
+Leave `SOURCING_ENABLED` unset and `/api/sourcing` returns **503** `sourcing_disabled` to a signed-in user. A request with no cookie is still **401**. The sidebar item is hidden. Requisition list and detail JSON stay as they are, and convert-to-PO is unchanged while no RFQ row exists. `/api/portal` returns the same **503** when the flag is off.
 
-To turn drafts on for this customer only, set `SOURCING_ENABLED=1` on **Production** and redeploy. `1`, `true`, and `yes` are on. Preview stays off until that customer runs a live RFQ. `vercel:customer` does not write this variable. The additive tables arrive with the next `db:migrate` or the next cold start (`CREATE TABLE IF NOT EXISTS` only; nothing is dropped).
+To turn RFQs on for this customer only, set `SOURCING_ENABLED=1` and `PORTAL_TOKEN_SECRET` (at least 32 characters) on **Production** and redeploy. `1`, `true`, and `yes` are on. Preview stays off until that customer runs a live RFQ. `vercel:customer` does not write these variables. The additive tables arrive with the next `db:migrate` or the next cold start (`CREATE TABLE IF NOT EXISTS` only; nothing is dropped).
+
+Publishing mints one magic link per invitation. With `MAIL_PROVIDER` unset or `none`, the buyer copies each link from the publish response. It is not stored. Optional `smtp` needs `MAIL_FROM` and `MAIL_SMTP_URL`. A bad mail setting skips the send and still returns the link. The supplier page is `/portal.html` (Dutch and English). It does not use the buyer session. Prices stay hidden from buyers until the deadline. `APP_BASE_URL` is the prefix of the copied link.
 
 `SOURCING_PDF_MAX_BYTES` can set a smaller cap for the buyer PDFs. It cannot raise the 4 MiB ceiling. Publishing, supplier links, and bids are not in this release.
 

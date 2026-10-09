@@ -782,7 +782,39 @@ export const api = {
     apiFetch(`${API_BASE}/sourcing/events/${eventId}/files/${fileId}/remove`, {
       method: 'POST'
     }).then((r) => proposalJson(r, t('errors.sourcingFile'))),
-  sourcingFileUrl: (eventId, fileId) => `${API_BASE}/sourcing/events/${eventId}/files/${fileId}`
+  sourcingFileUrl: (eventId, fileId) => `${API_BASE}/sourcing/events/${eventId}/files/${fileId}`,
+  publishSourcingEvent: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  extendSourcingDeadline: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/deadline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  rotateSourcingLink: (eventId, invitationId) =>
+    apiFetch(`${API_BASE}/sourcing/events/${eventId}/invitations/${invitationId}/rotate`, {
+      method: 'POST'
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  revokeSourcingLink: (eventId, invitationId, reason) =>
+    apiFetch(`${API_BASE}/sourcing/events/${eventId}/invitations/${invitationId}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  getSourcingComparison: (id) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/comparison`).then((r) => proposalJson(r, t('errors.sourcing'))),
+  listSourcingQuestions: (id) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/questions`).then((r) => proposalJson(r, t('errors.sourcing'))),
+  answerSourcingQuestion: (eventId, questionId, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${eventId}/questions/${questionId}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave')))
 };
 
 async function proposalJson(response, fallbackMessage) {

@@ -505,6 +505,25 @@ CREATE TABLE IF NOT EXISTS users (
     assert.ok(fake.calls[0].requests.some((request) => request.type === 'close'));
   });
 
+  test('a BUSY BEGIN closes the stream the server just opened', async () => {
+    const fake = createBusyBeginFetch();
+    const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await assert.rejects(
+        () => client.immediateTransaction(async () => {
+          await client.prepare('INSERT INTO t (k, v) VALUES (?, ?)').run('a', '1');
+        })(),
+        /SQLITE_BUSY/
+      );
+    }
+    assert.equal(fake.openStreams(), 0);
+    const begins = fake.calls.filter((body) => (body.requests || []).some((request) => /^begin\b/i.test(String(request.stmt?.sql || ''))));
+    const closes = fake.calls.filter((body) => body.baton && (body.requests || []).some((request) => request.type === 'close'));
+    assert.equal(begins.length, 3);
+    assert.equal(closes.length, 3);
+    assert.equal(client.inTransaction(), false);
+  });
+
   test('a failed COMMIT leaves the client outside any transaction', async () => {
     const fake = createIsolatingFetch({ failOn: /^commit\b/i });
     const client = new TursoHttpClient('libsql://ex.turso.io', 'tok', { fetchImpl: fake.fetchImpl });
@@ -558,6 +577,71 @@ CREATE TABLE IF NOT EXISTS users (
     assert.equal(calls[0].requests.at(-1).type, 'close');
   });
 });
+
+/**
+ * BEGIN answers SQLITE_BUSY and keeps the Hrana stream until the client
+ * sends close on that baton. A request without the baton opens another stream.
+ */
+function createBusyBeginFetch() {
+  const streams = new Set();
+  const calls = [];
+  let seq = 0;
+  const fetchImpl = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    calls.push(body);
+    const requests = body.requests || [];
+    const closing = requests.some((request) => request.type === 'close');
+    let baton = body.baton || null;
+    if (baton && !streams.has(baton)) {
+      return {
+        status: 400,
+        ok: false,
+        async text() {
+          return 'stale or unknown baton';
+        }
+      };
+    }
+    if (!baton && !closing) {
+      baton = `busy-${++seq}`;
+      streams.add(baton);
+    }
+    const begin = requests.some((request) => /^begin\b/i.test(String(request.stmt?.sql || '')));
+    if (begin) {
+      return {
+        status: 200,
+        ok: true,
+        async text() {
+          return JSON.stringify({
+            baton,
+            results: [{ type: 'error', error: { message: 'SQLITE_BUSY: database is locked' } }]
+          });
+        }
+      };
+    }
+    if (closing && baton) streams.delete(baton);
+    return {
+      status: 200,
+      ok: true,
+      async text() {
+        return JSON.stringify({
+          baton: closing ? null : baton,
+          results: requests.map((request) => (
+            request.type === 'close'
+              ? { type: 'ok', response: { type: 'close' } }
+              : { type: 'ok', response: { type: 'execute', result: { cols: [], rows: [], affected_row_count: 0 } } }
+          ))
+        });
+      }
+    };
+  };
+  return {
+    fetchImpl,
+    calls,
+    openStreams() {
+      return streams.size;
+    }
+  };
+}
 
 function sqlIncludes(body, fragment) {
   return (body?.requests || []).some((request) => String(request.stmt?.sql || '').includes(fragment));
