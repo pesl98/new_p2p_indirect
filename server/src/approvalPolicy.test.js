@@ -168,6 +168,38 @@ describe('approval policy tiers', () => {
     assert.deepEqual(steps.map((s) => s.approver_id), [2, 3, 4]);
     assert.deepEqual(steps.map((s) => s.role), ['approver', 'procurement', 'finance']);
   });
+
+  test('an empty exclusion list keeps the chain, and excluding the only procurement user escalates', async () => {
+    const db = await createTestDb();
+    const amount = APPROVAL_TIER2_CENTS + 1;
+    const unchanged = await buildApprovalSteps({
+      totalAmount: amount,
+      departmentId: 1,
+      db,
+      excludeUserIds: []
+    });
+    assert.deepEqual(unchanged.map((step) => step.approver_id), [2, 3]);
+
+    const escalated = await buildApprovalSteps({
+      totalAmount: amount,
+      departmentId: 1,
+      db,
+      excludeUserIds: [3]
+    });
+    assert.equal(escalated[0].approver_id, 2);
+    assert.equal(escalated[1].approver_id, 4);
+    assert.equal(escalated[1].role, 'finance');
+
+    await assert.rejects(
+      () => buildApprovalSteps({
+        totalAmount: amount,
+        departmentId: 1,
+        db,
+        excludeUserIds: [2, 3, 4, 5]
+      }),
+      (err) => err instanceof ApprovalPolicyError && err.statusCode === 422 && err.code === 'sod_no_alternate_approver'
+    );
+  });
 });
 
 function insertPr(db, amount, departmentId = 1) {

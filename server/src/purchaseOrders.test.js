@@ -654,4 +654,51 @@ describe('POST /api/purchase-orders/from-requisition', () => {
       assert.equal(pr.status, 'approved');
     });
   });
+
+  test('converting an award requisition is limited to procurement and admin', async () => {
+    const db = await createTestDb();
+    const now = '2026-10-09T12:00:00.000Z';
+    const { prId } = insertApprovedPr(db, {
+      prNumber: 'PR-2026-880',
+      items: [{
+        item_description: 'Stoelen',
+        category: 'Office Supplies',
+        quantity: 1,
+        unit_price: 1000,
+        total_price: 1000,
+        estimated_supplier_id: 1,
+        line_type: 'goods'
+      }]
+    });
+    const event = db.prepare(`
+      INSERT INTO sourcing_events (
+        event_number, title, department_id, owner_user_id, status, currency, deadline_at, created_at, updated_at
+      ) VALUES ('RFQ-2026-880', 'Award gate', 1, 3, 'awarded', 'EUR', '2026-10-01T00:00:00.000Z', ?, ?)
+    `).run(now, now);
+    db.prepare(`
+      INSERT INTO sourcing_awards (
+        event_id, award_type, status, award_requisition_id, total_cents, is_lowest,
+        has_expired_validity, comparison_snapshot_json, proposed_by_user_id, proposed_at
+      ) VALUES (?, 'full', 'approved', ?, 1000, 1, 0, '{}', 3, ?)
+    `).run(Number(event.lastInsertRowid), prId, now);
+    const app = createApp({ db, config: loadDbConfig({}) });
+    await withServer(app, async (base) => {
+      const denied = await fetch(`${base}/api/purchase-orders/from-requisition`, withCookie(1, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requisition_id: prId })
+      }));
+      const deniedBody = await denied.json();
+      assert.equal(denied.status, 403);
+      assert.equal(deniedBody.code, 'award_po_role');
+      const allowed = await authed(`${base}/api/purchase-orders/from-requisition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requisition_id: prId })
+      });
+      const body = await allowed.json();
+      assert.equal(allowed.status, 201, JSON.stringify(body));
+      assert.equal(body.purchase_orders.length, 1);
+    });
+  });
 });

@@ -814,7 +814,34 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
-    }).then((r) => proposalJson(r, t('errors.sourcingSave')))
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  declareSourcingCoi: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/coi`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  recordSourcingScores: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  evaluateSourcingEvent: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  proposeSourcingAward: (id, data) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/awards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': data.idempotency_key || '' },
+      body: JSON.stringify(data)
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  createSourcingPurchaseOrders: (id) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/purchase-orders`, { method: 'POST' })
+      .then((r) => proposalJson(r, t('errors.sourcingSave')))
 };
 
 async function proposalJson(response, fallbackMessage) {

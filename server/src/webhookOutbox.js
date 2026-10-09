@@ -34,6 +34,10 @@ export const WEBHOOK_EVENTS = Object.freeze({
   SOURCING_EVENT_PUBLISHED: 'sourcing_event.published',
   SOURCING_EVENT_CLOSED: 'sourcing_event.closed',
   SOURCING_EVENT_CANCELLED: 'sourcing_event.cancelled',
+  SOURCING_EVENT_EVALUATED: 'sourcing_event.evaluated',
+  SOURCING_EVENT_AWARDED: 'sourcing_event.awarded',
+  SOURCING_EVENT_AWARD_REJECTED: 'sourcing_event.award_rejected',
+  SOURCING_EVENT_PURCHASE_ORDERS_CREATED: 'sourcing_event.purchase_orders_created',
   SOURCING_BID_SUBMITTED: 'sourcing_bid.submitted'
 });
 

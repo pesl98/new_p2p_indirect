@@ -33,9 +33,18 @@ function formatWhen(value, lang) {
   }).format(date);
 }
 
+function portalAcceptLanguage() {
+  try {
+    return sessionStorage.getItem('pf_portal_lang') === 'en' ? 'en' : 'nl';
+  } catch {
+    return 'nl';
+  }
+}
+
 async function portalFetch(token, path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set('Authorization', `Bearer ${token}`);
+  headers.set('Accept-Language', portalAcceptLanguage());
   const response = await fetch(`/api/portal${path}`, { ...options, headers });
   const text = await response.text();
   let body = null;

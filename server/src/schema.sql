@@ -1136,6 +1136,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS sourcing_awards_one_open
   ON sourcing_awards (event_id) WHERE status IN ('pending_approval', 'approved');
 CREATE INDEX IF NOT EXISTS sourcing_awards_requisition ON sourcing_awards (award_requisition_id);
 
+-- purchase_orders_award_supplier is created in applySchema, after a legacy
+-- purchase_orders table has requisition_id and notes. Creating it here would
+-- abort the whole script on a database from before those columns existed.
+
 CREATE TABLE IF NOT EXISTS sourcing_award_lines (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   award_id INTEGER NOT NULL,

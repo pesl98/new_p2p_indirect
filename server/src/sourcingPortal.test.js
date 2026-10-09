@@ -1361,6 +1361,233 @@ describe('sourcing portal', () => {
     }));
   });
 
+  test('portal errors follow Accept-Language and a busy retry sends Retry-After', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const dutch = await json(await fetch(`${base}/api/portal`, { headers: bearer('not-a-token') }));
+      assert.equal(dutch.status, 401);
+      assert.equal(dutch.body.error, INVALID_LINK.error);
+      const english = await json(await fetch(`${base}/api/portal`, {
+        headers: bearer('not-a-token', { 'Accept-Language': 'en-GB,en;q=0.9' })
+      }));
+      assert.equal(english.body.error, 'This link is invalid or has expired. Contact the buyer.');
+      assert.equal(english.body.code, 'portal_link_invalid');
+
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Bezet',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      const orig = db.immediateTransaction.bind(db);
+      const random = Math.random;
+      Math.random = () => 0;
+      db.immediateTransaction = () => async () => {
+        const error = new Error('SQLITE_BUSY: database is locked');
+        error.code = 'SQLITE_BUSY';
+        throw error;
+      };
+      try {
+        const calls = [
+          ['/api/portal/bids/withdraw', 'POST', {}],
+          ['/api/portal/decline', 'POST', { reason: 'Nee' }],
+          ['/api/portal/files', 'POST', null],
+          ['/api/portal/files/1/remove', 'POST', {}]
+        ];
+        for (const [path, method] of calls) {
+          const headers = bearer(token, { 'Accept-Language': 'en' });
+          const init = { method, headers };
+          if (path.endsWith('/files')) {
+            headers['Content-Type'] = 'application/pdf';
+            headers['X-Filename'] = 'offerte.pdf';
+            init.body = PDF;
+          }
+          const response = await json(await fetch(`${base}${path}`, init));
+          assert.equal(response.status, 503, `${path} ${JSON.stringify(response.body)}`);
+          assert.equal(response.body.code, 'busy');
+          assert.equal(response.body.error, 'The database is busy. Try again shortly.');
+          assert.equal(response.headers.get('retry-after'), '1');
+        }
+      } finally {
+        db.immediateTransaction = orig;
+        Math.random = random;
+      }
+    }));
+  });
+
+  test('an oversized bid is rejected only after the token check, and withdraw stays at 100 kB', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const bulky = JSON.stringify({ comment: 'a'.repeat(150 * 1024) });
+      const anonymous = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bulky
+      }));
+      assert.equal(anonymous.status, 401);
+      assert.equal(anonymous.body.code, 'portal_link_invalid');
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Groot',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      const withdraw = await fetch(`${base}/api/portal/bids/withdraw`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: bulky
+      });
+      assert.equal(withdraw.status, 413);
+    }));
+  });
+
+  test('publish mail uses waitUntil and records each invitation as its send finishes', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const { publishEvent } = await import('./sourcingService.js');
+    const now = '2026-10-08T12:00:00.000Z';
+    const eventId = await db.immediateTransaction(async () => {
+      const result = await db.prepare(`
+        INSERT INTO sourcing_events (
+          event_number, title, owner_user_id, department_id, status, currency, deadline_at,
+          weight_price, weight_lead_time, weight_quality, row_version, created_at, updated_at
+        ) VALUES ('RFQ-2026-092', 'Achtergrond', 3, 1, 'draft', 'EUR', '2026-10-08T14:00:00.000Z', 70, 15, 15, 1, ?, ?)
+      `).run(now, now);
+      const id = Number(result.lastInsertRowid);
+      await db.prepare(`
+        INSERT INTO sourcing_event_lines (
+          event_id, line_no, description, category, quantity, unit_of_measure, line_type
+        ) VALUES (?, 1, 'Stoel', 'Office Supplies', 1, 'each', 'goods')
+      `).run(id);
+      await db.prepare(`
+        INSERT INTO sourcing_invitations (event_id, supplier_id, contact_email, invited_by_user_id, created_at)
+        VALUES (?, 2, 'fast@active.test', 3, ?), (?, 1, 'slow@default.test', 3, ?)
+      `).run(id, now, id, now);
+      return id;
+    })();
+    let releaseSlow;
+    const slow = new Promise((resolve) => { releaseSlow = resolve; });
+    const waited = [];
+    const started = Date.now();
+    const view = await publishEvent(db, { id: 3, name: 'Carol Zhang', role: 'procurement' }, eventId, { row_version: 1 }, {
+      now: new Date(now),
+      env: {
+        VERCEL: '1',
+        MAIL_PROVIDER: 'smtp',
+        MAIL_FROM: 'inkoop@procure.example',
+        MAIL_SMTP_URL: 'smtp://127.0.0.1:9',
+        PORTAL_TOKEN_SECRET: SECRET,
+        APP_BASE_URL: 'https://procure.example',
+        SOURCING_ENABLED: '1'
+      },
+      waitUntil: (promise) => { waited.push(promise); },
+      mailTransport: async (message) => {
+        if (message.to === 'slow@default.test') await slow;
+        return { status: 'sent' };
+      }
+    });
+    assert.ok(Date.now() - started < 500);
+    assert.equal(waited.length, 1);
+    assert.match(view.invitations[0].portal_url, /portal\.html#t=/);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const mid = await db.prepare(`
+      SELECT contact_email, delivery_status FROM sourcing_invitations WHERE event_id = ? ORDER BY id
+    `).all(eventId);
+    assert.deepEqual(mid.map((row) => row.delivery_status), ['sent', 'pending']);
+    releaseSlow();
+    await waited[0];
+    const done = await db.prepare(`
+      SELECT delivery_status FROM sourcing_invitations WHERE event_id = ? ORDER BY id
+    `).all(eventId);
+    assert.deepEqual(done.map((row) => row.delivery_status), ['sent', 'sent']);
+  });
+
+  test('extend and cancel notices send in parallel', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const { extendDeadline, cancelEvent } = await import('./sourcingService.js');
+    const now = '2026-10-08T12:00:00.000Z';
+    async function draft(number) {
+      return db.immediateTransaction(async () => {
+        const result = await db.prepare(`
+          INSERT INTO sourcing_events (
+            event_number, title, owner_user_id, department_id, status, currency, deadline_at,
+            weight_price, weight_lead_time, weight_quality, row_version, created_at, updated_at
+          ) VALUES (?, 'Parallel', 3, 1, 'published', 'EUR', '2026-10-08T18:00:00.000Z', 70, 15, 15, 1, ?, ?)
+        `).run(number, now, now);
+        const id = Number(result.lastInsertRowid);
+        await db.prepare(`
+          INSERT INTO sourcing_event_lines (
+            event_id, line_no, description, category, quantity, unit_of_measure, line_type
+          ) VALUES (?, 1, 'Stoel', 'Office Supplies', 1, 'each', 'goods')
+        `).run(id);
+        await db.prepare(`
+          INSERT INTO sourcing_invitations (event_id, supplier_id, contact_email, invited_by_user_id, created_at)
+          VALUES (?, 2, 'a@active.test', 3, ?), (?, 1, 'b@default.test', 3, ?)
+        `).run(id, now, id, now);
+        return id;
+      })();
+    }
+    const delay = () => new Promise((resolve) => setTimeout(resolve, 180));
+    const mail = {
+      awaitMail: true,
+      env: {
+        MAIL_PROVIDER: 'smtp',
+        MAIL_FROM: 'inkoop@procure.example',
+        MAIL_SMTP_URL: 'smtp://127.0.0.1:9'
+      },
+      mailTransport: async () => {
+        await delay();
+        return { status: 'sent' };
+      },
+      now: new Date(now)
+    };
+    const actor = { id: 3, name: 'Carol Zhang', role: 'procurement' };
+    const extendedId = await draft('RFQ-2026-093');
+    const extendStarted = Date.now();
+    const extended = await extendDeadline(db, actor, extendedId, {
+      row_version: 1,
+      deadline_at: '2026-10-09T18:00:00.000Z'
+    }, mail);
+    const extendMs = Date.now() - extendStarted;
+    assert.ok(extendMs < 350, `extend took ${extendMs}ms`);
+    assert.equal(extended.notice.delivery_status, 'sent');
+    assert.equal(extended.notice.invitations, 2);
+    const cancelId = await draft('RFQ-2026-094');
+    const cancelStarted = Date.now();
+    const cancelled = await cancelEvent(db, actor, cancelId, { reason: 'Niet meer nodig' }, mail);
+    const cancelMs = Date.now() - cancelStarted;
+    assert.ok(cancelMs < 350, `cancel took ${cancelMs}ms`);
+    assert.equal(cancelled.notice.delivery_status, 'sent');
+    assert.equal(cancelled.notice.invitations, 2);
+  });
+
   test('express sets frame-ancestors none on portal.html', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-portal-'));
     fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>app</title>');

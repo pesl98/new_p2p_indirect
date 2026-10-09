@@ -16,6 +16,149 @@ const CATEGORIES = [
 
 const FILTERS = ['all', 'draft', 'published', 'closed', 'evaluated', 'awarded', 'cancelled'];
 
+function ComparisonPanel({
+  comparison, detail, saving, canWrite, currentUser, overrideReason, setOverrideReason,
+  coiNote, setCoiNote, qualityDraft, setQualityDraft, onEvaluate, onRefresh, onError
+}) {
+  if (!comparison) return <p className="text-slate-500">{t('common.loading')}</p>;
+  if (comparison.sealed) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm" data-testid="comparison-sealed">
+        <p className="font-semibold">{t('sourcing.comparison.sealedTitle')}</p>
+        <p className="mt-1">{t('sourcing.comparison.sealedBody', { time: formatAmsterdam(comparison.deadline_at) })}</p>
+        {comparison.prices_hidden && <p className="mt-1">{t('sourcing.comparison.hidden')}</p>}
+        <ul className="mt-3 divide-y divide-slate-100">
+          {(comparison.invitations || []).map((row) => (
+            <li key={row.id} className="py-2">
+              <span className="font-medium">{row.supplier_name}</span>
+              <span className="text-slate-500"> · {t(`sourcing.portalStatus.${row.portal_status}`)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  const matrix = comparison.matrix || [];
+  const mine = (comparison.evaluators || []).find((row) => Number(row.user_id) === Number(currentUser?.id));
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-4" data-testid="comparison-matrix">
+      <details>
+        <summary className="font-semibold cursor-pointer">{t('sourcing.comparison.how')}</summary>
+        <p className="mt-2 text-slate-600">{t('sourcing.comparison.howBody')}</p>
+      </details>
+      {comparison.warnings?.includes('few_quotes') && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">{t('sourcing.comparison.fewQuotes')}</p>
+      )}
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="text-left text-slate-500">
+              <th className="px-2 py-2">{t('common.description')}</th>
+              {matrix.map((bid) => (
+                <th key={bid.bid_id} className="px-2 py-2">{bid.supplier_name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(comparison.lines || []).map((line) => (
+              <tr key={line.id} className="border-t border-slate-100">
+                <td className="px-2 py-2">{line.line_no}. {line.description}</td>
+                {matrix.map((bid) => {
+                  const cell = (bid.lines || []).find((row) => Number(row.event_line_id) === Number(line.id));
+                  if (!cell?.quoted) return <td key={bid.bid_id} className="px-2 py-2 text-slate-400">{t('sourcing.comparison.notOffered')}</td>;
+                  return (
+                    <td key={bid.bid_id} className={`px-2 py-2 ${cell.is_lowest ? 'bg-emerald-50' : ''}`}>
+                      <div>{t('sourcing.comparison.unit')}: {formatMoney(cell.unit_price_cents)}</div>
+                      <div>{t('sourcing.comparison.lineTotal')}: {formatMoney(cell.line_total_cents)}</div>
+                      <div>{t('sourcing.comparison.lead')}: {cell.lead_time_days ?? '—'}</div>
+                      {cell.is_lowest && <span className="mt-1 inline-block rounded bg-emerald-700 px-1.5 py-0.5 text-white">{t('sourcing.comparison.lowest')}</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-slate-200 font-medium">
+              <td className="px-2 py-2">{t('sourcing.comparison.total')}</td>
+              {matrix.map((bid) => <td key={bid.bid_id} className="px-2 py-2">{formatMoney(bid.total_cents)}</td>)}
+            </tr>
+            {['price', 'lead_time', 'quality', 'total'].map((key) => (
+              <tr key={key}>
+                <td className="px-2 py-1 text-slate-500">
+                  {key === 'price' && t('sourcing.comparison.scorePrice')}
+                  {key === 'lead_time' && t('sourcing.comparison.scoreLead')}
+                  {key === 'quality' && t('sourcing.comparison.scoreQuality')}
+                  {key === 'total' && t('sourcing.comparison.scoreTotal')}
+                </td>
+                {matrix.map((bid) => (
+                  <td key={bid.bid_id} className="px-2 py-1">
+                    {bid.scores?.[`${key}_display`] ?? '—'}
+                    {key === 'total' && !bid.complete && <div className="text-amber-800">{t('sourcing.comparison.incomplete')}</div>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr>
+              <td className="px-2 py-1">{t('sourcing.comparison.rank')}</td>
+              {matrix.map((bid) => <td key={bid.bid_id} className="px-2 py-1">{bid.rank ?? '—'}</td>)}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {mine && (
+        <div className="space-y-2 border-t border-slate-100 pt-3">
+          <button type="button" className="px-3 py-1.5 border border-slate-300 rounded-lg" onClick={async () => {
+            try {
+              await api.declareSourcingCoi(detail.id, { status: 'none_declared' });
+              await onRefresh();
+            } catch (err) { onError(err); }
+          }}>{t('sourcing.comparison.coiNone')}</button>
+          <label className="block">
+            {t('sourcing.comparison.coiNote')}
+            <input className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5" value={coiNote} onChange={(event) => setCoiNote(event.target.value)} />
+          </label>
+          <button type="button" className="px-3 py-1.5 border border-slate-300 rounded-lg" onClick={async () => {
+            try {
+              await api.declareSourcingCoi(detail.id, { status: 'conflict_declared', note: coiNote });
+              await onRefresh();
+            } catch (err) { onError(err); }
+          }}>{t('sourcing.comparison.coiConflict')}</button>
+          {mine.coi_status === 'none_declared' && (
+            <div className="space-y-2">
+              {matrix.filter((bid) => !bid.withdrawn).map((bid) => (
+                <label key={bid.bid_id} className="block">
+                  {bid.supplier_name}
+                  <input type="number" min="0" max="10" className="ml-2 w-16 rounded border border-slate-200 px-2 py-1" value={qualityDraft[bid.bid_id] ?? ''} onChange={(event) => setQualityDraft((prev) => ({ ...prev, [bid.bid_id]: event.target.value }))} />
+                </label>
+              ))}
+              <button type="button" className="px-3 py-1.5 bg-slate-900 text-white rounded-lg" onClick={async () => {
+                try {
+                  await api.recordSourcingScores(detail.id, {
+                    scores: Object.entries(qualityDraft).map(([bidId, value]) => ({ bid_id: Number(bidId), quality_score: Number(value) }))
+                  });
+                  await onRefresh();
+                } catch (err) { onError(err); }
+              }}>{t('sourcing.comparison.saveScores')}</button>
+            </div>
+          )}
+        </div>
+      )}
+      {canWrite && detail?.status === 'closed' && (
+        <div className="space-y-2 border-t border-slate-100 pt-3">
+          <label className="block">
+            {t('sourcing.comparison.override')}
+            <input className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />
+          </label>
+          <button type="button" disabled={saving} onClick={onEvaluate} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold" data-testid="evaluate">
+            {t('sourcing.comparison.evaluate')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatAmsterdam(value) {
   if (!value) return '—';
   const date = new Date(value);
@@ -147,6 +290,13 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
   const [answerVisibility, setAnswerVisibility] = useState('private');
   const [extendValue, setExtendValue] = useState('');
   const [revokeReason, setRevokeReason] = useState('');
+  const [awardType, setAwardType] = useState('full');
+  const [awardBid, setAwardBid] = useState('');
+  const [splitPicks, setSplitPicks] = useState({});
+  const [awardReason, setAwardReason] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
+  const [coiNote, setCoiNote] = useState('');
+  const [qualityDraft, setQualityDraft] = useState({});
 
   const loadList = async (status = filter) => {
     setLoading(true);
@@ -340,6 +490,8 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
   const isOwner = currentUser?.role === 'admin' || Number(detail?.owner_user_id) === Number(currentUser?.id);
   const ownerCanEdit = canWrite && detail?.status === 'draft' && isOwner;
   const ownerCanManage = canWrite && (detail?.status === 'draft' || detail?.status === 'published') && isOwner;
+  const awardBlocksCancel = detail?.award?.status === 'pending_approval' || detail?.award?.status === 'approved';
+  const canCancel = canWrite && isOwner && ['draft', 'published', 'closed', 'evaluated'].includes(detail?.status) && !awardBlocksCancel;
 
   const publish = async (source = detail) => {
     if (!source?.id) return;
@@ -363,10 +515,74 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
     setTab(key);
     if (!detail?.id) return;
     try {
-      if (key === 'comparison') setComparison(await api.getSourcingComparison(detail.id));
+      if (key === 'comparison' || key === 'award') setComparison(await api.getSourcingComparison(detail.id));
       if (key === 'qa') setQuestions(await api.listSourcingQuestions(detail.id) || []);
     } catch (err) {
       setError(presentError(err, 'errors.sourcing'));
+    }
+  };
+
+  const refreshDetail = async (id = detail?.id) => {
+    const event = await api.getSourcingEvent(id);
+    setDetail(event);
+    return event;
+  };
+
+  const finishEvaluation = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await api.evaluateSourcingEvent(detail.id, {
+        row_version: detail.row_version,
+        override_reason: overrideReason
+      });
+      setDetail(saved);
+      await loadList(filter);
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitAward = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const body = {
+        award_type: awardType,
+        reason: awardReason,
+        row_version: detail.row_version,
+        idempotency_key: `award-${detail.id}-${detail.row_version}`
+      };
+      if (awardType === 'full') body.bid_id = Number(awardBid);
+      else {
+        body.lines = (comparison?.lines || []).map((line) => ({
+          event_line_id: line.id,
+          bid_id: Number(splitPicks[line.id])
+        }));
+      }
+      const saved = await api.proposeSourcingAward(detail.id, body);
+      setDetail(saved.event || await refreshDetail());
+      await loadList(filter);
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createPurchaseOrders = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await api.createSourcingPurchaseOrders(detail.id);
+      setDetail(saved.event || await refreshDetail());
+      setTab('award');
+    } catch (err) {
+      setError(presentError(err, 'errors.sourcingSave'));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -949,6 +1165,7 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
               ['suppliers', 'sourcing.tab.suppliers'],
               ['files', 'sourcing.tab.files'],
               ['comparison', 'sourcing.tab.comparison'],
+              ['award', 'sourcing.tab.award'],
               ['qa', 'sourcing.tab.qa'],
               ['history', 'sourcing.tab.history']
             ].map(([key, label]) => (
@@ -1091,29 +1308,92 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
           )}
 
           {tab === 'comparison' && (
-            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-3">
-              {!comparison && <p className="text-slate-500">{t('common.loading')}</p>}
-              {comparison?.sealed && (
-                <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-3">
-                  <p className="font-semibold">{t('sourcing.comparison.sealedTitle')}</p>
-                  <p className="mt-1">{t('sourcing.comparison.sealedBody', { time: formatAmsterdam(comparison.deadline_at) })}</p>
-                  {comparison.prices_hidden && <p className="mt-1">{t('sourcing.comparison.hidden')}</p>}
+            <ComparisonPanel
+              comparison={comparison}
+              detail={detail}
+              saving={saving}
+              canWrite={canWrite && isOwner}
+              currentUser={currentUser}
+              overrideReason={overrideReason}
+              setOverrideReason={setOverrideReason}
+              coiNote={coiNote}
+              setCoiNote={setCoiNote}
+              qualityDraft={qualityDraft}
+              setQualityDraft={setQualityDraft}
+              onEvaluate={finishEvaluation}
+              onRefresh={async () => {
+                setComparison(await api.getSourcingComparison(detail.id));
+                await refreshDetail();
+              }}
+              onError={(err) => setError(presentError(err, 'errors.sourcingSave'))}
+            />
+          )}
+
+          {tab === 'award' && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-4" data-testid="award-panel">
+              {comparison?.sealed && <p>{t('sourcing.comparison.sealedTitle')}</p>}
+              {comparison?.warnings?.includes('few_quotes') && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950" data-testid="few-quotes-warning">
+                  {t('sourcing.comparison.fewQuotes')}
+                </p>
+              )}
+              <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" data-testid="sod-notice">
+                {t('sourcing.award.sod')}
+              </p>
+              {detail.award?.status === 'pending_approval' && (
+                <p className="font-semibold" data-testid="award-pending">{t('sourcing.award.pending', { number: detail.award.pr_number })}</p>
+              )}
+              {detail.award?.status === 'rejected' && <p>{t('sourcing.award.rejected')}</p>}
+              {detail.status === 'awarded' && <p className="font-semibold" data-testid="award-approved">{t('sourcing.award.approved')}</p>}
+              {detail.status === 'evaluated' && detail.award?.status !== 'pending_approval' && !comparison?.sealed && (
+                <div className="space-y-3">
+                  <label className="block">
+                    <input type="radio" checked={awardType === 'full'} onChange={() => setAwardType('full')} /> {t('sourcing.award.full')}
+                  </label>
+                  {awardType === 'full' && (
+                    <select className="rounded border border-slate-200 px-2 py-1.5" value={awardBid} onChange={(event) => setAwardBid(event.target.value)} data-testid="award-supplier">
+                      <option value="">{t('common.none')}</option>
+                      {(comparison?.matrix || []).filter((bid) => !bid.withdrawn).map((bid) => (
+                        <option key={bid.bid_id} value={bid.bid_id}>{bid.supplier_name} · {formatMoney(bid.total_cents)}</option>
+                      ))}
+                    </select>
+                  )}
+                  <label className="block">
+                    <input type="radio" checked={awardType === 'split'} onChange={() => setAwardType('split')} /> {t('sourcing.award.split')}
+                  </label>
+                  {awardType === 'split' && (comparison?.lines || []).map((line) => (
+                    <label key={line.id} className="block">
+                      {line.description}
+                      <select className="mt-1 block rounded border border-slate-200 px-2 py-1.5" value={splitPicks[line.id] || ''} onChange={(event) => setSplitPicks((prev) => ({ ...prev, [line.id]: event.target.value }))}>
+                        <option value="">{t('common.none')}</option>
+                        {(comparison?.matrix || []).filter((bid) => !bid.withdrawn).map((bid) => (
+                          <option key={bid.bid_id} value={bid.bid_id}>{bid.supplier_name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                  <label className="block">
+                    {t('sourcing.award.reason')}
+                    <span className="block text-xs text-slate-500">{t('sourcing.award.reasonHint')}</span>
+                    <textarea className="mt-1 w-full rounded border border-slate-200 px-2 py-1.5" value={awardReason} onChange={(event) => setAwardReason(event.target.value)} data-testid="award-reason" />
+                  </label>
+                  <button type="button" disabled={saving} onClick={submitAward} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold" data-testid="award-submit">
+                    {t('sourcing.award.submit')}
+                  </button>
                 </div>
               )}
-              {comparison && !comparison.sealed && <p className="font-semibold">{t('sourcing.comparison.open')}</p>}
-              <ul className="divide-y divide-slate-100">
-                {(comparison?.invitations || []).map((row) => (
-                  <li key={row.id} className="py-2">
-                    <span className="font-medium">{row.supplier_name}</span>
-                    <span className="text-slate-500"> · {t(`sourcing.portalStatus.${row.portal_status}`)}</span>
-                  </li>
-                ))}
-              </ul>
-              {!comparison?.sealed && (comparison?.bids || []).map((bid) => (
-                <div key={bid.invitation_id} className="border-t border-slate-100 pt-2">
-                  <p>{t('sourcing.comparison.total')}: {formatMoney(bid.total_cents)} · {t('sourcing.comparison.revision')} {bid.revision}</p>
+              {detail.status === 'awarded' && (
+                <div className="space-y-2">
+                  <button type="button" disabled={saving || !canWrite} onClick={createPurchaseOrders} className="px-4 py-2 bg-indigo-700 text-white rounded-lg font-semibold" data-testid="create-pos">
+                    {t('sourcing.award.createPos')}
+                  </button>
+                  <ul data-testid="award-pos">
+                    {(detail.purchase_orders || []).map((po) => (
+                      <li key={po.id}>{po.po_number} · {po.supplier_name} · {formatMoney(po.total_amount)}</li>
+                    ))}
+                  </ul>
                 </div>
-              ))}
+              )}
             </div>
           )}
 
@@ -1189,7 +1469,7 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
             </ul>
           )}
 
-          {ownerCanManage && (
+          {canCancel && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-wrap gap-2 items-end">
               <label className="text-sm text-slate-600 flex-1">
                 {t('sourcing.cancelReason')}

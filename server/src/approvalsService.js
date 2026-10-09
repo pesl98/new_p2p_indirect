@@ -1,5 +1,6 @@
 import { formatMoney } from './money.js';
 import { resolveDecisionActor } from './delegationsService.js';
+import { applyAwardDecision, guardAwardSelfApproval } from './sourcingApprovalHooks.js';
 import {
   CONTRACT_USE_ALLOWED,
   CONTRACT_USE_PROPOSED,
@@ -76,6 +77,11 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
         b.actual_spent,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
         (SELECT COUNT(*) FROM requisition_items WHERE requisition_id = pr.id) as item_count,
+        se.event_number AS sourcing_event_number,
+        sa.award_type AS sourcing_award_type,
+        sa.is_lowest AS sourcing_is_lowest,
+        sa.reason AS sourcing_award_reason,
+        sa.comparison_snapshot_json AS sourcing_comparison_snapshot_json,
         ${SOURCE_CONTRACT_SELECT_SQL}
       FROM approval_requests ar
       JOIN purchase_requisitions pr ON ar.requisition_id = pr.id
@@ -83,6 +89,8 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
       JOIN users approver ON ar.approver_id = approver.id
       JOIN departments d ON pr.department_id = d.id
       LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
+      LEFT JOIN sourcing_awards sa ON sa.award_requisition_id = pr.id
+      LEFT JOIN sourcing_events se ON se.id = sa.event_id
       ${SOURCE_CONTRACT_JOIN_SQL}
       WHERE ar.status = ?
     `;
@@ -159,6 +167,12 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       throw new ApprovalDecisionError('Associated requisition not found', 404);
     }
 
+    const award = await guardAwardSelfApproval(db, {
+      requisitionId: pr.id,
+      decidingUserId: approver_id,
+      delegation: actorCheck.delegation
+    });
+
     let contractUseDecision = null;
     if (decision === 'approved' && pr.contract_use_status === CONTRACT_USE_PROPOSED) {
       const allowUse = parseAllowContractUse(allow_contract_use);
@@ -227,7 +241,19 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         VALUES ('requisition', ?, 'REJECTED', ?, ?)
       `).run(pr.id, actor, `Rejected by ${actor}.${viaNote} Reason: ${comments || 'No reason specified'}`);
 
-      return { outcome: 'rejected', budgetCommitted: false, contract_use_status: pr.contract_use_status, ...delegateMeta };
+      const awardResult = await applyAwardDecision(db, {
+        award,
+        requisition: pr,
+        outcome: 'rejected',
+        actor: { id: approver_id, name: actor, role: null }
+      });
+      return {
+        outcome: 'rejected',
+        budgetCommitted: false,
+        contract_use_status: pr.contract_use_status,
+        award: awardResult,
+        ...delegateMeta
+      };
     }
 
     const nextWaiting = await db.prepare(`
@@ -297,10 +323,18 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       );
     }
 
+    const awardResult = await applyAwardDecision(db, {
+      award,
+      requisition: pr,
+      outcome: 'approved',
+      actor: { id: approver_id, name: actor, role: null }
+    });
+
     return {
       outcome: 'approved',
       budgetCommitted: true,
       contract_use_status: contractUseDecision || pr.contract_use_status,
+      award: awardResult,
       ...delegateMeta
     };
   });

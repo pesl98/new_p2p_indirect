@@ -210,8 +210,8 @@ export default function App() {
     if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'finance_inbox') {
       setActiveTab('dashboard');
     }
-    if (!['procurement', 'admin', 'finance'].includes(signedIn?.role) && activeTab === 'sourcing') {
-      setActiveTab('dashboard');
+    if (activeTab === 'sourcing') {
+      setSourcingMe(null);
     }
   };
 

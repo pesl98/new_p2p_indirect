@@ -38,6 +38,7 @@ const PAYMENT_RUN_AUDIT_ACTIONS = {
 };
 
 const KIND_ORDER = {
+  sourcing_event: 0,
   requisition: 1,
   contract_assignment: 2,
   approval: 3,
@@ -725,8 +726,24 @@ function timelineEvent(partial) {
   return event;
 }
 
-function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents = [] }) {
+function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents = [], sourcingEvents = [] }) {
   const events = [];
+
+  for (const sourcing of sourcingEvents) {
+    events.push(timelineEvent({
+      id: `sourcing_event:${sourcing.id}:${sourcing.audit_id || 'header'}`,
+      kind: 'sourcing_event',
+      entity_type: 'sourcing_event',
+      entity_id: sourcing.event_id,
+      number: sourcing.event_number,
+      title: sourcing.title,
+      status: sourcing.status,
+      at: sourcing.at,
+      actor_name: sourcing.actor_name,
+      details: sourcing.details,
+      tab: 'sourcing'
+    }));
+  }
 
   if (requisition) {
     events.push(timelineEvent({
@@ -1034,7 +1051,7 @@ function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents 
   return sortTimeline(events);
 }
 
-function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrders, contractEvents = [] }) {
+function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrders, contractEvents = [], sourcingEvents = [] }) {
   return {
     starting_point: startingPoint,
     requisition: mapRequisition(requisition),
@@ -1046,7 +1063,8 @@ function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrde
       requisition: mapRequisition(requisition),
       approvals,
       purchaseOrders,
-      contractEvents
+      contractEvents,
+      sourcingEvents
     })
   };
 }
@@ -1171,6 +1189,24 @@ async function resolveStartingDocument(db, query = {}) {
   }
 
   if (q) {
+    if (/^RFQ-/i.test(q)) {
+      const hit = await db.prepare(`
+        SELECT e.source_requisition_id, a.award_requisition_id
+        FROM sourcing_events e
+        LEFT JOIN sourcing_awards a
+          ON a.event_id = e.id AND a.status IN ('pending_approval', 'approved')
+        WHERE e.event_number = ? COLLATE NOCASE
+        ORDER BY a.id DESC
+        LIMIT 1
+      `).get(q);
+      if (hit) {
+        const prId = hit.award_requisition_id || hit.source_requisition_id;
+        if (!prId) throw new DocumentTrailError('No document trail found for that search', 404);
+        const pr = await loadRequisition(db, prId);
+        if (!pr) throw new DocumentTrailError('Requisition not found', 404);
+        return { requisition: pr, purchaseOrder: null };
+      }
+    }
     const prExact = await db.prepare(`
       SELECT id FROM purchase_requisitions WHERE pr_number = ? COLLATE NOCASE
     `).get(q);
@@ -1205,10 +1241,60 @@ async function resolveStartingDocument(db, query = {}) {
   );
 }
 
+async function loadSourcingTimeline(db, requisitionId) {
+  const events = await db.prepare(`
+    SELECT DISTINCT e.id, e.event_number, e.title, e.status, e.created_at
+    FROM sourcing_events e
+    LEFT JOIN sourcing_awards a ON a.event_id = e.id
+    WHERE e.source_requisition_id = ? OR a.award_requisition_id = ?
+    ORDER BY e.id ASC
+  `).all(requisitionId, requisitionId);
+  if (!events.length) return [];
+  const marks = events.map(() => '?').join(', ');
+  const audits = await db.prepare(`
+    SELECT id, entity_id, action, actor_name, details, created_at
+    FROM audit_logs
+    WHERE entity_type = 'sourcing_event' AND entity_id IN (${marks})
+    ORDER BY id ASC
+  `).all(...events.map((row) => row.id));
+  const rows = [];
+  for (const event of events) {
+    const eventAudits = audits.filter((row) => Number(row.entity_id) === Number(event.id));
+    if (!eventAudits.length) {
+      rows.push({
+        id: event.id,
+        audit_id: null,
+        event_id: event.id,
+        event_number: event.event_number,
+        title: event.title,
+        status: event.status,
+        at: event.created_at,
+        actor_name: null,
+        details: event.event_number
+      });
+    }
+    for (const audit of eventAudits) {
+      rows.push({
+        id: event.id,
+        audit_id: audit.id,
+        event_id: event.id,
+        event_number: event.event_number,
+        title: `${event.event_number} ${audit.action}`,
+        status: event.status,
+        at: audit.created_at,
+        actor_name: audit.actor_name,
+        details: audit.details
+      });
+    }
+  }
+  return rows;
+}
+
 export async function getDocumentTrail(db, query = {}) {
   const { requisition, purchaseOrder } = await resolveStartingDocument(db, query);
 
   if (requisition) {
+    const sourcingEvents = await loadSourcingTimeline(db, requisition.id);
     const approvals = await loadApprovals(db, requisition.id);
     const contractEvents = await loadContractEvents(db, requisition.id);
     const poRows = await db.prepare(`
@@ -1233,7 +1319,8 @@ export async function getDocumentTrail(db, query = {}) {
       requisition,
       approvals,
       purchaseOrders,
-      contractEvents
+      contractEvents,
+      sourcingEvents
     });
   }
 

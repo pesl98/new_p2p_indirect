@@ -145,6 +145,11 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                   <div className="space-y-2 flex-1">
                     <div className="flex items-center space-x-3">
                       <span className="font-mono font-bold text-slate-900 text-sm">{item.pr_number}</span>
+                      {item.sourcing_event_number && (
+                        <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-indigo-100 text-indigo-800" data-testid="rfq-badge">
+                          {t('sourcing.approval.badge')} {item.sourcing_event_number}
+                        </span>
+                      )}
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
                         item.priority === 'High' || item.priority === 'Urgent'
                           ? 'bg-rose-100 text-rose-700'
@@ -169,6 +174,11 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                     <div className="p-3 bg-slate-50 rounded-lg text-xs text-slate-700 border-l-2 border-emerald-500">
                       <span className="font-semibold text-slate-500 text-[10px] uppercase block mb-0.5">{t('purchasing.pr.justification')}</span>
                       "{item.justification}"
+                      {item.sourcing_event_number && (
+                        <p className="mt-2 text-slate-600" data-testid="award-snapshot">
+                          {item.sourcing_is_lowest ? t('sourcing.comparison.lowest') : item.sourcing_award_reason}
+                        </p>
+                      )}
                     </div>
 
                     {item.source_contract && item.contract_use_status !== 'none' && item.contract_use_status !== 'skipped' && (

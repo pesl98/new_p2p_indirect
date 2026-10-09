@@ -44,7 +44,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORTAL_DOCUMENT_CSP = "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-const PORTAL_BID_JSON_LIMIT = '1mb';
 
 function trustProxyEnabled(env, onVercel) {
   if (onVercel) return true;
@@ -107,10 +106,14 @@ export function createApp(options = {}) {
 
   const app = express();
   if (trustProxyEnabled(runtimeEnv, config.onVercel)) app.set('trust proxy', 1);
-  // Bid JSON can hold 50 lines with 2000-character comments. Only that route
-  // gets the larger parser. Everything else stays on the 100 kB default.
-  app.use('/api/portal/bids', express.json({ limit: PORTAL_BID_JSON_LIMIT }));
-  app.use(express.json());
+  // POST /api/portal/bids is parsed after the token check, at 1 MB, inside
+  // the portal router. Parsing it here would also cover /bids/withdraw and
+  // would run before the link is validated.
+  const defaultJson = express.json();
+  app.use((req, res, next) => {
+    if (req.method === 'POST' && req.path === '/api/portal/bids') return next();
+    return defaultJson(req, res, next);
+  });
   app.use(express.urlencoded({ extended: false, limit: '512kb' }));
 
   app.use(async (req, res, next) => {

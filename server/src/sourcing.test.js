@@ -991,7 +991,7 @@ describe('sourcing HTTP', () => {
     }));
   });
 
-  test('a published event can be cancelled and a closed event cannot', async () => {
+  test('a published or closed event can be cancelled and an awarded event cannot', async () => {
     const { db, app } = await boot();
     const now = '2026-10-08T12:00:00.000Z';
     await db.prepare(`
@@ -1018,7 +1018,25 @@ describe('sourcing HTTP', () => {
         ) VALUES ('RFQ-2026-051', 'Closed', 1, 3, 'closed', 'EUR', '2026-01-01T00:00:00.000Z', ?, ?, ?)
       `).run(now, now, now);
       const closed = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = 'RFQ-2026-051'`).get();
-      const denied = await json(await fetch(`${base}/api/sourcing/events/${closed.id}/cancel`, {
+      const closedCancel = await json(await fetch(`${base}/api/sourcing/events/${closed.id}/cancel`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Niet meer nodig na sluiting' })
+      }));
+      assert.equal(closedCancel.status, 200, JSON.stringify(closedCancel.body));
+      assert.equal(closedCancel.body.status, 'cancelled');
+      const notice = await db.prepare(`
+        SELECT event_type FROM webhook_outbox WHERE entity_id = ? AND event_type = 'sourcing_event.cancelled'
+      `).get(closed.id);
+      assert.equal(notice.event_type, 'sourcing_event.cancelled');
+
+      await db.prepare(`
+        INSERT INTO sourcing_events (
+          event_number, title, department_id, owner_user_id, status, currency, deadline_at, awarded_at, created_at, updated_at
+        ) VALUES ('RFQ-2026-052', 'Awarded', 1, 3, 'awarded', 'EUR', '2026-01-01T00:00:00.000Z', ?, ?, ?)
+      `).run(now, now, now);
+      const awarded = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = 'RFQ-2026-052'`).get();
+      const denied = await json(await fetch(`${base}/api/sourcing/events/${awarded.id}/cancel`, {
         method: 'POST',
         headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Te laat' })
@@ -1906,6 +1924,158 @@ describe('sourcing HTTP', () => {
       else process.env.APP_BASE_URL = prev.base;
       if (prev.mail == null) delete process.env.MAIL_PROVIDER;
       else process.env.MAIL_PROVIDER = prev.mail;
+    }
+  });
+
+  function pipelineGroups(calls) {
+    const groups = [];
+    let current = null;
+    for (const call of calls) {
+      const sql = String(call.sql || '').trim();
+      if (/^BEGIN\b/i.test(sql)) {
+        current = [];
+        continue;
+      }
+      if (current && /^(COMMIT|ROLLBACK)\b/i.test(sql) && !/^ROLLBACK\s+TO\b/i.test(sql)) {
+        groups.push(current);
+        current = null;
+        continue;
+      }
+      if (current) current.push(call);
+    }
+    return groups;
+  }
+
+  async function seedClosedCap(db) {
+    await seedCapSuppliers(db);
+    await db.prepare(`
+      INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
+      VALUES (1, 2026, 100000000, 0, 0)
+    `).run();
+    const now = '2026-10-01T10:00:00.000Z';
+    const deadline = '2026-10-08T12:00:00.000Z';
+    await db.prepare(`
+      INSERT INTO sourcing_events (
+        event_number, title, category, department_id, owner_user_id,
+        status, currency, deadline_at, weight_price, weight_lead_time, weight_quality,
+        created_at, updated_at
+      ) VALUES ('RFQ-2026-180', 'Vergelijking', 'Office Supplies', 1, 3, 'published', 'EUR', ?, 100, 0, 0, ?, ?)
+    `).run(deadline, now, now);
+    const event = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = 'RFQ-2026-180'`).get();
+    const lineValues = [];
+    for (let index = 0; index < 50; index += 1) {
+      lineValues.push(event.id, index + 1, `Regel ${index + 1}`);
+    }
+    await db.prepare(`
+      INSERT INTO sourcing_event_lines (event_id, line_no, description, category, quantity, line_type)
+      VALUES ${Array.from({ length: 50 }, () => '(?, ?, ?, \'Office Supplies\', 1, \'goods\')').join(', ')}
+    `).run(...lineValues);
+    const lines = await db.prepare(`SELECT id FROM sourcing_event_lines WHERE event_id = ? ORDER BY line_no`).all(event.id);
+    const supplierIds = [2, ...Array.from({ length: 19 }, (_, index) => index + 4)];
+    const bids = [];
+    for (let index = 0; index < supplierIds.length; index += 1) {
+      const supplierId = supplierIds[index];
+      const invite = await db.prepare(`
+        INSERT INTO sourcing_invitations (event_id, supplier_id, contact_email, invited_by_user_id, created_at)
+        VALUES (?, ?, ?, 3, ?)
+      `).run(event.id, supplierId, `s${supplierId}@bid.test`, now);
+      const submitted = `2026-10-0${1 + (index % 7)}T09:00:00.000Z`;
+      const bidInsert = await db.prepare(`
+        INSERT INTO sourcing_bids (event_id, invitation_id, supplier_id, first_submitted_at, last_submitted_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(event.id, Number(invite.lastInsertRowid), supplierId, submitted, submitted);
+      const bidId = Number(bidInsert.lastInsertRowid);
+      await db.prepare(`
+        INSERT INTO sourcing_bid_revisions (
+          bid_id, revision, submission_id, total_cents, quoted_line_count, content_sha256, submitted_at
+        ) VALUES (?, 1, ?, ?, 50, ?, ?)
+      `).run(bidId, `sub-${bidId}`, 30000 * 50, `hash-${bidId}`, submitted);
+      const cells = [];
+      for (const line of lines) cells.push(bidId, line.id, 30000, 30000, index + 1);
+      await db.prepare(`
+        INSERT INTO sourcing_bid_lines (
+          bid_id, revision, event_line_id, quoted, unit_price_cents, line_total_cents, lead_time_days
+        ) VALUES ${lines.map(() => '(?, 1, ?, 1, ?, ?, ?)').join(', ')}
+      `).run(...cells);
+      bids.push({ bid_id: bidId });
+    }
+    await db.prepare(`
+      UPDATE sourcing_events SET status = 'closed', closed_at = ?, deadline_at = ? WHERE id = ?
+    `).run(deadline, deadline, event.id);
+    return { eventId: event.id, lines, bids };
+  }
+
+  test('award, approval, and purchase-order chunks stay within 25 statements on the Turso client', async () => {
+    const seeded = { current: null };
+    const opened = await openSeededTurso(async (db) => {
+      seeded.current = await seedClosedCap(db);
+    });
+    const app = createApp({ db: opened.client, config: loadDbConfig({}) });
+    const watch = watchTransactions(opened.client);
+    const measured = {};
+    try {
+      await withFlag('1', () => withServer(app, async (base) => {
+        const post = async (path, userId, body) => json(await fetch(`${base}${path}`, {
+          method: 'POST',
+          headers: { ...authHeaders(userId), 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }));
+        const eventId = seeded.current.eventId;
+        const beforeEval = { counts: watch.counts.length, calls: opened.pipeline.calls.length };
+        const evaluated = await post(`/api/sourcing/events/${eventId}/evaluate`, 3, { row_version: 0 });
+        assert.equal(evaluated.status, 200, JSON.stringify(evaluated.body));
+        measured.evaluate = watch.counts.slice(beforeEval.counts);
+        measured.evaluatePipeline = pipelineGroups(opened.pipeline.calls.slice(beforeEval.calls)).map((group) => group.length);
+        const lines = seeded.current.lines.map((line, index) => ({
+          event_line_id: line.id,
+          bid_id: seeded.current.bids[index % seeded.current.bids.length].bid_id
+        }));
+        const beforeAward = { counts: watch.counts.length, calls: opened.pipeline.calls.length };
+        const award = await post(`/api/sourcing/events/${eventId}/awards`, 3, {
+          award_type: 'split',
+          row_version: evaluated.body.row_version,
+          lines
+        });
+        assert.equal(award.status, 201, JSON.stringify(award.body));
+        measured.award = watch.counts.slice(beforeAward.counts);
+        measured.awardPipeline = pipelineGroups(opened.pipeline.calls.slice(beforeAward.calls)).map((group) => group.length);
+        const beforeApproval = { counts: watch.counts.length, calls: opened.pipeline.calls.length };
+        for (;;) {
+          const pending = await opened.client.prepare(`
+            SELECT id, approver_id FROM approval_requests
+            WHERE requisition_id = ? AND status = 'pending'
+          `).get(award.body.award.award_requisition_id);
+          if (!pending) break;
+          const decided = await post(`/api/approvals/${pending.id}/decide`, pending.approver_id, {
+            decision: 'approved',
+            comments: 'Akkoord'
+          });
+          assert.equal(decided.status, 200, JSON.stringify(decided.body));
+        }
+        measured.approval = watch.counts.slice(beforeApproval.counts);
+        measured.approvalPipeline = pipelineGroups(opened.pipeline.calls.slice(beforeApproval.calls)).map((group) => group.length);
+        const beforePo = { counts: watch.counts.length, calls: opened.pipeline.calls.length };
+        const pos = await post(`/api/sourcing/events/${eventId}/purchase-orders`, 3, {});
+        assert.equal(pos.status, 201, JSON.stringify(pos.body));
+        assert.equal(pos.body.purchase_orders.length, 20);
+        measured.purchase_orders = watch.counts.slice(beforePo.counts);
+        measured.purchaseOrdersPipeline = pipelineGroups(opened.pipeline.calls.slice(beforePo.calls)).map((group) => group.length);
+        const duplicate = await post(`/api/sourcing/events/${eventId}/purchase-orders`, 3, {});
+        assert.equal(duplicate.status, 200, JSON.stringify(duplicate.body));
+        assert.equal(duplicate.body.purchase_orders.length, 20);
+        const poCount = await opened.client.prepare(`SELECT COUNT(*) AS n FROM purchase_orders`).get();
+        assert.equal(Number(poCount.n), 20);
+      }));
+      console.log(`STATEMENTS turso ${JSON.stringify(measured)}`);
+      for (const [name, counts] of Object.entries(measured)) {
+        assert.ok(counts.length > 0, name);
+        for (const count of counts) {
+          assert.ok(count > 0 && count <= 25, `${name} used ${count}`);
+        }
+      }
+    } finally {
+      watch.restore();
+      await opened.close();
     }
   });
 

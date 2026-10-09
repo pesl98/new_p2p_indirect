@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireRole, sessionActor } from '../requestActor.js';
+import { sessionActor } from '../requestActor.js';
 import { filenameFromRequest, requireSourcingEnabled, sourcingPdfUpload } from '../sourcingConfig.js';
 import {
   SourcingError,
@@ -23,18 +23,48 @@ import {
   updateEvent
 } from '../sourcingService.js';
 import { SourcingStatusError } from '../sourcingStatus.js';
+import {
+  createAwardPurchaseOrders,
+  declareCoi,
+  evaluateEvent,
+  proposeAward,
+  reassignOwner,
+  recordScores
+} from '../sourcingAwardService.js';
 
 const router = express.Router();
+const STAFF = new Set(['procurement', 'admin', 'finance']);
 
 router.use(requireSourcingEnabled);
-router.use(requireRole('procurement', 'admin', 'finance'));
+router.use(async (req, res, next) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (STAFF.has(req.user.role)) return next();
+    const evaluatorRoute = req.method === 'GET'
+      || req.method === 'HEAD'
+      || /\/coi$/.test(req.path)
+      || /\/scores$/.test(req.path);
+    if (!evaluatorRoute) {
+      return res.status(403).json({ error: 'Insufficient role for this action' });
+    }
+    const named = await req.db.prepare(`
+      SELECT 1 AS ok FROM sourcing_evaluators WHERE user_id = ? LIMIT 1
+    `).get(req.user.id);
+    if (!named) return res.status(403).json({ error: 'Insufficient role for this action' });
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.use((req, res, next) => {
   if (req.user?.role === 'finance' && req.method !== 'GET' && req.method !== 'HEAD') {
-    return res.status(403).json({
-      error: 'Insufficient role for this action',
-      code: 'read_only'
-    });
+    if (!/\/(coi|scores)$/.test(req.path)) {
+      return res.status(403).json({
+        error: 'Insufficient role for this action',
+        code: 'read_only'
+      });
+    }
   }
   return next();
 });
@@ -73,7 +103,7 @@ router.get('/me', async (req, res) => {
 
 router.get('/events', async (req, res) => {
   try {
-    res.json(await listEvents(req.db, req.query, now(req)));
+    res.json(await listEvents(req.db, req.query, now(req), actor(req)));
   } catch (error) {
     sendError(res, error);
   }
@@ -105,7 +135,7 @@ router.post('/events', async (req, res) => {
 
 router.get('/events/:id', async (req, res) => {
   try {
-    res.json(await getEvent(req.db, req.params.id, now(req)));
+    res.json(await getEvent(req.db, req.params.id, now(req), actor(req)));
   } catch (error) {
     sendError(res, error);
   }
@@ -159,6 +189,59 @@ router.post('/events/:id/invitations/:invitationId/revoke', async (req, res) => 
   }
 });
 
+router.post('/events/:id/coi', async (req, res) => {
+  try {
+    res.json(await declareCoi(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/scores', async (req, res) => {
+  try {
+    res.json(await recordScores(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/evaluate', async (req, res) => {
+  try {
+    res.json(await evaluateEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/awards', async (req, res) => {
+  try {
+    const result = await proposeAward(req.db, actor(req), req.params.id, req.body || {}, {
+      now: now(req),
+      idempotencyKey: req.get('Idempotency-Key')
+    });
+    res.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/purchase-orders', async (req, res) => {
+  try {
+    const result = await createAwardPurchaseOrders(req.db, actor(req), req.params.id, { now: now(req) });
+    res.status(result.replayed ? 200 : 201).json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/owner', async (req, res) => {
+  try {
+    res.json(await reassignOwner(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.get('/events/:id/comparison', async (req, res) => {
   try {
     res.json(await buyerComparison(req.db, actor(req), req.params.id, now(req)));
@@ -169,7 +252,7 @@ router.get('/events/:id/comparison', async (req, res) => {
 
 router.get('/events/:id/questions', async (req, res) => {
   try {
-    res.json(await listQuestions(req.db, req.params.id, now(req)));
+    res.json(await listQuestions(req.db, req.params.id, now(req), actor(req)));
   } catch (error) {
     sendError(res, error);
   }

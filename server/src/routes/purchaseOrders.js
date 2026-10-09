@@ -147,6 +147,17 @@ router.post('/from-requisition', async (req, res) => {
   try {
     const db = req.db;
     const body = withSessionActor(req, req.body, { ids: ['created_by'] });
+    const award = body.requisition_id == null
+      ? null
+      : await db.prepare(`
+          SELECT id FROM sourcing_awards WHERE award_requisition_id = ? LIMIT 1
+        `).get(body.requisition_id);
+    if (award && req.user?.role !== 'procurement' && req.user?.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Only procurement or an admin can create purchase orders from an award.',
+        code: 'award_po_role'
+      });
+    }
     const purchaseOrders = await convertRequisitionToPurchaseOrders(db, body);
     const split = purchaseOrders.length > 1;
     res.status(201).json({

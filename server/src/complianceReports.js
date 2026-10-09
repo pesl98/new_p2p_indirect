@@ -10,6 +10,8 @@
  */
 
 import { buildApprovalSteps } from './approvalPolicy.js';
+import { findLateBidRevisions } from './sourcingBidReadModel.js';
+import { awardSodThresholdCents } from './sourcingApprovalHooks.js';
 import { deploymentCurrency } from './currencyConfig.js';
 import {
   GENESIS_HASH,
@@ -318,11 +320,32 @@ export async function queryApprovalCompliance(db) {
   `).all();
   for (const pr of requisitions || []) {
     let steps;
+    const award = await db.prepare(`
+      SELECT a.total_cents, a.is_lowest, a.reason, a.status, a.id AS award_id,
+             e.owner_user_id, e.id AS event_id, e.event_number
+      FROM sourcing_awards a
+      JOIN sourcing_events e ON e.id = a.event_id
+      WHERE a.award_requisition_id = ?
+      ORDER BY a.id DESC
+      LIMIT 1
+    `).get(pr.id);
+    let excludeUserIds = [];
+    if (award && Number(award.total_cents) > awardSodThresholdCents()) {
+      const conflicts = await db.prepare(`
+        SELECT user_id FROM sourcing_evaluators
+        WHERE event_id = ? AND coi_status = 'conflict_declared'
+      `).all(award.event_id);
+      excludeUserIds = [
+        Number(award.owner_user_id),
+        ...conflicts.map((row) => Number(row.user_id))
+      ];
+    }
     try {
       steps = await buildApprovalSteps({
         totalAmount: pr.total_amount,
         departmentId: pr.department_id,
-        db
+        db,
+        excludeUserIds
       });
     } catch (error) {
       add(finding('policy_unresolved', {
@@ -376,6 +399,40 @@ export async function queryApprovalCompliance(db) {
         }));
       }
     }
+    if (award && Number(award.total_cents) > awardSodThresholdCents()) {
+      for (const row of stored || []) {
+        if (Number(row.approver_id) === Number(award.owner_user_id)) {
+          add(finding('sourcing_award_self_approval', {
+            entity_type: 'approval_request',
+            entity_id: row.id,
+            document_number: pr.pr_number,
+            actor_user_id: row.approver_id,
+            actor_name: row.approver_name,
+            message: `${award.event_number} award ${pr.pr_number} step ${row.step_order} is assigned to the RFQ owner ${row.approver_name} (id=${row.approver_id}) above the segregation threshold.`
+          }));
+        }
+      }
+    }
+    if (award && Number(award.is_lowest) !== 1) {
+      add(finding('sourcing_award_not_lowest', {
+        severity: 'info',
+        entity_type: 'sourcing_award',
+        entity_id: award.award_id,
+        document_number: award.event_number,
+        message: `${award.event_number} was not awarded to the lowest bid. Reason: ${award.reason || 'none'}.`
+      }));
+    }
+  }
+
+  const lateBids = await findLateBidRevisions(db);
+  for (const row of lateBids || []) {
+    add(finding('sourcing_bid_after_deadline', {
+      severity: 'info',
+      entity_type: 'sourcing_event',
+      entity_id: row.event_id,
+      document_number: row.event_number,
+      message: `${row.event_number} has a bid revision submitted at ${row.submitted_at}, which is not before the deadline ${row.deadline_at}.`
+    }));
   }
 
   const goodsReceipts = await db.prepare(`
@@ -493,7 +550,10 @@ export async function queryApprovalCompliance(db) {
       wrong_approver: 'An approval step’s approver_id is not the user buildApprovalSteps assigns today for that step, amount, and department. Delegations do not rewrite approver_id, so a delegate decision is not itself a violation.',
       sod_requester_receiver: 'A goods receipt receiver, or the user who accepted a service entry sheet, is the requisition requester.',
       sod_approver_receiver: 'That same receiver approved the requisition.',
-      sod_ap_overlap: 'The actor name on invoice APPROVED_FOR_PAYMENT, APPROVED_PAYMENT, or PAID matches a user who is the requester, an approver, or the receiver. audit_logs stores the session name, not a user id.'
+      sod_ap_overlap: 'The actor name on invoice APPROVED_FOR_PAYMENT, APPROVED_PAYMENT, or PAID matches a user who is the requester, an approver, or the receiver. audit_logs stores the session name, not a user id.',
+      sourcing_award_self_approval: 'An award above the segregation threshold has an approval step assigned to the RFQ owner.',
+      sourcing_award_not_lowest: 'The award was not the lowest bid. The recorded reason is shown. This finding is informational.',
+      sourcing_bid_after_deadline: 'A bid revision was submitted at or after the deadline. The database trigger should make this impossible.'
     }
   };
 }

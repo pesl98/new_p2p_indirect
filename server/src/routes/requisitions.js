@@ -1,8 +1,6 @@
 import express from 'express';
 import { insertApprovalChain } from '../approvalPolicy.js';
-import { asCents, formatMoney, lineTotalCents, toQty } from '../money.js';
-import { nextDocumentNumber } from '../docNumbers.js';
-import { normalizeLineType, resolveServiceBasis } from '../lineType.js';
+import { createRequisition } from '../requisitionsService.js';
 import { annotateResolvedSuppliers } from '../purchaseOrdersService.js';
 import { assertActiveCatalogItem, assertActiveSupplierForBuyer } from '../masterData.js';
 import {
@@ -194,100 +192,24 @@ router.post('/', async (req, res) => {
       );
     }
 
-    const calculatedTotal = items.reduce(
-      (acc, item) => acc + lineTotalCents(item.quantity, item.unit_price),
-      0
-    );
-
-    const newPrId = await db.transaction(async () => {
-      const currentYear = new Date().getFullYear();
-      const prNumber = await nextDocumentNumber(db, 'pr', currentYear);
-
-      const status = submitImmediately ? 'pending_approval' : 'draft';
-
-      const insertPR = db.prepare(`
-        INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date, priority, source_contract_id, contract_use_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'none')
-      `);
-      const prResult = await insertPR.run(
-        prNumber,
-        requester_id,
-        department_id,
-        status,
-        calculatedTotal,
-        justification || 'General operational procurement requirement',
-        needed_by_date || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-        priority || 'Medium'
-      );
-
-      // Turso /v2/pipeline may omit last_insert_rowid; the row is still visible
-      // in this transaction. Never persist child lines against id 0.
-      let prId = Number(prResult.lastInsertRowid);
-      if (!prId) {
-        const created = await db.prepare(
-          `SELECT id FROM purchase_requisitions WHERE pr_number = ?`
-        ).get(prNumber);
-        prId = Number(created?.id || 0);
-      }
-      if (!prId) {
-        const err = new Error('Failed to allocate requisition id after insert');
-        err.statusCode = 500;
-        throw err;
-      }
-
-      // Insert line items
-      const insertItem = db.prepare(`
-        INSERT INTO requisition_items (requisition_id, catalog_item_id, item_description, category, quantity, unit_price, total_price, estimated_supplier_id, line_type, service_basis)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      for (const item of items) {
-        const qty = toQty(item.quantity);
-        const unitPrice = asCents(item.unit_price);
-        const category = item.category || 'Office Supplies';
-        const lineType = normalizeLineType(item.line_type, category);
-        await insertItem.run(
-          prId,
-          item.catalog_item_id || null,
-          item.item_description,
-          category,
-          qty,
-          unitPrice,
-          lineTotalCents(qty, unitPrice),
-          item.estimated_supplier_id || 1,
-          lineType,
-          resolveServiceBasis(item.service_basis, lineType)
-        );
-      }
-
-      // Log creation
-      await db.prepare(`
-        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-        VALUES ('requisition', ?, 'CREATED', ?, ?)
-      `).run(prId, actor_name, `Requisition ${prNumber} created with ${items.length} item(s) for ${formatMoney(calculatedTotal)}`);
-
-      const assignment = await assignContractToRequisition(db, prId, {
-        source_contract_id,
-        skip_contract_match,
-        actor_name,
-        today
-      });
-
-      if (submitImmediately) {
-        await insertApprovalChain(db, prId, calculatedTotal, department_id);
-        await db.prepare(`
-          INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-          VALUES ('requisition', ?, 'SUBMITTED', ?, 'Submitted for multi-tier approval routing')
-        `).run(prId, actor_name);
-      }
-
-      return { prId, assignment };
+    const created = await createRequisition(db, {
+      requester_id,
+      department_id,
+      justification,
+      needed_by_date,
+      priority,
+      items,
+      submitImmediately,
+      source_contract_id,
+      skip_contract_match,
+      actor_name,
+      today
     });
     res.status(201).json({
-      id: newPrId.prId,
+      id: created.prId,
       message: 'Requisition created successfully',
-      source_contract_id: newPrId.assignment?.source_contract_id ?? null,
-      contract_use_status: newPrId.assignment?.contract_use_status || 'none'
+      source_contract_id: created.assignment?.source_contract_id ?? null,
+      contract_use_status: created.assignment?.contract_use_status || 'none'
     });
   } catch (error) {
     const status = httpErrorStatus(error);

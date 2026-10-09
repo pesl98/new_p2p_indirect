@@ -6,6 +6,7 @@
 
 import express from 'express';
 import { filenameFromRequest, sourcingPdfUpload } from '../sourcingConfig.js';
+import { portalLanguage, portalMessage } from '../sourcingPortalMessages.js';
 import {
   addPortalFile,
   askPortalQuestion,
@@ -21,20 +22,30 @@ import {
 
 const router = express.Router();
 
-function sendError(res, error) {
-  const status = error.statusCode || 500;
+function sendError(req, res, error) {
+  const status = error.statusCode || error.status || 500;
+  const code = error.type === 'entity.too.large' || status === 413
+    ? 'payload_too_large'
+    : (error.code || (status >= 500 ? 'portal_error' : undefined));
+  const lang = portalLanguage(req);
   if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
-  if (status >= 500) {
+  if (status >= 500 && status !== 503) {
     console.error(error);
     return res.status(status).json({
       error: 'Portal request failed',
-      code: error.code || 'portal_error'
+      code: code || 'portal_error'
     });
   }
-  const body = { error: error.message || 'Portal request failed' };
-  if (error.code) body.code = error.code;
-  res.status(status).json(body);
+  const translate = lang === 'en' || code === 'busy' || code === 'payload_too_large';
+  const message = translate
+    ? portalMessage(lang, code, error.portalParams, error.message || 'Portal request failed')
+    : (error.message || 'Portal request failed');
+  const body = { error: message };
+  if (code) body.code = code;
+  res.status(status === 413 ? 413 : status).json(body);
 }
+
+const bidJson = express.json({ limit: '1mb' });
 
 router.use((req, res, next) => {
   res.set('Cache-Control', 'no-store');
@@ -55,7 +66,7 @@ router.use(async (req, res, next) => {
     req.portalNow = now;
     return next();
   } catch (error) {
-    return sendError(res, error);
+    return sendError(req, res, error);
   }
 });
 
@@ -63,16 +74,16 @@ router.get('/', async (req, res) => {
   try {
     res.json(await loadPortalView(req.db, req.portal, req.portalNow));
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
-router.post('/bids', async (req, res) => {
+router.post('/bids', bidJson, async (req, res) => {
   try {
     const result = await submitPortalBid(req.db, req.portal, req.body || {}, req.portalNow);
     res.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
@@ -80,7 +91,7 @@ router.post('/bids/withdraw', async (req, res) => {
   try {
     res.json(await withdrawPortalBid(req.db, req.portal, req.portalNow));
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
@@ -88,7 +99,7 @@ router.post('/decline', async (req, res) => {
   try {
     res.json(await declinePortalInvitation(req.db, req.portal, req.body || {}, req.portalNow));
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
@@ -96,7 +107,7 @@ router.post('/questions', async (req, res) => {
   try {
     res.status(201).json(await askPortalQuestion(req.db, req.portal, req.body || {}, req.portalNow));
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
@@ -108,7 +119,7 @@ router.post('/files', sourcingPdfUpload, async (req, res) => {
     }, req.portalNow);
     res.status(201).json(file);
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
@@ -116,7 +127,7 @@ router.post('/files/:fileId/remove', async (req, res) => {
   try {
     res.json(await removePortalFile(req.db, req.portal, req.params.fileId, req.portalNow));
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
@@ -133,13 +144,18 @@ router.get('/files/:fileId', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.send(bytes);
   } catch (error) {
-    sendError(res, error);
+    sendError(req, res, error);
   }
 });
 
-router.use((error, _req, res, next) => {
+router.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
-  return sendError(res, error.statusCode ? error : Object.assign(error, { statusCode: 500, code: 'portal_error' }));
+  const status = error.statusCode || error.status;
+  if (!status) {
+    error.statusCode = 500;
+    error.code = error.code || 'portal_error';
+  }
+  return sendError(req, res, error);
 });
 
 export default router;

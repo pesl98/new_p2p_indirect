@@ -43,7 +43,9 @@ router.post('/:id/decide', async (req, res) => {
     res.json({ message: `Requisition ${body.decision} successfully`, ...result });
   } catch (error) {
     console.error('Error deciding approval:', error);
-    res.status(error.statusCode || 500).json({ error: error.message });
+    const body = { error: error.message };
+    if (error.code) body.code = error.code;
+    res.status(error.statusCode || 500).json(body);
   }
 });
 

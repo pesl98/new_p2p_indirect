@@ -43,7 +43,17 @@ export { BUYER_UPLOADS_PER_MINUTE };
 function fail(message, statusCode, code, extra) {
   const error = new SourcingError(message, statusCode, code);
   if (extra?.retryAfterSeconds) error.retryAfterSeconds = extra.retryAfterSeconds;
+  if (extra?.portalParams) error.portalParams = extra.portalParams;
   throw error;
+}
+
+function failDeadline(deadline) {
+  fail(
+    `De inschrijftermijn is gesloten om ${deadline}.`,
+    409,
+    'deadline_passed',
+    { portalParams: { deadline } }
+  );
 }
 
 function invalidLink() {
@@ -296,7 +306,7 @@ function assertOpenForWrite(ctx, now) {
   if (ctx.declined_at) fail('U hebt afgezien van deelname.', 409, 'invitation_declined');
   const deadline = Date.parse(ctx.deadline_at);
   if (!Number.isFinite(deadline) || deadline <= now.getTime() || ctx.event_status !== 'published') {
-    fail(`De inschrijftermijn is gesloten om ${ctx.deadline_at}.`, 409, 'deadline_passed');
+    failDeadline(ctx.deadline_at);
   }
 }
 
@@ -415,7 +425,7 @@ export async function submitPortalBid(db, ctx, input, now = new Date()) {
     await writeSupplierCompliance(db, fresh, 'SOURCING_BID_REJECTED_LATE', {
       submission_id: String(input?.submission_id || '')
     }, now);
-    fail(`De inschrijftermijn is gesloten om ${fresh.deadline_at}.`, 409, 'deadline_passed');
+    failDeadline(fresh.deadline_at);
   }
   const eventLines = await db.prepare(`
     SELECT id, quantity FROM sourcing_event_lines WHERE event_id = ? ORDER BY line_no ASC
@@ -544,7 +554,7 @@ export async function submitPortalBid(db, ctx, input, now = new Date()) {
     throw error;
   }
   kickWebhookDispatch(db);
-  if (outcome.late) fail(`De inschrijftermijn is gesloten om ${fresh.deadline_at}.`, 409, 'deadline_passed');
+  if (outcome.late) failDeadline(fresh.deadline_at);
   return outcome;
 }
 
@@ -577,7 +587,7 @@ export async function withdrawPortalBid(db, ctx, now = new Date()) {
   const fresh = await reloadCtx(db, ctx.invitation_id);
   assertOpenForWrite(fresh, now);
   const stamp = utcIso(now);
-  const changed = await db.immediateTransaction(async () => {
+  const changed = await withBusyRetry(() => db.immediateTransaction(async () => {
     const result = await db.prepare(`
       UPDATE sourcing_bids
       SET status = 'withdrawn', withdrawn_at = ?
@@ -590,7 +600,7 @@ export async function withdrawPortalBid(db, ctx, now = new Date()) {
     if (!result.changes) return 0;
     await writeSupplierCompliance(db, fresh, 'SOURCING_BID_WITHDRAWN', {}, now);
     return result.changes;
-  })();
+  })());
   if (!changed) fail('Er is geen ingediende offerte om in te trekken.', 409, 'bid_not_submitted');
   return ownBid(db, fresh.invitation_id);
 }
@@ -602,7 +612,7 @@ export async function declinePortalInvitation(db, ctx, input = {}, now = new Dat
   const reason = input.reason == null ? null : String(input.reason).trim();
   if (reason && reason.length > 2000) fail('De reden is te lang.', 400, 'text_too_long');
   const stamp = utcIso(now);
-  const changed = await db.immediateTransaction(async () => {
+  const changed = await withBusyRetry(() => db.immediateTransaction(async () => {
     const result = await db.prepare(`
       UPDATE sourcing_invitations
       SET declined_at = ?, decline_reason = ?
@@ -623,8 +633,8 @@ export async function declinePortalInvitation(db, ctx, input = {}, now = new Dat
       await writeSupplierCompliance(db, fresh, 'SOURCING_BID_WITHDRAWN', { via: 'decline' }, now);
     }
     return 1;
-  })();
-  if (!changed) fail(`De inschrijftermijn is gesloten om ${fresh.deadline_at}.`, 409, 'deadline_passed');
+  })());
+  if (!changed) failDeadline(fresh.deadline_at);
   return { declined_at: stamp };
 }
 
@@ -638,7 +648,7 @@ export async function addPortalFile(db, ctx, { buffer, filename } = {}, now = ne
     WHERE invitation_id = ? AND owner_kind = 'bid' AND removed_at IS NULL
   `).get(fresh.invitation_id);
   if (Number(activeFiles?.n || 0) >= MAX_EVENT_FILES) {
-    fail(`Een offerte heeft maximaal ${MAX_EVENT_FILES} bijlagen.`, 400, 'too_many_files');
+    fail(`Een offerte heeft maximaal ${MAX_EVENT_FILES} bijlagen.`, 400, 'too_many_files', { portalParams: { max: MAX_EVENT_FILES } });
   }
   const usedBytes = await db.prepare(`
     SELECT COALESCE(SUM(size_bytes), 0) AS n FROM sourcing_files
@@ -651,13 +661,13 @@ export async function addPortalFile(db, ctx, { buffer, filename } = {}, now = ne
   const safeName = safePdfFilename(filename);
   const digest = sha256Pdf(buffer);
   const stamp = utcIso(now);
-  const fileId = await db.immediateTransaction(async () => {
+  const fileId = await withBusyRetry(() => db.immediateTransaction(async () => {
     const count = await db.prepare(`
       SELECT COUNT(*) AS n FROM sourcing_files
       WHERE invitation_id = ? AND owner_kind = 'bid' AND removed_at IS NULL
     `).get(fresh.invitation_id);
     if (Number(count?.n || 0) >= MAX_EVENT_FILES) {
-      fail(`Een offerte heeft maximaal ${MAX_EVENT_FILES} bijlagen.`, 400, 'too_many_files');
+      fail(`Een offerte heeft maximaal ${MAX_EVENT_FILES} bijlagen.`, 400, 'too_many_files', { portalParams: { max: MAX_EVENT_FILES } });
     }
     const used = await db.prepare(`
       SELECT COALESCE(SUM(size_bytes), 0) AS n FROM sourcing_files
@@ -670,7 +680,7 @@ export async function addPortalFile(db, ctx, { buffer, filename } = {}, now = ne
       SELECT 1 AS ok FROM sourcing_events
       WHERE id = ? AND status = 'published' AND deadline_at > ?
     `).get(fresh.event_id, stamp);
-    if (!open) fail(`De inschrijftermijn is gesloten om ${fresh.deadline_at}.`, 409, 'deadline_passed');
+    if (!open) failDeadline(fresh.deadline_at);
     const result = await db.prepare(`
       INSERT INTO sourcing_files (
         event_id, owner_kind, invitation_id, filename, content_type, size_bytes, sha256, created_at
@@ -682,7 +692,7 @@ export async function addPortalFile(db, ctx, { buffer, filename } = {}, now = ne
     await writeSupplierCompliance(db, fresh, 'SOURCING_BID_FILE_UPLOADED', { file_id: createdId, sha256: digest }, now);
     await reviseBidForFiles(db, fresh, stamp, now);
     return createdId;
-  })();
+  })());
   return db.prepare(`
     SELECT id, filename, size_bytes FROM sourcing_files WHERE id = ?
   `).get(fileId);
@@ -693,7 +703,7 @@ export async function removePortalFile(db, ctx, fileId, now = new Date()) {
   const fresh = await reloadCtx(db, ctx.invitation_id);
   assertOpenForWrite(fresh, now);
   const stamp = utcIso(now);
-  const changed = await db.immediateTransaction(async () => {
+  const changed = await withBusyRetry(() => db.immediateTransaction(async () => {
     const result = await db.prepare(`
       UPDATE sourcing_files
       SET removed_at = ?
@@ -707,7 +717,7 @@ export async function removePortalFile(db, ctx, fileId, now = new Date()) {
     await writeSupplierCompliance(db, fresh, 'SOURCING_BID_FILE_REMOVED', { file_id: Number(fileId) }, now);
     await reviseBidForFiles(db, fresh, stamp, now);
     return 1;
-  })();
+  })());
   if (!changed) fail('Het bestand is niet gevonden.', 404, 'file_not_found');
   return { id: Number(fileId), removed_at: stamp };
 }
@@ -773,7 +783,7 @@ async function reviseBidForFiles(db, fresh, stamp, now) {
     bid.id,
     stamp
   );
-  if (!inserted.changes) fail(`De inschrijftermijn is gesloten om ${fresh.deadline_at}.`, 409, 'deadline_passed');
+  if (!inserted.changes) failDeadline(fresh.deadline_at);
   if (submission.lines.length) {
     const columns = [
       'bid_id', 'revision', 'event_line_id', 'quoted', 'unit_price_cents',

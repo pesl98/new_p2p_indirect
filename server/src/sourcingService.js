@@ -29,6 +29,7 @@ import { buyerInvitationActivity, loadBuyerComparison, presentInvitationActivity
 import { invitationExpiry, mintPortalToken, portalLink, portalTokenSecret } from './sourcingPortalTokens.js';
 import { BUYER_UPLOADS_PER_MINUTE, consumeRateWindow } from './sourcingRates.js';
 import { assertTransition, publishBlockers } from './sourcingStatus.js';
+import { scheduleBackground } from './background.js';
 import { enqueueWebhook, kickWebhookDispatch, WEBHOOK_EVENTS } from './webhookOutbox.js';
 
 export class SourcingError extends Error {
@@ -301,14 +302,14 @@ export async function withBusyRetry(work, random = Math.random) {
     } catch (error) {
       if (error instanceof SourcingError || !isBusyConflict(error) || attempt === EVENT_NUMBER_ATTEMPTS) {
         if (!(error instanceof SourcingError) && isBusyConflict(error)) {
-          fail('The database is busy. Try again.', 503, 'busy');
+          fail('The database is busy. Try again.', 503, 'busy', { retryAfterSeconds: 1 });
         }
         throw error;
       }
       await wait(createRetryDelayMs(random));
     }
   }
-  fail('The database is busy. Try again.', 503, 'busy');
+  fail('The database is busy. Try again.', 503, 'busy', { retryAfterSeconds: 1 });
 }
 
 function wait(ms) {
@@ -904,8 +905,16 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   const existing = await loadEventRow(db, id);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
-  if (existing.status !== 'draft' && existing.status !== 'published') {
+  if (!['draft', 'published', 'closed', 'evaluated'].includes(existing.status)) {
     fail('This RFQ cannot be cancelled from its current status.', 409, 'event_state_changed');
+  }
+  const openAward = await db.prepare(`
+    SELECT id FROM sourcing_awards
+    WHERE event_id = ? AND status IN ('pending_approval', 'approved')
+    LIMIT 1
+  `).get(existing.id);
+  if (openAward) {
+    fail('An RFQ with an open award cannot be cancelled.', 409, 'award_open');
   }
   assertTransition(existing.status, 'cancelled');
   const reason = requireText(input.reason, 2000, 'cancel_reason_required', 'A cancel reason is required.');
@@ -933,7 +942,7 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
       before_deadline: beforeDeadline === 1,
       from_status: fromStatus
     });
-    if (fromStatus === 'published') {
+    if (fromStatus !== 'draft') {
       await enqueueWebhook(db, {
         eventType: WEBHOOK_EVENTS.SOURCING_EVENT_CANCELLED,
         entityType: 'sourcing_event',
@@ -941,7 +950,8 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
         data: {
           event_number: existing.event_number,
           status: 'cancelled',
-          cancel_reason: reason
+          cancel_reason: reason,
+          from_status: fromStatus
         },
         now: nowDate
       });
@@ -951,7 +961,7 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   kickWebhookDispatch(db);
   const view = await getEvent(db, existing.id, nowDate);
-  if (fromStatus === 'published') {
+  if (fromStatus !== 'draft') {
     const notice = await notifyInvitees(db, existing, {
       subject: `Offerteaanvraag ${existing.event_number} geannuleerd`,
       text: [
@@ -966,7 +976,16 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   return view;
 }
 
-export async function listEvents(db, query = {}, now = new Date()) {
+async function assertEventVisible(db, actor, event) {
+  if (!actor) return;
+  if (actor.role === 'procurement' || actor.role === 'admin' || actor.role === 'finance') return;
+  const named = await db.prepare(`
+    SELECT 1 AS ok FROM sourcing_evaluators WHERE event_id = ? AND user_id = ?
+  `).get(event.id, actor.id);
+  if (!named) fail('Insufficient role for this action', 403, 'read_only');
+}
+
+export async function listEvents(db, query = {}, now = new Date(), actor = null) {
   await closeDueEvents(db, now, { limit: 20 });
   const params = [];
   let sql = `
@@ -993,6 +1012,12 @@ export async function listEvents(db, query = {}, now = new Date()) {
     sql += ` AND e.source_requisition_id = ? AND e.status != 'cancelled'`;
     params.push(sourceId);
   }
+  if (actor && !['procurement', 'admin', 'finance'].includes(actor.role)) {
+    sql += ` AND EXISTS (
+      SELECT 1 FROM sourcing_evaluators ev WHERE ev.event_id = e.id AND ev.user_id = ?
+    )`;
+    params.push(Number(actor.id));
+  }
   sql += ` ORDER BY e.id DESC`;
   return db.prepare(sql).all(...params);
 }
@@ -1004,7 +1029,7 @@ const FILE_META_SQL = `
   ORDER BY id ASC
 `;
 
-export async function getEvent(db, id, now = new Date()) {
+export async function getEvent(db, id, now = new Date(), actor = null) {
   await closeDueEvents(db, now, { eventId: id });
   const event = await db.prepare(`
     SELECT
@@ -1024,6 +1049,7 @@ export async function getEvent(db, id, now = new Date()) {
     WHERE e.id = ?
   `).get(id);
   if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  await assertEventVisible(db, actor, event);
 
   const lines = await db.prepare(`
     SELECT
@@ -1058,6 +1084,50 @@ export async function getEvent(db, id, now = new Date()) {
     WHERE entity_type = 'sourcing_event' AND entity_id = ?
     ORDER BY id ASC
   `).all(event.id);
+  const awardRow = await db.prepare(`
+    SELECT a.id, a.award_type, a.status, a.award_requisition_id, a.total_cents,
+           a.is_lowest, a.has_expired_validity, a.reason, a.proposed_at, a.decided_at,
+           a.comparison_snapshot_json, pr.pr_number, pr.status AS requisition_status
+    FROM sourcing_awards a
+    LEFT JOIN purchase_requisitions pr ON pr.id = a.award_requisition_id
+    WHERE a.event_id = ?
+    ORDER BY a.id DESC
+    LIMIT 1
+  `).get(event.id);
+  let award = null;
+  let purchaseOrders = [];
+  if (awardRow) {
+    let comparisonSnapshot = null;
+    try {
+      comparisonSnapshot = JSON.parse(awardRow.comparison_snapshot_json);
+    } catch {
+      comparisonSnapshot = null;
+    }
+    award = {
+      id: Number(awardRow.id),
+      award_type: awardRow.award_type,
+      status: awardRow.status,
+      award_requisition_id: awardRow.award_requisition_id == null ? null : Number(awardRow.award_requisition_id),
+      pr_number: awardRow.pr_number || null,
+      requisition_status: awardRow.requisition_status || null,
+      total_cents: Number(awardRow.total_cents),
+      is_lowest: Number(awardRow.is_lowest) === 1,
+      has_expired_validity: Number(awardRow.has_expired_validity) === 1,
+      reason: awardRow.reason,
+      proposed_at: awardRow.proposed_at,
+      decided_at: awardRow.decided_at,
+      comparison_snapshot: comparisonSnapshot
+    };
+    if (award.award_requisition_id) {
+      purchaseOrders = await db.prepare(`
+        SELECT po.id, po.po_number, po.supplier_id, po.status, po.total_amount, s.name AS supplier_name
+        FROM purchase_orders po
+        JOIN suppliers s ON s.id = po.supplier_id
+        WHERE po.requisition_id = ?
+        ORDER BY po.id ASC
+      `).all(award.award_requisition_id);
+    }
+  }
 
   return {
     ...event,
@@ -1070,6 +1140,8 @@ export async function getEvent(db, id, now = new Date()) {
     evaluators,
     files: files.filter((file) => !file.removed_at),
     history,
+    award,
+    purchase_orders: purchaseOrders,
     warnings: event.deadline_at && Date.parse(event.deadline_at) < (now instanceof Date ? now.getTime() : Date.now())
       ? ['deadline_in_the_past']
       : []
@@ -1308,41 +1380,35 @@ async function notifyInvitees(db, event, message, options = {}) {
     WHERE event_id = ? AND revoked_at IS NULL
     ORDER BY id ASC
   `).all(event.id);
-  const deliveries = [];
-  for (const invitation of invitations) {
-    const result = await sendMail({
-      to: invitation.contact_email,
-      subject: message.subject,
+  const sendAll = async () => {
+    const deliveries = await Promise.all(invitations.map(async (invitation) => {
+      const result = await sendMail({
+        to: invitation.contact_email,
+        subject: message.subject,
+        text: message.text,
+        tag: message.tag
+      }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
+      const deliveryStatus = deliveryStatusFor(result);
+      await recordDelivery(db, event.id, invitation.id, deliveryStatus);
+      return deliveryStatus;
+    }));
+    const status = deliveries.some((row) => row === 'failed')
+      ? 'failed'
+      : deliveries.some((row) => row === 'sent')
+        ? 'sent'
+        : 'copied';
+    return {
       text: message.text,
-      tag: message.tag
-    }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
-    deliveries.push({
-      invitation_id: invitation.id,
-      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'skipped'
-    });
-  }
-  if (deliveries.length) {
-    const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
-    const marks = deliveries.map(() => '?').join(', ');
-    await db.prepare(`
-      UPDATE sourcing_invitations
-      SET delivery_status = CASE id ${statusCase} ELSE delivery_status END
-      WHERE event_id = ? AND id IN (${marks})
-    `).run(
-      ...deliveries.flatMap((row) => [row.invitation_id, row.delivery_status === 'skipped' ? 'copied' : row.delivery_status]),
-      event.id,
-      ...deliveries.map((row) => row.invitation_id)
-    );
-  }
-  const status = deliveries.some((row) => row.delivery_status === 'failed')
-    ? 'failed'
-    : deliveries.some((row) => row.delivery_status === 'sent')
-      ? 'sent'
-      : 'copied';
+      delivery_status: status,
+      invitations: deliveries.length
+    };
+  };
+  if (shouldAwaitMail(options)) return sendAll();
+  scheduleBackground(sendAll, options);
   return {
     text: message.text,
-    delivery_status: status,
-    invitations: deliveries.length
+    delivery_status: 'pending',
+    invitations: invitations.length
   };
 }
 
@@ -1440,11 +1506,11 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   kickWebhookDispatch(db);
   // Links are in the response whether or not SMTP finishes. A hung relay
   // must not hold the request, because the plaintext token is not stored.
-  const mailSettled = deliverInvitationMail(db, existing, minted, options);
-  if (shouldAwaitMail(options)) await mailSettled;
-  else mailSettled.catch((error) => {
-    console.error('mail: background send failed', error?.code || error?.name || 'smtp_error');
-  });
+  // On Vercel the background send is kept alive with waitUntil, and each
+  // invitation's delivery status is written as that send finishes.
+  const mailWork = () => deliverInvitationMail(db, existing, minted, options);
+  if (shouldAwaitMail(options)) await mailWork();
+  else scheduleBackground(mailWork, options);
   const view = await getEvent(db, existing.id, nowDate);
   const links = new Map(minted.map((row) => [row.id, row.portal_url]));
   view.invitations = view.invitations.map((row) => (
@@ -1461,9 +1527,22 @@ function shouldAwaitMail(options) {
   return !mailIsConfigured(loadMailConfig(options.env));
 }
 
+function deliveryStatusFor(result) {
+  if (result?.status === 'sent') return 'sent';
+  if (result?.status === 'failed') return 'failed';
+  return 'copied';
+}
+
+async function recordDelivery(db, eventId, invitationId, status) {
+  await db.prepare(`
+    UPDATE sourcing_invitations
+    SET delivery_status = ?
+    WHERE id = ? AND event_id = ?
+  `).run(status, invitationId, eventId);
+}
+
 async function deliverInvitationMail(db, event, minted, options) {
-  const deliveries = [];
-  for (const row of minted) {
+  await Promise.all(minted.map(async (row) => {
     const result = await sendMail({
       to: row.contact_email,
       subject: `Uitnodiging offerteaanvraag ${event.event_number}`,
@@ -1476,23 +1555,8 @@ async function deliverInvitationMail(db, event, minted, options) {
       ].join('\n'),
       tag: 'sourcing_invitation'
     }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
-    deliveries.push({
-      id: row.id,
-      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'copied'
-    });
-  }
-  if (!deliveries.length) return;
-  const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
-  const marks = deliveries.map(() => '?').join(', ');
-  await db.prepare(`
-    UPDATE sourcing_invitations
-    SET delivery_status = CASE id ${statusCase} END
-    WHERE event_id = ? AND id IN (${marks})
-  `).run(
-    ...deliveries.flatMap((row) => [row.id, row.delivery_status]),
-    event.id,
-    ...deliveries.map((row) => row.id)
-  );
+    await recordDelivery(db, event.id, row.id, deliveryStatusFor(result));
+  }));
 }
 
 export async function extendDeadline(db, actor, id, input = {}, options = {}) {
@@ -1659,10 +1723,11 @@ export async function answerQuestion(db, actor, eventId, questionId, input = {},
   return { id: Number(questionId), answer, visibility, answered_at: now };
 }
 
-export async function listQuestions(db, eventId, now = new Date()) {
+export async function listQuestions(db, eventId, now = new Date(), actor = null) {
   await closeDueEvents(db, now, { eventId });
   const event = await loadEventRow(db, eventId);
   if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  await assertEventVisible(db, actor, event);
   return db.prepare(`
     SELECT q.id, q.invitation_id, q.question, q.asked_at, q.answer, q.answered_at, q.visibility,
            s.code AS supplier_code
@@ -1678,6 +1743,7 @@ export async function buyerComparison(db, actor, id, now = new Date()) {
   await closeDueEvents(db, now, { eventId: id });
   const event = await loadEventRow(db, id);
   if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  await assertEventVisible(db, actor, event);
   return loadBuyerComparison(db, event, actor, now);
 }
 
@@ -1685,6 +1751,7 @@ export async function buyerBidFile(db, actor, eventId, fileId, now = new Date())
   await closeDueEvents(db, now, { eventId });
   const event = await loadEventRow(db, eventId);
   if (!event) fail('RFQ was not found.', 404, 'file_not_found');
+  await assertEventVisible(db, actor, event);
   return readBuyerBidFile(db, event, actor, fileId, now);
 }
 

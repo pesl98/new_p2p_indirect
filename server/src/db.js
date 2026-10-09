@@ -650,9 +650,33 @@ async function migratePurchaseOrderChangeOrders(database) {
   await maybe(database.exec(PO_CHANGE_ORDER_ITEMS_TABLE_SQL));
 }
 
+/**
+ * One issued award PO per supplier. A partial index so a normal split of a
+ * requisition (notes that do not start with "RFQ ") is not constrained.
+ * Legacy purchase_orders tables in the migration tests lack requisition_id
+ * or notes; the index waits until both columns exist.
+ */
+export const AWARD_PURCHASE_ORDER_INDEX_SQL = `
+  CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_award_supplier
+  ON purchase_orders (requisition_id, supplier_id)
+  WHERE requisition_id IS NOT NULL AND substr(COALESCE(notes, ''), 1, 4) = 'RFQ '
+`;
+
+async function migrateAwardPurchaseOrderIndex(database) {
+  const tables = (await maybe(
+    database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
+  ) || []).map((row) => row.name);
+  if (!tables.includes('purchase_orders')) return;
+  const hasRequisition = await tableHasColumn(database, 'purchase_orders', 'requisition_id');
+  const hasNotes = await tableHasColumn(database, 'purchase_orders', 'notes');
+  if (!hasRequisition || !hasNotes) return;
+  await maybe(database.exec(AWARD_PURCHASE_ORDER_INDEX_SQL));
+}
+
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
+  await migrateAwardPurchaseOrderIndex(database);
   await migrateApprovalRequestsWaitingStatus(database);
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);
