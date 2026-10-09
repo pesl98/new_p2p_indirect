@@ -33,7 +33,8 @@ export async function consumeRateWindow(db, scopeKey, limit, now = new Date(), w
 }
 
 export function clientIpHash(req, secret) {
-  const forwarded = String(req.headers?.['x-forwarded-for'] || req.ip || req.socket?.remoteAddress || '');
-  const hop = forwarded.split(',')[0].trim() || 'unknown';
-  return createHash('sha256').update(`${secret}\n${hop}`).digest('hex');
+  // req.ip honours Express trust proxy. Without it, a forged
+  // X-Forwarded-For header is ignored and the socket address is used.
+  const address = req?.ip || req?.socket?.remoteAddress || 'unknown';
+  return createHash('sha256').update(`${secret}\n${String(address)}`).digest('hex');
 }

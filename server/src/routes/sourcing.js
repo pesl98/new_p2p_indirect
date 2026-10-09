@@ -113,7 +113,7 @@ router.get('/events/:id', async (req, res) => {
 
 router.patch('/events/:id', async (req, res) => {
   try {
-    res.json(await updateEvent(req.db, actor(req), req.params.id, req.body || {}));
+    res.json(await updateEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
   } catch (error) {
     sendError(res, error);
   }
@@ -169,7 +169,7 @@ router.get('/events/:id/comparison', async (req, res) => {
 
 router.get('/events/:id/questions', async (req, res) => {
   try {
-    res.json(await listQuestions(req.db, req.params.id));
+    res.json(await listQuestions(req.db, req.params.id, now(req)));
   } catch (error) {
     sendError(res, error);
   }
@@ -221,7 +221,7 @@ router.post('/events/:id/files', sourcingPdfUpload, async (req, res) => {
 
 router.get('/events/:id/files/:fileId', async (req, res) => {
   try {
-    const file = await readEventFile(req.db, req.params.id, req.params.fileId);
+    const file = await readEventFile(req.db, req.params.id, req.params.fileId, now(req));
     const bytes = Buffer.isBuffer(file.bytes) ? file.bytes : Buffer.from(file.bytes);
     const filename = file.filename || 'attachment.pdf';
     const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '') || 'attachment.pdf';

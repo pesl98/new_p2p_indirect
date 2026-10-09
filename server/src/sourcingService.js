@@ -11,7 +11,7 @@ import { nextDocumentNumber } from './docNumbers.js';
 import { LineTypeError, normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { isUniqueConstraint } from './masterData.js';
 import { lineTotalCents, requireIntegerCents } from './money.js';
-import { sendMail } from './mail/index.js';
+import { loadMailConfig, mailIsConfigured, sendMail } from './mail/index.js';
 import {
   MAX_EVENT_FILES,
   MAX_EVENT_FILE_BYTES,
@@ -287,6 +287,28 @@ function isBusyConflict(error) {
   const code = String(error?.code || '');
   if (code === 'SQLITE_BUSY' || code === 'SQLITE_BUSY_SNAPSHOT' || code === 'SQLITE_BUSY_TIMEOUT') return true;
   return /SQLITE_BUSY|database is locked/i.test(String(error?.message || ''));
+}
+
+/**
+ * BEGIN IMMEDIATE can fail at once when another writer holds the lock
+ * (busy_timeout is 0). Retry the whole transaction a few times. A
+ * SourcingError is the caller's outcome and is not retried.
+ */
+export async function withBusyRetry(work, random = Math.random) {
+  for (let attempt = 1; attempt <= EVENT_NUMBER_ATTEMPTS; attempt += 1) {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof SourcingError || !isBusyConflict(error) || attempt === EVENT_NUMBER_ATTEMPTS) {
+        if (!(error instanceof SourcingError) && isBusyConflict(error)) {
+          fail('The database is busy. Try again.', 503, 'busy');
+        }
+        throw error;
+      }
+      await wait(createRetryDelayMs(random));
+    }
+  }
+  fail('The database is busy. Try again.', 503, 'busy');
 }
 
 function wait(ms) {
@@ -787,7 +809,7 @@ export async function createEventFromRequisition(db, actor, requisitionId, input
   return getEvent(db, eventId);
 }
 
-export async function updateEvent(db, actor, id, input) {
+export async function updateEvent(db, actor, id, input, options = {}) {
   const existing = await loadEventRow(db, id);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
@@ -872,12 +894,13 @@ export async function updateEvent(db, actor, id, input) {
     return result.changes;
   })();
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
-  return getEvent(db, existing.id);
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  return getEvent(db, existing.id, nowDate);
 }
 
 export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   const nowDate = options.now instanceof Date ? options.now : new Date();
-  await closeDueEvents(db, nowDate, { limit: 20 });
+  await closeDueEvents(db, nowDate, { eventId: id });
   const existing = await loadEventRow(db, id);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
@@ -982,7 +1005,7 @@ const FILE_META_SQL = `
 `;
 
 export async function getEvent(db, id, now = new Date()) {
-  await closeDueEvents(db, now, { limit: 20 });
+  await closeDueEvents(db, now, { eventId: id });
   const event = await db.prepare(`
     SELECT
       e.id, e.event_number, e.kind, e.title, e.description, e.category, e.department_id,
@@ -1130,7 +1153,8 @@ export async function addEventFile(db, actor, id, { buffer, filename } = {}) {
   return file;
 }
 
-export async function readEventFile(db, eventId, fileId) {
+export async function readEventFile(db, eventId, fileId, now = new Date()) {
+  await closeDueEvents(db, now, { eventId });
   const meta = await db.prepare(`
     SELECT id, event_id, filename, content_type, size_bytes, removed_at
     FROM sourcing_files
@@ -1193,14 +1217,22 @@ export async function removeEventFile(db, actor, eventId, fileId) {
   return { id: Number(fileId), removed_at: now };
 }
 
-export async function closeDueEvents(db, now = new Date(), { limit = 20 } = {}) {
-  const instant = utcIso(now instanceof Date ? now : new Date(now));
-  const due = await db.prepare(`
-    SELECT id, event_number FROM sourcing_events
-    WHERE status = 'published' AND deadline_at <= ?
-    ORDER BY deadline_at ASC
-    LIMIT ?
-  `).all(instant, limit);
+export async function closeDueEvents(db, now = new Date(), { limit = 20, eventId = null } = {}) {
+  const clock = now instanceof Date ? now : new Date(now);
+  const instant = utcIso(clock);
+  // A named RFQ is closed even when older events fill the batch of 20.
+  // A list still closes only the oldest `limit` so one page cannot sweep the table.
+  const due = eventId == null
+    ? await db.prepare(`
+        SELECT id, event_number FROM sourcing_events
+        WHERE status = 'published' AND deadline_at <= ?
+        ORDER BY deadline_at ASC
+        LIMIT ?
+      `).all(instant, limit)
+    : await db.prepare(`
+        SELECT id, event_number FROM sourcing_events
+        WHERE id = ? AND status = 'published' AND deadline_at <= ?
+      `).all(Number(eventId), instant);
   const closed = [];
   for (const row of due || []) {
     const changed = await db.immediateTransaction(async () => {
@@ -1219,14 +1251,14 @@ export async function closeDueEvents(db, now = new Date(), { limit = 20 } = {}) 
         entity_type: 'sourcing_event',
         entity_id: row.id,
         details: JSON.stringify({ deadline_at: instant }),
-        created_at: utcTimestamp(now instanceof Date ? now : new Date(now))
+        created_at: utcTimestamp(clock)
       });
       await enqueueWebhook(db, {
         eventType: WEBHOOK_EVENTS.SOURCING_EVENT_CLOSED,
         entityType: 'sourcing_event',
         entityId: row.id,
         data: { event_number: row.event_number, status: 'closed' },
-        now: now instanceof Date ? now : new Date(now)
+        now: clock
       });
       return 1;
     })();
@@ -1283,7 +1315,7 @@ async function notifyInvitees(db, event, message, options = {}) {
       subject: message.subject,
       text: message.text,
       tag: message.tag
-    }, { transport: options.mailTransport, env: options.env });
+    }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
     deliveries.push({
       invitation_id: invitation.id,
       delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'skipped'
@@ -1406,38 +1438,13 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
     });
   })();
   kickWebhookDispatch(db);
-  const deliveries = [];
-  for (const row of minted) {
-    const result = await sendMail({
-      to: row.contact_email,
-      subject: `Uitnodiging offerteaanvraag ${existing.event_number}`,
-      text: [
-        `U bent uitgenodigd voor offerteaanvraag ${existing.event_number}: ${existing.title}.`,
-        'Open alleen deze link:',
-        row.portal_url,
-        `Sluitingstijd: ${existing.deadline_at}.`,
-        'De link is persoonlijk. Stuur hem niet door.'
-      ].join('\n'),
-      tag: 'sourcing_invitation'
-    }, { transport: options.mailTransport, env: options.env });
-    deliveries.push({
-      id: row.id,
-      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'copied'
-    });
-  }
-  if (deliveries.length) {
-    const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
-    const marks = deliveries.map(() => '?').join(', ');
-    await db.prepare(`
-      UPDATE sourcing_invitations
-      SET delivery_status = CASE id ${statusCase} END
-      WHERE event_id = ? AND id IN (${marks})
-    `).run(
-      ...deliveries.flatMap((row) => [row.id, row.delivery_status]),
-      existing.id,
-      ...deliveries.map((row) => row.id)
-    );
-  }
+  // Links are in the response whether or not SMTP finishes. A hung relay
+  // must not hold the request, because the plaintext token is not stored.
+  const mailSettled = deliverInvitationMail(db, existing, minted, options);
+  if (shouldAwaitMail(options)) await mailSettled;
+  else mailSettled.catch((error) => {
+    console.error('mail: background send failed', error?.code || error?.name || 'smtp_error');
+  });
   const view = await getEvent(db, existing.id, nowDate);
   const links = new Map(minted.map((row) => [row.id, row.portal_url]));
   view.invitations = view.invitations.map((row) => (
@@ -1447,16 +1454,62 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   return view;
 }
 
+function shouldAwaitMail(options) {
+  if (options.awaitMail === true) return true;
+  if (options.awaitMail === false) return false;
+  if (typeof options.mailTransport === 'function') return false;
+  return !mailIsConfigured(loadMailConfig(options.env));
+}
+
+async function deliverInvitationMail(db, event, minted, options) {
+  const deliveries = [];
+  for (const row of minted) {
+    const result = await sendMail({
+      to: row.contact_email,
+      subject: `Uitnodiging offerteaanvraag ${event.event_number}`,
+      text: [
+        `U bent uitgenodigd voor offerteaanvraag ${event.event_number}: ${event.title}.`,
+        'Open alleen deze link:',
+        row.portal_url,
+        `Sluitingstijd: ${event.deadline_at}.`,
+        'De link is persoonlijk. Stuur hem niet door.'
+      ].join('\n'),
+      tag: 'sourcing_invitation'
+    }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
+    deliveries.push({
+      id: row.id,
+      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'copied'
+    });
+  }
+  if (!deliveries.length) return;
+  const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
+  const marks = deliveries.map(() => '?').join(', ');
+  await db.prepare(`
+    UPDATE sourcing_invitations
+    SET delivery_status = CASE id ${statusCase} END
+    WHERE event_id = ? AND id IN (${marks})
+  `).run(
+    ...deliveries.flatMap((row) => [row.id, row.delivery_status]),
+    event.id,
+    ...deliveries.map((row) => row.id)
+  );
+}
+
 export async function extendDeadline(db, actor, id, input = {}, options = {}) {
   const nowDate = options.now instanceof Date ? options.now : new Date();
+  await closeDueEvents(db, nowDate, { eventId: id });
   const existing = await loadEventRow(db, id);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
+  const currentDeadline = existing.deadline_at ? Date.parse(existing.deadline_at) : NaN;
+  if (!Number.isFinite(currentDeadline) || currentDeadline <= nowDate.getTime()) {
+    fail('The deadline has passed.', 409, 'deadline_passed');
+  }
   if (existing.status !== 'published') fail('Only a published RFQ can have its deadline extended.', 409, 'event_state_changed');
   const version = requireRowVersion(input, existing);
   const deadline = parseDeadline(input.deadline_at);
   if (deadline == null) fail('The deadline is not a valid date and time.', 400, 'invalid_deadline');
-  if (!existing.deadline_at || deadline <= existing.deadline_at) {
+  if (deadline <= existing.deadline_at) {
     fail('The deadline can only be moved later.', 409, 'deadline_not_later');
   }
   if (Date.parse(deadline) < nowDate.getTime() + 60 * 60 * 1000) {
@@ -1468,8 +1521,9 @@ export async function extendDeadline(db, actor, id, input = {}, options = {}) {
     const result = await db.prepare(`
       UPDATE sourcing_events
       SET deadline_at = ?, row_version = row_version + 1, updated_at = ?
-      WHERE id = ? AND status = 'published' AND row_version = ? AND (deadline_at IS NULL OR deadline_at < ?)
-    `).run(deadline, now, existing.id, version, deadline);
+      WHERE id = ? AND status = 'published' AND row_version = ?
+        AND deadline_at > ? AND deadline_at < ?
+    `).run(deadline, now, existing.id, version, now, deadline);
     if (!result.changes) return 0;
     await db.prepare(`
       UPDATE sourcing_invitations
@@ -1499,6 +1553,7 @@ export async function extendDeadline(db, actor, id, input = {}, options = {}) {
 
 export async function rotateInvitationLink(db, actor, eventId, invitationId, options = {}) {
   const nowDate = options.now instanceof Date ? options.now : new Date();
+  await closeDueEvents(db, nowDate, { eventId });
   const secret = portalTokenSecret(options.env);
   if (!secret) fail('Portal links are not configured.', 503, 'portal_not_configured');
   const existing = await loadEventRow(db, eventId);
@@ -1540,7 +1595,7 @@ export async function rotateInvitationLink(db, actor, eventId, invitationId, opt
       portalUrl
     ].join('\n'),
     tag: 'sourcing_link_rotated'
-  }, { transport: options.mailTransport, env: options.env });
+  }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
   const delivery = sent.status === 'sent' ? 'sent' : sent.status === 'failed' ? 'failed' : 'copied';
   await db.prepare(`UPDATE sourcing_invitations SET delivery_status = ? WHERE id = ?`).run(delivery, invitation.id);
   return {
@@ -1554,6 +1609,7 @@ export async function rotateInvitationLink(db, actor, eventId, invitationId, opt
 
 export async function revokeInvitationLink(db, actor, eventId, invitationId, input = {}, options = {}) {
   const nowDate = options.now instanceof Date ? options.now : new Date();
+  await closeDueEvents(db, nowDate, { eventId });
   const existing = await loadEventRow(db, eventId);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
@@ -1583,6 +1639,7 @@ export async function revokeInvitationLink(db, actor, eventId, invitationId, inp
 
 export async function answerQuestion(db, actor, eventId, questionId, input = {}, options = {}) {
   const nowDate = options.now instanceof Date ? options.now : new Date();
+  await closeDueEvents(db, nowDate, { eventId });
   const existing = await loadEventRow(db, eventId);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
@@ -1602,7 +1659,8 @@ export async function answerQuestion(db, actor, eventId, questionId, input = {},
   return { id: Number(questionId), answer, visibility, answered_at: now };
 }
 
-export async function listQuestions(db, eventId) {
+export async function listQuestions(db, eventId, now = new Date()) {
+  await closeDueEvents(db, now, { eventId });
   const event = await loadEventRow(db, eventId);
   if (!event) fail('RFQ was not found.', 404, 'event_not_found');
   return db.prepare(`
@@ -1617,14 +1675,14 @@ export async function listQuestions(db, eventId) {
 }
 
 export async function buyerComparison(db, actor, id, now = new Date()) {
-  await closeDueEvents(db, now, { limit: 20 });
+  await closeDueEvents(db, now, { eventId: id });
   const event = await loadEventRow(db, id);
   if (!event) fail('RFQ was not found.', 404, 'event_not_found');
   return loadBuyerComparison(db, event, actor, now);
 }
 
 export async function buyerBidFile(db, actor, eventId, fileId, now = new Date()) {
-  await closeDueEvents(db, now, { limit: 20 });
+  await closeDueEvents(db, now, { eventId });
   const event = await loadEventRow(db, eventId);
   if (!event) fail('RFQ was not found.', 404, 'file_not_found');
   return readBuyerBidFile(db, event, actor, fileId, now);

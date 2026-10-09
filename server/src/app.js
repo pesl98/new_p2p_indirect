@@ -43,6 +43,23 @@ import { requireApiSession } from './requestActor.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const PORTAL_DOCUMENT_CSP = "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+const PORTAL_BID_JSON_LIMIT = '1mb';
+
+function trustProxyEnabled(env, onVercel) {
+  if (onVercel) return true;
+  const flag = String(env?.TRUST_PROXY || '').trim().toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes';
+}
+
+function setPortalDocumentHeaders(res) {
+  res.set('Content-Security-Policy', PORTAL_DOCUMENT_CSP);
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Cache-Control', 'no-store');
+}
+
 function resolveClientDist() {
   const candidates = [
     path.join(__dirname, '../../client/dist'),
@@ -86,8 +103,13 @@ export function createApp(options = {}) {
   const authConfig = options.authConfig || loadAuthConfig();
   const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   warnIfInsecureSessionSecret(authConfig);
+  const runtimeEnv = options.env || process.env;
 
   const app = express();
+  if (trustProxyEnabled(runtimeEnv, config.onVercel)) app.set('trust proxy', 1);
+  // Bid JSON can hold 50 lines with 2000-character comments. Only that route
+  // gets the larger parser. Everything else stays on the 100 kB default.
+  app.use('/api/portal/bids', express.json({ limit: PORTAL_BID_JSON_LIMIT }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: false, limit: '512kb' }));
 
@@ -155,12 +177,21 @@ export function createApp(options = {}) {
     });
   });
 
-  const clientDistPath = resolveClientDist();
-  if (clientDistPath && !process.env.VERCEL) {
+  const clientDistPath = options.clientDist || (!process.env.VERCEL ? resolveClientDist() : null);
+  if (clientDistPath) {
+    // vercel.json sets these on the CDN. Express has to set them itself
+    // when it serves the file outside Vercel.
+    app.get('/portal.html', (req, res) => {
+      setPortalDocumentHeaders(res);
+      const file = path.join(clientDistPath, 'portal.html');
+      if (!fs.existsSync(file)) return res.status(404).type('text/plain').send('Not found');
+      return res.sendFile(file);
+    });
     // express.static is ignored on Vercel — put the Vite build in /public instead.
     app.use(express.static(clientDistPath));
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api')) return next();
+      if (req.path === '/portal.html') return next();
       res.sendFile(path.join(clientDistPath, 'index.html'));
     });
   }
@@ -170,7 +201,7 @@ export function createApp(options = {}) {
     if (config.onVercel || error instanceof TursoConfigError) {
       return sendConfigError(req, res, error, error.statusCode || 500);
     }
-    const status = error.statusCode || 500;
+    const status = error.statusCode || error.status || 500;
     if (status >= 500) console.error(error);
     res.status(status).json({ error: error.message });
   });

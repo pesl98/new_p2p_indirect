@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
@@ -10,6 +12,7 @@ import { appendComplianceEvents, complianceRowHash, canonicalCompliancePayload, 
 import { createMemoryDatabase } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { sendMail } from './mail/index.js';
+import { smtpTextBody } from './mail/providers/smtp.js';
 import { mintPortalToken } from './sourcingPortalTokens.js';
 import { withCookie } from './testSession.js';
 
@@ -366,7 +369,7 @@ describe('sourcing portal', () => {
       const detail = JSON.parse(buyerBodies[1]);
       const ann = detail.invitations.find((row) => row.contact_email === 'ann@active.test');
       assert.equal(ann.portal_status, 'submitted');
-      assert.equal(ann.revision_count, 2);
+      assert.equal(ann.revision_count, 3);
       assert.equal(ann.attachment_count, 1);
       assert.ok(ann.submitted_at);
 
@@ -409,7 +412,7 @@ describe('sourcing portal', () => {
         body: JSON.stringify(offer(424242))
       }));
       assert.equal(resubmitted.status, 201, JSON.stringify(resubmitted.body));
-      assert.equal(resubmitted.body.revision, 3);
+      assert.equal(resubmitted.body.revision, 4);
 
       clock.ms = Date.parse('2026-10-08T14:00:00.000Z');
       const late = await json(await fetch(`${base}/api/portal/bids`, {
@@ -425,7 +428,7 @@ describe('sourcing portal', () => {
         JOIN sourcing_bids b ON b.id = r.bid_id
         WHERE b.event_id = ?
       `).get(created.body.id);
-      assert.equal(Number(revisions.n), 3);
+      assert.equal(Number(revisions.n), 4);
       const lateAudit = await db.prepare(`
         SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'SOURCING_BID_REJECTED_LATE'
       `).get();
@@ -490,7 +493,7 @@ describe('sourcing portal', () => {
         )
       `).all();
       assert.equal(actions.filter((row) => row.action === 'SOURCING_BID_SUBMITTED').length, 1);
-      assert.equal(actions.filter((row) => row.action === 'SOURCING_BID_REVISED').length, 2);
+      assert.equal(actions.filter((row) => row.action === 'SOURCING_BID_REVISED').length, 3);
       assert.equal(actions.filter((row) => row.action === 'SOURCING_BID_WITHDRAWN').length, 1);
     }));
   });
@@ -661,6 +664,11 @@ describe('sourcing portal', () => {
       }
       assert.equal(unknown.status, 429);
       assert.equal(unknown.body.code, 'rate_limited');
+      const spoofed = await json(await fetch(`${base}/api/portal`, {
+        headers: bearer(mintPortalToken(SECRET).token, { 'X-Forwarded-For': '198.51.100.9' })
+      }));
+      assert.equal(spoofed.status, 429);
+      assert.equal(spoofed.body.code, 'rate_limited');
 
       const original = db.prepare.bind(db);
       db.prepare = (sql) => {
@@ -808,6 +816,7 @@ describe('sourcing portal', () => {
     })();
     const view = await publishEvent(db, { id: 3, name: 'Carol Zhang', role: 'procurement' }, createdId, { row_version: 1 }, {
       now: new Date('2026-10-08T12:00:00.000Z'),
+      awaitMail: true,
       env: {
         ...process.env,
         MAIL_PROVIDER: 'smtp',
@@ -870,5 +879,500 @@ describe('sourcing portal', () => {
     assert.match(html, /portal\/main\.jsx/);
     assert.doesNotMatch(html, /fonts\.googleapis/);
     assert.doesNotMatch(html, /src\/main\.jsx/);
+  });
+
+  test('extending after the deadline does not reopen bidding', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T15:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Na sluiting',
+          deadline_at: '2026-10-08T16:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      assert.equal(published.status, 200, JSON.stringify(published.body));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      clock.ms = Date.parse('2026-10-08T16:05:00.000Z');
+      const extended = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/deadline`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          row_version: published.body.row_version,
+          deadline_at: '2026-10-08T18:00:00.000Z'
+        })
+      }));
+      assert.equal(extended.status, 409, JSON.stringify(extended.body));
+      assert.equal(extended.body.code, 'deadline_passed');
+      const status = await db.prepare(`SELECT status FROM sourcing_events WHERE id = ?`).get(created.body.id);
+      assert.equal(status.status, 'closed');
+      const portal = await json(await fetch(`${base}/api/portal`, { headers: bearer(token) }));
+      const late = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 10 }]
+        })
+      }));
+      assert.equal(late.status, 409);
+      assert.equal(late.body.code, 'deadline_passed');
+      const bids = await db.prepare(`SELECT COUNT(*) AS n FROM sourcing_bids`).get();
+      assert.equal(Number(bids.n), 0);
+    }));
+  });
+
+  test('a named overdue RFQ closes even when 21 older ones fill the batch', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'De 22e',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [
+            { supplier_id: 2, contact_email: 'ann@active.test' },
+            { supplier_id: 1, contact_email: 'pat@default.test' }
+          ]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      assert.equal(published.status, 200, JSON.stringify(published.body));
+      const ann = published.body.invitations.find((row) => row.contact_email === 'ann@active.test');
+      const pat = published.body.invitations.find((row) => row.contact_email === 'pat@default.test');
+      const portal = await json(await fetch(`${base}/api/portal`, { headers: bearer(tokenFromUrl(ann.portal_url)) }));
+      const submitted = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(tokenFromUrl(ann.portal_url)), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 424242 }]
+        })
+      }));
+      assert.equal(submitted.status, 201, JSON.stringify(submitted.body));
+      const stamp = '2026-10-08T12:00:00.000Z';
+      for (let n = 1; n <= 21; n += 1) {
+        await db.prepare(`
+          INSERT INTO sourcing_events (
+            event_number, title, department_id, owner_user_id, status, currency, deadline_at,
+            weight_price, weight_lead_time, weight_quality, row_version, created_at, updated_at
+          ) VALUES (?, 'Ouder', 1, 3, 'published', 'EUR', '2026-10-08T13:00:00.000Z', 70, 15, 15, 1, ?, ?)
+        `).run(`RFQ-OLD-${String(n).padStart(3, '0')}`, stamp, stamp);
+      }
+      clock.ms = Date.parse('2026-10-08T14:01:00.000Z');
+      const comparison = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/comparison`, {
+        headers: authHeaders(3)
+      }));
+      assert.equal(comparison.status, 200, JSON.stringify(comparison.body));
+      assert.equal(comparison.body.sealed, false);
+      assert.equal(JSON.stringify(comparison.body).includes('424242'), true);
+      const target = await db.prepare(`SELECT status FROM sourcing_events WHERE id = ?`).get(created.body.id);
+      assert.equal(target.status, 'closed');
+      const older = await db.prepare(`
+        SELECT COUNT(*) AS n FROM sourcing_events WHERE event_number LIKE 'RFQ-OLD-%' AND status = 'published'
+      `).get();
+      assert.equal(Number(older.n), 21);
+      const extended = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/deadline`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          row_version: comparison.body.row_version || published.body.row_version,
+          deadline_at: '2026-10-08T18:00:00.000Z'
+        })
+      }));
+      assert.equal(extended.status, 409, JSON.stringify(extended.body));
+      assert.equal(extended.body.code, 'deadline_passed');
+      const competitor = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(tokenFromUrl(pat.portal_url)), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 10 }]
+        })
+      }));
+      assert.equal(competitor.status, 409);
+      assert.notEqual(competitor.status, 201);
+      const patBids = await db.prepare(`
+        SELECT COUNT(*) AS n FROM sourcing_bids WHERE invitation_id = ?
+      `).get(pat.id);
+      assert.equal(Number(patBids.n), 0);
+    }));
+  });
+
+  test('a file added or removed after submit starts a new revision', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Bijlage',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      const early = await json(await fetch(`${base}/api/portal/files`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/pdf', 'X-Filename': 'vroeg.pdf' },
+        body: PDF
+      }));
+      assert.equal(early.status, 201, JSON.stringify(early.body));
+      const removedEarly = await json(await fetch(`${base}/api/portal/files/${early.body.id}/remove`, {
+        method: 'POST',
+        headers: bearer(token)
+      }));
+      assert.equal(removedEarly.status, 200, JSON.stringify(removedEarly.body));
+      const beforeBid = await db.prepare(`SELECT COUNT(*) AS n FROM sourcing_bid_revisions`).get();
+      assert.equal(Number(beforeBid.n), 0);
+      const removedAudit = await db.prepare(`
+        SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'SOURCING_BID_FILE_REMOVED'
+      `).get();
+      assert.equal(Number(removedAudit.n), 1);
+      const portal = await json(await fetch(`${base}/api/portal`, { headers: bearer(token) }));
+      const submitted = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 100 }]
+        })
+      }));
+      assert.equal(submitted.status, 201, JSON.stringify(submitted.body));
+      const uploaded = await json(await fetch(`${base}/api/portal/files`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/pdf', 'X-Filename': 'offerte.pdf' },
+        body: PDF
+      }));
+      assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+      const afterAdd = await db.prepare(`
+        SELECT revision, content_sha256 FROM sourcing_bid_revisions ORDER BY revision ASC
+      `).all();
+      assert.equal(afterAdd.length, 2);
+      assert.notEqual(afterAdd[1].content_sha256, afterAdd[0].content_sha256);
+      const removed = await json(await fetch(`${base}/api/portal/files/${uploaded.body.id}/remove`, {
+        method: 'POST',
+        headers: bearer(token)
+      }));
+      assert.equal(removed.status, 200, JSON.stringify(removed.body));
+      const afterRemove = await db.prepare(`
+        SELECT revision, content_sha256 FROM sourcing_bid_revisions ORDER BY revision ASC
+      `).all();
+      assert.equal(afterRemove.length, 3);
+      assert.equal(afterRemove[2].content_sha256, afterRemove[0].content_sha256);
+      const audits = await db.prepare(`
+        SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'SOURCING_BID_FILE_REMOVED'
+      `).get();
+      assert.equal(Number(audits.n), 2);
+    }));
+  });
+
+  test('declining after a bid withdraws it', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Afzien',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      const portal = await json(await fetch(`${base}/api/portal`, { headers: bearer(token) }));
+      const submitted = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 80 }]
+        })
+      }));
+      assert.equal(submitted.status, 201, JSON.stringify(submitted.body));
+      const declined = await json(await fetch(`${base}/api/portal/decline`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Geen capaciteit' })
+      }));
+      assert.equal(declined.status, 200, JSON.stringify(declined.body));
+      const bid = await db.prepare(`SELECT status FROM sourcing_bids`).get();
+      assert.equal(bid.status, 'withdrawn');
+      const again = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 90 }]
+        })
+      }));
+      assert.equal(again.status, 409);
+      assert.equal(again.body.code, 'invitation_declined');
+    }));
+  });
+
+  test('parallel submits retry a BUSY begin instead of returning 500', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Druk',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      const portal = await json(await fetch(`${base}/api/portal`, { headers: bearer(token) }));
+      const orig = db.immediateTransaction.bind(db);
+      let busyLeft = 7;
+      db.immediateTransaction = (fn) => {
+        const run = orig(fn);
+        return async (...args) => {
+          if (busyLeft > 0) {
+            busyLeft -= 1;
+            const error = new Error('SQLITE_BUSY: database is locked');
+            error.code = 'SQLITE_BUSY';
+            throw error;
+          }
+          return run(...args);
+        };
+      };
+      try {
+        const responses = await Promise.all(Array.from({ length: 8 }, async () => json(await fetch(`${base}/api/portal/bids`, {
+          method: 'POST',
+          headers: { ...bearer(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            submission_id: randomUUID(),
+            lines: [{ event_line_id: portal.body.event.lines[0].id, quoted: true, unit_price_cents: 15 }]
+          })
+        }))));
+        assert.equal(busyLeft, 0);
+        for (const response of responses) {
+          assert.equal(response.status, 201, JSON.stringify(response.body));
+          assert.equal(JSON.stringify(response.body).includes('SQLITE_BUSY'), false);
+        }
+      } finally {
+        db.immediateTransaction = orig;
+      }
+    }));
+  });
+
+  test('portal bid JSON above 100 kB is accepted and other routes stay limited', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const bulky = JSON.stringify({ title: 'x'.repeat(150 * 1024) });
+      const buyer = await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: bulky
+      });
+      assert.equal(buyer.status, 413);
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Groot',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      const portal = await json(await fetch(`${base}/api/portal`, { headers: bearer(token) }));
+      const bid = await json(await fetch(`${base}/api/portal/bids`, {
+        method: 'POST',
+        headers: { ...bearer(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submission_id: randomUUID(),
+          lines: [{
+            event_line_id: portal.body.event.lines[0].id,
+            quoted: true,
+            unit_price_cents: 10,
+            comment: 'a'.repeat(120 * 1024)
+          }]
+        })
+      }));
+      assert.notEqual(bid.status, 413);
+      assert.equal(bid.status, 400);
+      assert.equal(bid.body.code, 'text_too_long');
+    }));
+  });
+
+  test('a hung SMTP relay times out and publish still returns the links', async () => {
+    assert.equal(smtpTextBody('een\ntwee\n.drie'), 'een\r\ntwee\r\n..drie');
+    const server = net.createServer((socket) => {
+      socket.on('error', () => {});
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const started = Date.now();
+      const failed = await sendMail({ to: 'a@b.c', subject: 'x', text: 'een\ntwee' }, {
+        env: {
+          MAIL_PROVIDER: 'smtp',
+          MAIL_FROM: 'inkoop@procure.example',
+          MAIL_SMTP_URL: `smtp://127.0.0.1:${port}`
+        },
+        timeoutMs: 200
+      });
+      assert.equal(failed.status, 'failed');
+      assert.ok(Date.now() - started < 2000, `hung relay took ${Date.now() - started}ms`);
+      assert.equal(JSON.stringify(failed).includes('SMTP'), false);
+    } finally {
+      server.close();
+    }
+
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    process.env.SOURCING_ENABLED = '1';
+    process.env.PORTAL_TOKEN_SECRET = SECRET;
+    process.env.APP_BASE_URL = 'https://procure.example';
+    const { publishEvent } = await import('./sourcingService.js');
+    const createdId = await db.immediateTransaction(async () => {
+      const now = '2026-10-08T12:00:00.000Z';
+      const result = await db.prepare(`
+        INSERT INTO sourcing_events (
+          event_number, title, owner_user_id, department_id, status, currency, deadline_at,
+          weight_price, weight_lead_time, weight_quality, row_version, created_at, updated_at
+        ) VALUES ('RFQ-2026-091', 'Hangt', 3, 1, 'draft', 'EUR', '2026-10-08T14:00:00.000Z', 70, 15, 15, 1, ?, ?)
+      `).run(now, now);
+      const eventId = Number(result.lastInsertRowid);
+      await db.prepare(`
+        INSERT INTO sourcing_event_lines (
+          event_id, line_no, description, category, quantity, unit_of_measure, line_type
+        ) VALUES (?, 1, 'Stoel', 'Office Supplies', 1, 'each', 'goods')
+      `).run(eventId);
+      await db.prepare(`
+        INSERT INTO sourcing_invitations (
+          event_id, supplier_id, contact_email, invited_by_user_id, created_at
+        ) VALUES (?, 2, 'ann@active.test', 3, ?)
+      `).run(eventId, now);
+      return eventId;
+    })();
+    const started = Date.now();
+    const view = await publishEvent(db, { id: 3, name: 'Carol Zhang', role: 'procurement' }, createdId, { row_version: 1 }, {
+      now: new Date('2026-10-08T12:00:00.000Z'),
+      env: {
+        ...process.env,
+        MAIL_PROVIDER: 'smtp',
+        MAIL_FROM: 'inkoop@procure.example',
+        MAIL_SMTP_URL: 'smtp://127.0.0.1:9'
+      },
+      mailTransport: () => new Promise(() => {})
+    });
+    assert.ok(Date.now() - started < 500);
+    assert.match(view.invitations[0].portal_url, /portal\.html#t=/);
+    assert.equal(JSON.stringify(await db.prepare(`SELECT token_hash FROM sourcing_invitations`).all()).includes(tokenFromUrl(view.invitations[0].portal_url)), false);
+  });
+
+  test('revoked lookups stop writing an audit row after the rate limit', async () => {
+    const db = await createMemoryDatabase();
+    await seedWorld(db);
+    const clock = { ms: Date.parse('2026-10-08T12:00:00.000Z') };
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date(clock.ms) });
+    await withPortalEnv(() => withServer(app, async (base) => {
+      const created = await json(await fetch(`${base}/api/sourcing/events`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Ingetrokken',
+          deadline_at: '2026-10-08T14:00:00.000Z',
+          lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 1 }],
+          invitations: [{ supplier_id: 2, contact_email: 'ann@active.test' }]
+        })
+      }));
+      const published = await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/publish`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row_version: created.body.row_version })
+      }));
+      const invitationId = published.body.invitations[0].id;
+      const token = tokenFromUrl(published.body.invitations[0].portal_url);
+      await json(await fetch(`${base}/api/sourcing/events/${created.body.id}/invitations/${invitationId}/revoke`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Verkeerd adres' })
+      }));
+      for (let n = 0; n < 25; n += 1) {
+        await json(await fetch(`${base}/api/portal`, { headers: bearer(token) }));
+      }
+      const rows = await db.prepare(`
+        SELECT details FROM compliance_audit_events WHERE action = 'SOURCING_LINK_REJECTED_REVOKED'
+      `).all();
+      assert.equal(rows.length, 21);
+      assert.equal(rows.filter((row) => String(row.details).includes('"aggregated":true')).length, 1);
+    }));
+  });
+
+  test('express sets frame-ancestors none on portal.html', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-portal-'));
+    fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><title>app</title>');
+    fs.writeFileSync(path.join(dir, 'portal.html'), '<!doctype html><title>portal</title>');
+    const db = await createMemoryDatabase();
+    const app = createApp({ db, config: loadDbConfig({}), clientDist: dir });
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}/portal.html`);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(response.headers.get('x-frame-options'), 'DENY');
+    });
   });
 });

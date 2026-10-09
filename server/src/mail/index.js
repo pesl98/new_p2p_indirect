@@ -52,7 +52,7 @@ export async function sendMail(message, options = {}) {
     if (typeof options.transport === 'function') {
       await options.transport(payload);
     } else {
-      await smtpSend(payload, config.smtpUrl);
+      await smtpSend(payload, config.smtpUrl, { timeoutMs: options.timeoutMs });
     }
     return { status: 'sent', provider: 'smtp' };
   } catch (error) {

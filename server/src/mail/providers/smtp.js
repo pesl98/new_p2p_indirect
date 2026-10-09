@@ -10,6 +10,11 @@ import tls from 'node:tls';
 function readReply(socket) {
   return new Promise((resolve, reject) => {
     let buffer = '';
+    const cleanup = () => {
+      socket.off('data', onData);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+    };
     const onData = (chunk) => {
       buffer += chunk.toString('utf8');
       const lines = buffer.split(/\r?\n/);
@@ -17,13 +22,24 @@ function readReply(socket) {
       if (!complete.length) return;
       const last = complete[complete.length - 1];
       if (/^\d{3} /.test(last)) {
-        socket.off('data', onData);
+        cleanup();
         buffer = lines[lines.length - 1];
         resolve({ code: Number(last.slice(0, 3)), text: complete.join('\n') });
       }
     };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      const error = new Error('SMTP connection closed');
+      error.code = 'SMTP_CLOSED';
+      reject(error);
+    };
     socket.on('data', onData);
-    socket.once('error', reject);
+    socket.once('error', onError);
+    socket.once('close', onClose);
   });
 }
 
@@ -40,18 +56,46 @@ async function expect(socket, codes) {
   return reply;
 }
 
-export async function smtpSend({ from, to, subject, text }, smtpUrl) {
+export const SMTP_TIMEOUT_MS = 8000;
+
+/** CRLF body with leading-dot stuffing. SMTP DATA requires both. */
+export function smtpTextBody(text) {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => (line.startsWith('.') ? `.${line}` : line))
+    .join('\r\n');
+}
+
+function ignoreLate(promise) {
+  promise.catch(() => {});
+  return promise;
+}
+
+export async function smtpSend({ from, to, subject, text }, smtpUrl, options = {}) {
   const url = new URL(smtpUrl);
   const implicitTls = url.protocol === 'smtps:';
   const port = Number(url.port || (implicitTls ? 465 : 587));
   const host = url.hostname;
   const user = decodeURIComponent(url.username || '');
   const pass = decodeURIComponent(url.password || '');
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : SMTP_TIMEOUT_MS;
   const socket = implicitTls
     ? tls.connect({ host, port, servername: host })
     : net.connect({ host, port });
-  socket.setTimeout(15000);
-  try {
+  let timedOut = false;
+  const timeout = new Promise((_, reject) => {
+    socket.setTimeout(timeoutMs);
+    socket.once('timeout', () => {
+      timedOut = true;
+      const error = new Error('SMTP timeout');
+      error.code = 'SMTP_TIMEOUT';
+      socket.destroy();
+      reject(error);
+    });
+  });
+  const conversation = (async () => {
     await new Promise((resolve, reject) => {
       socket.once('secureConnect', resolve);
       socket.once('connect', () => {
@@ -66,15 +110,26 @@ export async function smtpSend({ from, to, subject, text }, smtpUrl) {
       writeLine(socket, 'STARTTLS');
       await expect(socket, 220);
       const secure = tls.connect({ socket, servername: host });
+      secure.setTimeout(timeoutMs);
       await new Promise((resolve, reject) => {
         secure.once('secureConnect', resolve);
         secure.once('error', reject);
+        secure.once('timeout', () => {
+          const error = new Error('SMTP timeout');
+          error.code = 'SMTP_TIMEOUT';
+          secure.destroy();
+          reject(error);
+        });
       });
-      return await smtpAfterTls(secure, { from, to, subject, text, user, pass });
+      return smtpAfterTls(secure, { from, to, subject, text, user, pass });
     }
-    return await smtpAfterTls(socket, { from, to, subject, text, user, pass });
+    return smtpAfterTls(socket, { from, to, subject, text, user, pass });
+  })();
+  try {
+    return await Promise.race([ignoreLate(conversation), ignoreLate(timeout)]);
   } finally {
-    socket.end();
+    socket.setTimeout(0);
+    if (timedOut || !socket.destroyed) socket.destroy();
   }
 }
 
@@ -102,7 +157,7 @@ async function smtpAfterTls(socket, { from, to, subject, text, user, pass }) {
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=utf-8',
     '',
-    String(text || '').replace(/^\./gm, '..'),
+    smtpTextBody(text),
     '.'
   ].join('\r\n');
   socket.write(`${body}\r\n`);
