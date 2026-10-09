@@ -106,6 +106,8 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `INVOICE_OCR_TIMEOUT_MS` | No | OCR attempt timeout. Default 20000. Clamped to 24500. One retry after 1s. |
 | `INVOICE_PROPOSAL_UPLOADS_PER_MINUTE` | No | Signed-in PDF uploads per user. Default 10. Integer 1–600. |
 | `INVOICE_PROPOSAL_SOD` | No | `enforce` (default) or `off`. `enforce` blocks the uploader and the API-key creator. `off` is for a single-person tenant. |
+| `SOURCING_ENABLED` | No | Buyer RFQ drafts. `1`, `true`, or `yes` turns the module on. Unset or any other value leaves it off: sourcing routes return **503** `sourcing_disabled` and the nav item stays hidden. Set on Production only until a customer runs a live RFQ. Not written by the CLIs. |
+| `SOURCING_PDF_MAX_BYTES` | No | Optional cap for RFQ PDFs, at or below 4194304 (4 MiB). Invalid values use 4 MiB. |
 
 ### 2.1 SSO (OIDC or SAML) per customer
 

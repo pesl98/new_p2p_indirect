@@ -9,6 +9,8 @@ export const shell = {
   'shell.nav.requisitionsDesc': 'Catalogusbestellingen en vrije aanvragen',
   'shell.nav.approvals': 'Goedkeuringsinbox',
   'shell.nav.approvalsDesc': 'Meerlaagse financiële autorisatie',
+  'shell.nav.sourcing': 'Offerteaanvragen',
+  'shell.nav.sourcingDesc': 'Offertes opvragen bij leveranciers',
   'shell.nav.delegations': 'Vervangingen',
   'shell.nav.delegationsDesc': 'Plaatsvervangende goedkeurders bij afwezigheid',
   'shell.nav.purchaseOrders': 'Inkooporders (PO)',

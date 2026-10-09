@@ -557,9 +557,19 @@ Numbered `CNT-YYYY-NNN` via the same MAX-suffix allocator. Existing Turso DBs ge
 
 Seed: **CNT-2026-001** Figma (10 × € 540,00) is the expiring-soon 1-click walkthrough. Do not use that generated PR to replace INV-TSG-11029 / 22041 / 6610 / 6611 or the AP aging trio.
 
+## Sourcing (RFQ drafts)
+
+Off unless `SOURCING_ENABLED` is `1`, `true`, or `yes`. A signed-in call then gets **503** `sourcing_disabled`. No cookie is still **401**, because session auth runs before the router. The sidebar item is hidden. Requisition JSON does not gain a sourcing field, and convert-to-PO is unchanged while no RFQ row exists.
+
+`/api/sourcing` is `procurement`, `admin`, and `finance`. Finance is read-only (**403** `read_only`). Draft edits are the owner or an admin. Routes: `GET /me`, `GET/POST /events`, `POST /events/from-requisition`, `GET/PATCH /events/:id`, `POST /events/:id/cancel`, `POST/GET /events/:id/files`, `POST /events/:id/files/:fileId/remove`. `DELETE /events/:id` is **405**.
+
+The schema block is appended to `schema.sql` with `CREATE TABLE IF NOT EXISTS` only. Money is integer cents. Numbers are `RFQ-YYYY-NNN` (`docNumbers` kind `rfq`). The status graph lives in `sourcingStatus.js` and fails closed; this release only moves `draft` → `cancelled`. An open event (any status except `cancelled`) blocks `POST /api/purchase-orders/from-requisition` with **409** `requisition_in_sourcing`. That guard reads the row, so it still holds if the flag is later turned off. While the flag is on, `GET /api/requisitions/:id` adds `sourcing_event` when that row exists.
+
+Buyer PDFs use the invoice magic-byte and 4 MiB checks (`SOURCING_PDF_MAX_BYTES`). Bytes are in `sourcing_file_blobs` and are not selected by list or detail. Publishing, the supplier portal, bids, comparison, and award are not on these routes.
+
 ## Document numbers
 
-`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, `receipt_number`, `issue_number`, `co_number`, `contract_number`, and `run_number` are UNIQUE.
+`PR-` / `PO-` / `GRN-` / `SES-` / `CSN-` / `CSI-` / `CO-` / `CNT-` / `PAY-` / `RFQ-` numbers use **MAX of the numeric suffix** for the current year (`server/src/docNumbers.js`), allocated inside the create transaction. This avoids `COUNT(*)+1` collisions after deletes or seed gaps. Columns `pr_number`, `po_number`, `grn_number`, `ses_number`, `receipt_number`, `issue_number`, `co_number`, `contract_number`, `run_number`, and `event_number` are UNIQUE.
 
 Invoice numbers are unique per supplier: `UNIQUE(supplier_id, invoice_number)`. The same number from two vendors is allowed.
 

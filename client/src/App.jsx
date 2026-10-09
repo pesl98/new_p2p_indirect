@@ -27,6 +27,7 @@ import DelegationsView, { DELEGATION_ROLES } from './views/DelegationsView';
 import ComplianceView from './views/ComplianceView';
 import IntegrationsView from './views/IntegrationsView';
 import InvoiceProposalsView from './views/InvoiceProposalsView';
+import SourcingView from './views/SourcingView';
 import { api } from './api';
 import { DEMO_SEED_PASSWORD } from './demoAuth';
 import { setDisplayCurrency } from './money';
@@ -44,6 +45,7 @@ export default function App() {
   const [apAgingOverdueCount, setApAgingOverdueCount] = useState(0);
   const [paymentRunDraftCount, setPaymentRunDraftCount] = useState(0);
   const [duplicateSuspectCount, setDuplicateSuspectCount] = useState(0);
+  const [sourcingMe, setSourcingMe] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const demoSwitcher = Boolean(authConfig?.demoPersonaSwitcher);
@@ -155,6 +157,28 @@ export default function App() {
     return () => { cancelled = true; };
   }, [currentUser, analytics]);
 
+  useEffect(() => {
+    if (!sessionUser) {
+      setSourcingMe(null);
+      return;
+    }
+    let cancelled = false;
+    api.getSourcingAccess()
+      .then((me) => {
+        if (!cancelled) setSourcingMe(me);
+      })
+      .catch(() => {
+        if (!cancelled) setSourcingMe({ canSee: false, canWrite: false, enabled: false, attention_count: 0 });
+      });
+    return () => { cancelled = true; };
+  }, [sessionUser]);
+
+  useEffect(() => {
+    if (activeTab === 'sourcing' && sourcingMe && !sourcingMe.canSee) {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, sourcingMe]);
+
   const handleSelectUser = async (user) => {
     if (!demoSwitcher || !user?.email || user.id === sessionUser?.id) return;
     const result = await api.login(user.email, DEMO_SEED_PASSWORD);
@@ -184,6 +208,9 @@ export default function App() {
       setActiveTab('dashboard');
     }
     if (!['finance', 'admin'].includes(signedIn?.role) && activeTab === 'finance_inbox') {
+      setActiveTab('dashboard');
+    }
+    if (!['procurement', 'admin', 'finance'].includes(signedIn?.role) && activeTab === 'sourcing') {
       setActiveTab('dashboard');
     }
   };
@@ -259,6 +286,8 @@ export default function App() {
           apAgingOverdueCount={apAgingOverdueCount}
           paymentRunDraftCount={paymentRunDraftCount}
           duplicateSuspectCount={duplicateSuspectCount}
+          canSeeSourcing={Boolean(sourcingMe?.canSee)}
+          sourcingAttentionCount={sourcingMe?.attention_count || 0}
           currentUser={currentUser}
         />
 
@@ -284,6 +313,7 @@ export default function App() {
               currentUser={currentUser}
               onNavigate={handleNavigate}
               focusId={navFocus?.focusId}
+              sourcingCanWrite={Boolean(sourcingMe?.canWrite)}
             />
           )}
 
@@ -297,6 +327,14 @@ export default function App() {
 
           {activeTab === 'delegations' && (
             <DelegationsView currentUser={currentUser} />
+          )}
+
+          {activeTab === 'sourcing' && sourcingMe?.canSee && (
+            <SourcingView
+              currentUser={currentUser}
+              navFocus={navFocus}
+              onNavigate={handleNavigate}
+            />
           )}
 
           {activeTab === 'purchase_orders' && (
