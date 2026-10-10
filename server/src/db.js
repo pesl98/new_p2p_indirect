@@ -187,6 +187,10 @@ async function migrateInvoiceShortPay(database) {
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
   ) || []).map((row) => row.name);
 
+  if (tables.includes('payment_runs') && !(await tableHasColumn(database, 'payment_runs', 'created_by_user_id'))) {
+    await maybe(database.exec(`ALTER TABLE payment_runs ADD COLUMN created_by_user_id INTEGER`));
+  }
+
   if (tables.includes('invoices') && !(await tableHasColumn(database, 'invoices', 'payable_total_cents'))) {
     await maybe(database.exec(`ALTER TABLE invoices ADD COLUMN payable_total_cents INTEGER`));
   }

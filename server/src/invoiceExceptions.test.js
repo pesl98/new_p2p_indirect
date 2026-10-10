@@ -1,4 +1,5 @@
 import { describe, test } from 'node:test';
+import { currentFiscalYear } from './fiscalYear.js';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from './db.js';
 import { createVendorInvoice, approveInvoicePayment, markInvoicePaid } from './invoicesService.js';
@@ -25,7 +26,7 @@ async function createTestDb() {
       (3, 'Priya Nair', 'priya@example.com', 'requester', 2, 0);
     INSERT INTO suppliers (id, name, code) VALUES (1, 'Vendor Co', 'SUP-1');
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-      VALUES (1, 2026, 50000000, 0, 0), (2, 2026, 32000000, 0, 0);
+      VALUES (1, ${currentFiscalYear()}, 50000000, 0, 0), (2, ${currentFiscalYear()}, 32000000, 0, 0);
   `);
   return db;
 }
@@ -445,7 +446,7 @@ async function createFlaggedInvoiceOnBudget(db, {
   `).run(po.id, ordered, poPrice, ordered * poPrice, received);
   const item = await db.prepare(`SELECT id FROM po_items WHERE po_id = ?`).get(po.id);
   await db.prepare(`
-    UPDATE budgets SET committed_amount = ? WHERE department_id = 1 AND fiscal_year = 2026
+    UPDATE budgets SET committed_amount = ? WHERE department_id = 1 AND fiscal_year = ${currentFiscalYear()}
   `).run(committed);
   return await createVendorInvoice(db, invoicePayload({
     qty,
@@ -606,7 +607,7 @@ describe('invoice exception short_pay', () => {
 
     await approveInvoicePayment(db, created.invoiceId, { approver_name: 'David Miller' });
     const afterApprove = await db.prepare(`
-      SELECT committed_amount, actual_spent FROM budgets WHERE department_id = 1 AND fiscal_year = 2026
+      SELECT committed_amount, actual_spent FROM budgets WHERE department_id = 1 AND fiscal_year = ${currentFiscalYear()}
     `).get();
     assert.equal(afterApprove.actual_spent, payableCents);
     assert.equal(afterApprove.committed_amount, committed - payableCents);
@@ -622,7 +623,7 @@ describe('invoice exception short_pay', () => {
     assert.equal(afterPay.payable_total_cents, payableCents);
 
     const budgetAfterPay = await db.prepare(`
-      SELECT committed_amount, actual_spent FROM budgets WHERE department_id = 1 AND fiscal_year = 2026
+      SELECT committed_amount, actual_spent FROM budgets WHERE department_id = 1 AND fiscal_year = ${currentFiscalYear()}
     `).get();
     assert.equal(budgetAfterPay.actual_spent, payableCents);
   });

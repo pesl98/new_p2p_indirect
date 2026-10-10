@@ -439,6 +439,7 @@ CREATE TABLE IF NOT EXISTS payment_runs (
   payment_date TEXT,
   payment_reference TEXT,
   actor_name TEXT NOT NULL,
+  created_by_user_id INTEGER,
   billed_total_cents INTEGER NOT NULL DEFAULT 0,
   payable_total_cents INTEGER NOT NULL DEFAULT 0,
   invoice_count INTEGER NOT NULL DEFAULT 0,

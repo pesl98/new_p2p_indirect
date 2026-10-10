@@ -1,4 +1,5 @@
 import { describe, test } from 'node:test';
+import { currentFiscalYear } from './fiscalYear.js';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -193,7 +194,7 @@ describe('bootstrap-org CLI', () => {
     assert.equal(mkt.name, 'Marketing & Brand');
     const budget = await db.prepare(
       `SELECT total_budget, committed_amount, actual_spent FROM budgets
-       WHERE department_id = (SELECT id FROM departments WHERE code = 'MKT') AND fiscal_year = 2026`
+       WHERE department_id = (SELECT id FROM departments WHERE code = 'MKT') AND fiscal_year = ${currentFiscalYear()}`
     ).get();
     assert.equal(Number(budget.total_budget), 15_000_000);
     assert.equal(Number(budget.committed_amount), 178_210);

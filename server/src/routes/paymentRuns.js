@@ -49,7 +49,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const body = withSessionActor(req, req.body, { names: ['actor_name', 'payer_name'] });
+    const body = withSessionActor(req, req.body, { ids: ['actor_id'], names: ['actor_name', 'payer_name'] });
     const created = await createPaymentRun(req.db, body);
     res.status(201).json(created);
   } catch (error) {
@@ -59,7 +59,7 @@ router.post('/', async (req, res) => {
 
 router.post('/:id/execute', async (req, res) => {
   try {
-    const body = withSessionActor(req, req.body, { names: ['actor_name', 'payer_name'] });
+    const body = withSessionActor(req, req.body, { ids: ['actor_id'], names: ['actor_name', 'payer_name'] });
     const executed = await executePaymentRun(req.db, req.params.id, body);
     res.json(executed);
   } catch (error) {
