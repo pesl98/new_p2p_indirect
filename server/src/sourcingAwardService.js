@@ -200,13 +200,22 @@ export async function proposeAward(db, actor, id, input = {}, options = {}) {
     created = await withBusyRetry(() => db.immediateTransaction(async () => {
       // One read for both guards. The unique index on open awards backs the insert.
       const guard = await db.prepare(`
-        SELECT e.status,
+        SELECT e.status, e.owner_user_id, e.department_id, e.row_version,
                (SELECT COUNT(*) FROM sourcing_awards a
                  WHERE a.event_id = e.id AND a.status IN ('pending_approval', 'approved')) AS open_awards
         FROM sourcing_events e WHERE e.id = ?
       `).get(event.id);
       if (Number(guard?.open_awards || 0) > 0) fail('This RFQ already has an open award.', 409, 'award_already_open');
       if (guard?.status !== 'evaluated') fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+      // The chain above was built for this owner and department. If either moved in the gap
+      // (an admin reassigned the owner), the award would be stranded on the wrong chain.
+      if (
+        Number(guard.owner_user_id) !== Number(event.owner_user_id)
+        || Number(guard.department_id) !== Number(event.department_id)
+        || Number(guard.row_version) !== Number(event.row_version)
+      ) {
+        fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+      }
 
       const prNumber = await nextDocumentNumber(db, 'pr', nowDate.getFullYear());
       const pr = await db.prepare(`

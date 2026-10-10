@@ -91,4 +91,54 @@ describe('B4: statement budget at the caps (50 lines, 20 suppliers)', () => {
       assert.equal((await db.prepare(`SELECT status FROM purchase_requisitions WHERE id = ?`).get(award.body.award.requisition.id)).status, 'converted_to_po');
     });
   });
+
+  test('final approval of an award whose RFQ came from a source requisition stays within 24, at any size', async () => {
+    const counts = {};
+    for (const [lines, suppliers] of [[2, 2], [50, 20]]) {
+      const db = await seedWorld();
+      const caps = await seedCapsEvent(db, { lines, suppliers, sourcePr: true });
+      const watch = watchPipeline(db);
+      try {
+        await withApp(db, async (base) => {
+          assert.equal((await call(base, 3, 'POST', `/api/sourcing/events/${caps.eventId}/coi`, { status: 'none_declared' })).status, 200);
+          const evaluated = await call(base, 3, 'POST', `/api/sourcing/events/${caps.eventId}/evaluate`, { override_reason: 'Geen scores nodig in deze test' });
+          assert.equal(evaluated.status, 200, JSON.stringify(evaluated.body));
+          const award = await call(base, 3, 'POST', `/api/sourcing/events/${caps.eventId}/awards`, {
+            award_type: 'split',
+            reason: 'Spreiding over leveranciers',
+            lines: caps.lineIds.map((id, index) => ({ event_line_id: id, bid_id: caps.bids[index % caps.bids.length].bidId }))
+          });
+          assert.equal(award.status, 201, JSON.stringify(award.body));
+          const before = Number((await db.prepare(`SELECT committed_amount FROM budgets WHERE department_id = 1`).get()).committed_amount);
+          const mark = watch.results.length;
+          for (let guard = 0; guard < 6; guard += 1) {
+            const step = await db.prepare(`SELECT id, approver_id FROM approval_requests WHERE requisition_id = ? AND status = 'pending'`).get(award.body.award.requisition.id);
+            if (!step) break;
+            const decided = await call(base, step.approver_id, 'POST', `/api/approvals/${step.id}/decide`, { decision: 'approved', comments: 'ok' });
+            assert.equal(decided.status, 200, JSON.stringify(decided.body));
+          }
+          const rows = watch.results.slice(mark);
+          counts[`${lines}x${suppliers}`] = rows.map((row) => row.pipeline);
+          for (const row of rows) assert.ok(row.pipeline <= 24, `${lines}x${suppliers}: approval used ${row.pipeline} pipeline statements`);
+
+          // The release still happened, and it is recorded once, in the approved row.
+          const after = Number((await db.prepare(`SELECT committed_amount FROM budgets WHERE department_id = 1`).get()).committed_amount);
+          assert.equal(after, before - 30000 * lines + 30000 * lines, 'source released, award committed');
+          const superseded = await db.prepare(`SELECT details FROM audit_logs WHERE action = 'SOURCING_SOURCE_REQUISITION_SUPERSEDED'`).all();
+          assert.equal(superseded.length, 1);
+          const separate = await db.prepare(`SELECT COUNT(*) AS n FROM compliance_audit_events WHERE action = 'SOURCING_SOURCE_REQUISITION_SUPERSEDED'`).get();
+          assert.equal(Number(separate.n), 0, 'no second compliance row');
+          const approved = await db.prepare(`SELECT details FROM compliance_audit_events WHERE action = 'SOURCING_AWARD_APPROVED'`).get();
+          const details = JSON.parse(approved.details);
+          assert.equal(details.source_requisition_superseded.released_cents, 30000 * lines);
+          assert.equal(details.source_requisition_superseded.pr_number, 'PR-SRC-CAPS');
+        });
+      } finally {
+        watch.restore();
+      }
+    }
+    console.log(`# SOURCE-PR FINAL APPROVAL pipeline statements: ${JSON.stringify(counts)}`);
+    const finals = Object.values(counts).map((rows) => rows[rows.length - 1]);
+    assert.equal(finals[0], finals[1], 'constant at every size');
+  });
 });

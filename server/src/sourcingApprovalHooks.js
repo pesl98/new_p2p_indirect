@@ -17,16 +17,27 @@ export function awardSodThresholdCents(env = process.env) {
   return Number.isInteger(raw) && raw >= 0 ? raw : APPROVAL_TIER2_CENTS;
 }
 
-export async function loadAwardByRequisition(db, requisitionId) {
+/**
+ * One read for everything the approval hooks need: the award, its event, the source
+ * requisition, the evaluators who declared a conflict, and the deciding user's role.
+ * It exists to keep the final approval inside the Turso statement budget (plan §6.1).
+ */
+export async function loadAwardByRequisition(db, requisitionId, { deciderUserId = null } = {}) {
   return db.prepare(`
     SELECT a.id AS award_id, a.event_id, a.award_type, a.status AS award_status, a.total_cents,
            a.is_lowest, a.reason, a.award_requisition_id,
            a.proposed_by_user_id, a.owner_user_id AS award_owner_user_id,
-           e.event_number, e.owner_user_id, e.source_requisition_id, e.currency, e.status AS event_status
+           e.event_number, e.owner_user_id, e.source_requisition_id, e.currency, e.status AS event_status,
+           src.pr_number AS src_pr_number, src.department_id AS src_department_id,
+           src.total_amount AS src_total_amount, src.status AS src_status,
+           (SELECT group_concat(ev.user_id) FROM sourcing_evaluators ev
+             WHERE ev.event_id = a.event_id AND ev.coi_status = 'conflict_declared') AS conflict_user_ids,
+           (SELECT u.role FROM users u WHERE u.id = ?) AS decider_role
     FROM sourcing_awards a
     JOIN sourcing_events e ON e.id = a.event_id
+    LEFT JOIN purchase_requisitions src ON src.id = e.source_requisition_id
     WHERE a.award_requisition_id = ?
-  `).get(requisitionId);
+  `).get(deciderUserId, requisitionId);
 }
 
 /**
@@ -47,13 +58,20 @@ export async function awardExclusions(db, eventId, ownerUserId, proposerUserId =
 
 /** Everyone an award decision must not involve (stored owner and proposer, current owner, conflicts). */
 export async function restrictedAwardUsers(db, award) {
-  const ids = await awardExclusions(
-    db,
-    award.event_id,
-    award.award_owner_user_id ?? award.owner_user_id,
-    award.proposed_by_user_id
-  );
-  const set = new Set(ids);
+  const set = new Set([
+    Number(award.award_owner_user_id ?? award.owner_user_id),
+    Number(award.proposed_by_user_id)
+  ]);
+  if (award.conflict_user_ids !== undefined) {
+    // Already read together with the award (the approval path).
+    for (const id of String(award.conflict_user_ids || '').split(',').filter(Boolean)) set.add(Number(id));
+  } else {
+    const rows = await db.prepare(`
+      SELECT user_id FROM sourcing_evaluators WHERE event_id = ? AND coi_status = 'conflict_declared'
+    `).all(award.event_id);
+    for (const row of rows) set.add(Number(row.user_id));
+  }
+  set.delete(NaN);
   set.add(Number(award.owner_user_id));
   set.delete(0);
   return set;
@@ -80,7 +98,7 @@ export async function awardExclusionsForRequisition(db, requisitionId) {
  * an admin deciding through a delegation they set up for themselves.
  */
 export async function guardAwardDecision(db, pr, { approverId, actorCheck, stepApproverId = null, makeError }) {
-  const award = await loadAwardByRequisition(db, pr.id);
+  const award = await loadAwardByRequisition(db, pr.id, { deciderUserId: approverId });
   if (!award) return null;
   if (award.award_status !== 'pending_approval') return award;
   const restricted = await restrictedAwardUsers(db, award);
@@ -102,42 +120,31 @@ export async function guardAwardDecision(db, pr, { approverId, actorCheck, stepA
   return award;
 }
 
-async function actorFor(db, userId, fallbackName) {
-  const user = await db.prepare(`SELECT id, name, role FROM users WHERE id = ?`).get(userId);
-  return actorFromSession({ id: userId, name: user?.name || fallbackName || 'Approver', role: user?.role || null });
+function actorFor(award, userId, fallbackName) {
+  return actorFromSession({ id: userId, name: fallbackName || 'Approver', role: award?.decider_role || null });
 }
 
 /**
- * Release the source PR's budget commitment before the award PR commits, so
- * the department is charged the awarded amount rather than estimate + award.
+ * Release the source PR's budget commitment before the award PR commits, so the
+ * department is charged the awarded amount rather than estimate + award. One UPDATE;
+ * the history is written with the award's own rows in onAwardApproved.
  */
-export async function releaseSourceCommitment(db, award, { userId, actorName }) {
-  if (!award?.source_requisition_id) return 0;
-  const source = await db.prepare(`
-    SELECT id, pr_number, department_id, total_amount, status FROM purchase_requisitions WHERE id = ?
-  `).get(award.source_requisition_id);
-  if (!source || source.status !== 'approved') return 0;
-  const released = Number(source.total_amount) || 0;
+export async function releaseSourceCommitment(db, award) {
+  if (!award?.source_requisition_id || award.src_status !== 'approved') return null;
+  const released = Number(award.src_total_amount) || 0;
   await db.prepare(`
     UPDATE budgets SET committed_amount = MAX(0, committed_amount - ?)
     WHERE department_id = ? AND fiscal_year = ?
-  `).run(released, source.department_id, currentFiscalYear());
-  await db.prepare(`
-    INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-    VALUES ('requisition', ?, 'SOURCING_SOURCE_REQUISITION_SUPERSEDED', ?, ?)
-  `).run(source.id, actorName, `Superseded by RFQ ${award.event_number}; released ${released} cents of committed budget.`);
-  await appendComplianceEvent(db, {
-    ...(await actorFor(db, userId, actorName)),
-    action: 'SOURCING_SOURCE_REQUISITION_SUPERSEDED',
-    entity_type: 'requisition',
-    entity_id: source.id,
-    details: JSON.stringify({ event_number: award.event_number, released_cents: released })
-  });
-  return released;
+  `).run(released, award.src_department_id, currentFiscalYear());
+  return { source_requisition_id: Number(award.source_requisition_id), pr_number: award.src_pr_number, released_cents: released };
 }
 
-/** Called after the award PR's budget is committed. */
-export async function onAwardApproved(db, award, pr, { userId, actorName, now = new Date() }) {
+/**
+ * Called after the award PR's budget is committed. History rows (the award and, when
+ * there was one, the superseded source requisition) are one INSERT, and the release is
+ * recorded in the single SOURCING_AWARD_APPROVED compliance row.
+ */
+export async function onAwardApproved(db, award, pr, { userId, actorName, now = new Date(), release = null }) {
   const nowIso = now.toISOString();
   await db.prepare(`
     UPDATE sourcing_awards SET status = 'approved', decided_at = ? WHERE id = ? AND status = 'pending_approval'
@@ -157,16 +164,27 @@ export async function onAwardApproved(db, award, pr, { userId, actorName, now = 
     SELECT supplier_id, SUM(line_total_cents) AS total_cents
     FROM sourcing_award_lines WHERE award_id = ? GROUP BY supplier_id ORDER BY supplier_id
   `).all(award.award_id);
+  const history = [['sourcing_event', award.event_id, 'AWARDED', actorName, `RFQ ${award.event_number} awarded via ${pr.pr_number}`]];
+  if (release) {
+    history.push([
+      'requisition', release.source_requisition_id, 'SOURCING_SOURCE_REQUISITION_SUPERSEDED', actorName,
+      `Superseded by RFQ ${award.event_number}; released ${release.released_cents} cents of committed budget.`
+    ]);
+  }
   await db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-    VALUES ('sourcing_event', ?, 'AWARDED', ?, ?)
-  `).run(award.event_id, actorName, `RFQ ${award.event_number} awarded via ${pr.pr_number}`);
+    VALUES ${history.map(() => '(?, ?, ?, ?, ?)').join(', ')}
+  `).run(...history.flat());
   await appendComplianceEvent(db, {
-    ...(await actorFor(db, userId, actorName)),
+    ...actorFor(award, userId, actorName),
     action: 'SOURCING_AWARD_APPROVED',
     entity_type: 'sourcing_award',
     entity_id: award.award_id,
-    details: JSON.stringify({ award_pr_number: pr.pr_number, total_cents: award.total_cents })
+    details: JSON.stringify({
+      award_pr_number: pr.pr_number,
+      total_cents: award.total_cents,
+      ...(release ? { source_requisition_superseded: release } : {})
+    })
   });
   await enqueueWebhook(db, {
     eventType: WEBHOOK_EVENTS.SOURCING_EVENT_AWARDED,
@@ -197,7 +215,7 @@ export async function onAwardRejected(db, award, pr, { userId, actorName, now = 
     VALUES ('sourcing_event', ?, 'AWARD_REJECTED', ?, ?)
   `).run(award.event_id, actorName, `Award ${pr.pr_number} for RFQ ${award.event_number} was rejected`);
   await appendComplianceEvent(db, {
-    ...(await actorFor(db, userId, actorName)),
+    ...actorFor(award, userId, actorName),
     action: 'SOURCING_AWARD_REJECTED',
     entity_type: 'sourcing_award',
     entity_id: award.award_id,

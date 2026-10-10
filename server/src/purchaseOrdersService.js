@@ -639,9 +639,12 @@ export async function issueAwardPurchaseOrders(db, {
   }
 
   kickWebhookDispatch(db);
+  // `replayed` means "nothing new, and this is the complete answer". A call that wrote
+  // nothing because a parallel caller got there first, while suppliers are still missing,
+  // is a progress report (done: false), not a replay.
   return {
     purchase_orders: await loadAwardPurchaseOrders(db, awardId),
-    replayed: createdThisCall === 0,
+    replayed: complete && createdThisCall === 0,
     done: complete,
     remaining
   };

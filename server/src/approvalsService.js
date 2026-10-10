@@ -324,7 +324,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
 
     // Award PR: free the source PR's commitment first so the department is
     // charged the awarded amount, not estimate + award.
-    if (award) await releaseSourceCommitment(db, award, { userId: approver_id, actorName: actor });
+    const release = award ? await releaseSourceCommitment(db, award) : null;
 
     const budget = await db.prepare(
       `SELECT * FROM budgets WHERE department_id = ? AND fiscal_year = ?`
@@ -377,7 +377,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       );
     }
 
-    if (award) await onAwardApproved(db, award, pr, { userId: approver_id, actorName: actor });
+    if (award) await onAwardApproved(db, award, pr, { userId: approver_id, actorName: actor, release });
 
     return {
       outcome: 'approved',

@@ -27,9 +27,11 @@ export function bidPricesVisible(event, now = new Date()) {
 
 export function actorMaySeeBidPrices(actor, event, evaluators = []) {
   if (!actor) return false;
+  const row = evaluators.find((item) => Number(item.user_id) === Number(actor.id));
+  // A declared conflict always wins, for finance and admin too (same rule as the award view).
+  if (row?.coi_status === 'conflict_declared') return false;
   if (actor.role === 'admin' || actor.role === 'finance') return true;
   if (Number(event?.owner_user_id) === Number(actor.id)) return true;
-  const row = evaluators.find((item) => Number(item.user_id) === Number(actor.id));
   return row?.coi_status === 'none_declared';
 }
 

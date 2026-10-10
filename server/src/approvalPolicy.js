@@ -132,8 +132,33 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db, exclud
   const deptId = Number(departmentId);
   const steps = [];
   const excluded = new Set((excludeUserIds || []).map(Number).filter(Number.isInteger));
+  // Everyone already on the chain, and everyone put there by a fallback. A fallback must
+  // not pick someone who already has a step, and a later step must not pick a fallback
+  // user again (that gave chains like [6, 6, 4]). When nobody else is left the old
+  // behaviour stays: the same user may appear twice before the step fails closed.
+  const used = new Set();
+  const fallbackPicked = new Set();
 
-  const deptApprover = await resolveAllowed(db, await resolveDepartmentApprover(db, deptId), excluded, deptId, { departmentStep: true });
+  async function resolveStep(primary, options = {}) {
+    const wasExcluded = excluded.has(Number(primary.id));
+    let chosen = primary;
+    if (wasExcluded || fallbackPicked.has(Number(primary.id))) {
+      const avoid = new Set([...excluded, ...fallbackPicked, ...used]);
+      try {
+        chosen = await resolveAllowed(db, primary, avoid, deptId, options);
+      } catch (error) {
+        if (error?.code !== 'sod_no_alternate_approver') throw error;
+        // Nobody new is left. An excluded primary still has to be replaced; a repeated
+        // fallback user is kept as it was before.
+        chosen = wasExcluded ? await resolveAllowed(db, primary, excluded, deptId, options) : primary;
+      }
+      fallbackPicked.add(Number(chosen.id));
+    }
+    used.add(Number(chosen.id));
+    return chosen;
+  }
+
+  const deptApprover = await resolveStep(await resolveDepartmentApprover(db, deptId), { departmentStep: true });
   steps.push({
     step_order: 1,
     approver_id: deptApprover.id,
@@ -141,7 +166,7 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db, exclud
   });
 
   if (amount > APPROVAL_TIER2_CENTS) {
-    const procurement = await resolveAllowed(db, await resolveProcurement(db), excluded, deptId);
+    const procurement = await resolveStep(await resolveProcurement(db));
     steps.push({
       step_order: steps.length + 1,
       approver_id: procurement.id,
@@ -150,7 +175,7 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db, exclud
   }
 
   if (amount > APPROVAL_TIER3_CENTS) {
-    const executive = await resolveAllowed(db, await resolveExecutive(db), excluded, deptId);
+    const executive = await resolveStep(await resolveExecutive(db));
     steps.push({
       step_order: steps.length + 1,
       approver_id: executive.id,

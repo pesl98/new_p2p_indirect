@@ -143,18 +143,28 @@ export function call(base, userId, method, path, body) {
  * bids, every bid complete at 30000 cents a line (so the total is above € 10.000
  * and the chain has three steps). Supplier 2 plus new suppliers from id 10 are used.
  */
-export async function seedCapsEvent(db, { lines = 50, suppliers = 20, number = 'RFQ-2026-180' } = {}) {
+export async function seedCapsEvent(db, { lines = 50, suppliers = 20, number = 'RFQ-2026-180', sourcePr = false } = {}) {
   const supplierIds = [2];
   for (let id = 10; supplierIds.length < suppliers; id += 1) {
     await db.prepare(`INSERT INTO suppliers (id, name, code, email, status) VALUES (?, ?, ?, ?, 'active')`)
       .run(id, `Cap ${id}`, `CAP${id}`, `cap${id}@supply.test`);
     supplierIds.push(id);
   }
+  let sourcePrId = null;
+  if (sourcePr) {
+    // An approved requisition whose commitment the award supersedes.
+    await db.prepare(`
+      INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date)
+      VALUES ('PR-SRC-CAPS', 1, 1, 'approved', ?, 'source', '2026-12-01')
+    `).run(30000 * lines);
+    sourcePrId = Number((await db.prepare(`SELECT id FROM purchase_requisitions WHERE pr_number = 'PR-SRC-CAPS'`).get()).id);
+    await db.prepare(`UPDATE budgets SET committed_amount = committed_amount + ?`).run(30000 * lines);
+  }
   await db.prepare(`
-    INSERT INTO sourcing_events (event_number, kind, title, department_id, owner_user_id, status, currency,
+    INSERT INTO sourcing_events (event_number, kind, title, department_id, owner_user_id, source_requisition_id, status, currency,
       deadline_at, row_version, created_at, updated_at)
-    VALUES (?, 'rfq', 'Caps', 1, 3, 'published', 'EUR', '2999-01-01T00:00:00Z', 0, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')
-  `).run(number);
+    VALUES (?, 'rfq', 'Caps', 1, 3, ?, 'published', 'EUR', '2999-01-01T00:00:00Z', 0, '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')
+  `).run(number, sourcePrId);
   const eventId = Number((await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = ?`).get(number)).id);
   for (let n = 1; n <= lines; n += 1) {
     await db.prepare(`
@@ -191,7 +201,7 @@ export async function seedCapsEvent(db, { lines = 50, suppliers = 20, number = '
   await db.prepare(`
     UPDATE sourcing_events SET status = 'closed', deadline_at = '2026-10-10T00:00:00Z', closed_at = '2026-10-10T00:00:00Z' WHERE id = ?
   `).run(eventId);
-  return { eventId, lineIds, bids };
+  return { eventId, lineIds, bids, sourcePrId };
 }
 
 /**
