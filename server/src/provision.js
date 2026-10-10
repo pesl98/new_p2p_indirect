@@ -70,6 +70,7 @@ export const EXPECTED_TABLES = [
   'sourcing_file_blobs',
   'sourcing_files',
   'sourcing_invitations',
+  'sourcing_mail_log', 'integration_sourcing_links',
   'sourcing_portal_rate_windows',
   'sourcing_questions',
   'sourcing_scores',

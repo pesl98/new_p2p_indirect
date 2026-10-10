@@ -677,6 +677,9 @@ async function migrateAwardColumns(database) {
       await maybe(database.exec(AWARD_PURCHASE_ORDER_INDEX_SQL));
     }
   }
+  if (tables.includes('sourcing_events') && !(await tableHasColumn(database, 'sourcing_events', 'outcome_published_at'))) {
+    await maybe(database.exec(`ALTER TABLE sourcing_events ADD COLUMN outcome_published_at TEXT`));
+  }
   if (tables.includes('sourcing_awards') && !(await tableHasColumn(database, 'sourcing_awards', 'owner_user_id'))) {
     await maybe(database.exec(`ALTER TABLE sourcing_awards ADD COLUMN owner_user_id INTEGER`));
   }

@@ -647,6 +647,8 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  getMailStatus: () =>
+    apiFetch(`${API_BASE}/integrations/mail-status`).then((r) => jsonOk(r, t('errors.integrations'))),
   getIntegrationConfig: () =>
     apiFetch(`${API_BASE}/integrations/config`).then((r) => jsonOk(r, t('errors.integrationConfig'))),
   getApiKeys: () =>
@@ -821,6 +823,7 @@ export const api = {
   reassignSourcingOwner: (id, data) => sourcingPost(id, 'owner', data),
   proposeSourcingAward: (id, data) => sourcingPost(id, 'awards', data),
   createSourcingPurchaseOrders: (id) => sourcingPost(id, 'purchase-orders', {}),
+  publishSourcingOutcome: (id) => sourcingPost(id, 'outcome', {}),
   getSourcingAward: (id) =>
     apiFetch(`${API_BASE}/sourcing/events/${id}/award`).then((r) => proposalJson(r, t('errors.sourcing'))),
   getAwardSnapshot: (requisitionId) =>

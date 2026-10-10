@@ -23,7 +23,7 @@ import {
   updateEvent
 } from '../sourcingService.js';
 import { SourcingStatusError } from '../sourcingStatus.js';
-import { createAwardPurchaseOrders, getAward, proposeAward } from '../sourcingAwardService.js';
+import { createAwardPurchaseOrders, getAward, proposeAward, publishOutcome } from '../sourcingAwardService.js';
 import {
   buyerEvaluation,
   completeEvaluation,
@@ -127,7 +127,7 @@ router.get('/events/:id', async (req, res) => {
 
 router.patch('/events/:id', async (req, res) => {
   try {
-    res.json(await updateEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await updateEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -135,7 +135,7 @@ router.patch('/events/:id', async (req, res) => {
 
 router.post('/events/:id/cancel', async (req, res) => {
   try {
-    res.json(await cancelEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await cancelEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -143,7 +143,7 @@ router.post('/events/:id/cancel', async (req, res) => {
 
 router.post('/events/:id/publish', async (req, res) => {
   try {
-    res.json(await publishEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await publishEvent(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -151,7 +151,7 @@ router.post('/events/:id/publish', async (req, res) => {
 
 router.post('/events/:id/deadline', async (req, res) => {
   try {
-    res.json(await extendDeadline(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await extendDeadline(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -159,7 +159,7 @@ router.post('/events/:id/deadline', async (req, res) => {
 
 router.post('/events/:id/invitations/:invitationId/rotate', async (req, res) => {
   try {
-    res.json(await rotateInvitationLink(req.db, actor(req), req.params.id, req.params.invitationId, { now: now(req) }));
+    res.json(await rotateInvitationLink(req.db, actor(req), req.params.id, req.params.invitationId, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -167,7 +167,7 @@ router.post('/events/:id/invitations/:invitationId/rotate', async (req, res) => 
 
 router.post('/events/:id/invitations/:invitationId/revoke', async (req, res) => {
   try {
-    res.json(await revokeInvitationLink(req.db, actor(req), req.params.id, req.params.invitationId, req.body || {}, { now: now(req) }));
+    res.json(await revokeInvitationLink(req.db, actor(req), req.params.id, req.params.invitationId, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -183,7 +183,7 @@ router.get('/events/:id/comparison', async (req, res) => {
 
 router.post('/events/:id/coi', async (req, res) => {
   try {
-    res.json(await declareCoi(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await declareCoi(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -191,7 +191,7 @@ router.post('/events/:id/coi', async (req, res) => {
 
 router.post('/events/:id/scores', async (req, res) => {
   try {
-    res.json(await recordScores(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await recordScores(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -199,7 +199,7 @@ router.post('/events/:id/scores', async (req, res) => {
 
 router.post('/events/:id/evaluate', async (req, res) => {
   try {
-    res.json(await completeEvaluation(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await completeEvaluation(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -207,7 +207,7 @@ router.post('/events/:id/evaluate', async (req, res) => {
 
 router.post('/events/:id/owner', async (req, res) => {
   try {
-    res.json(await reassignOwner(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.json(await reassignOwner(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }
@@ -223,7 +223,16 @@ router.get('/events/:id/award', async (req, res) => {
 
 router.post('/events/:id/awards', async (req, res) => {
   try {
-    res.status(201).json(await proposeAward(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+    res.status(201).json(await proposeAward(req.db, actor(req), req.params.id, req.body || {}, { now: now(req), ...req.mailOptions }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/outcome', async (req, res) => {
+  try {
+    const result = await publishOutcome(req.db, actor(req), req.params.id, { now: now(req), ...req.mailOptions });
+    res.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     sendError(res, error);
   }
@@ -248,7 +257,7 @@ router.get('/events/:id/questions', async (req, res) => {
 
 router.post('/events/:id/questions/:questionId/answer', async (req, res) => {
   try {
-    res.json(await answerQuestion(req.db, actor(req), req.params.id, req.params.questionId, req.body || {}, { now: now(req) }));
+    res.json(await answerQuestion(req.db, actor(req), req.params.id, req.params.questionId, req.body || {}, { now: now(req), ...req.mailOptions }));
   } catch (error) {
     sendError(res, error);
   }

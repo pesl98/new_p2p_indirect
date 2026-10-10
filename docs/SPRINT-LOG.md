@@ -74,7 +74,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | | in review |
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
-| 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
+| 8d | 2026-10-10 | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | in review |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -535,7 +535,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ## Sprint 8d — Hardening, email, integrations, demo seed, and docs
 
-**Date:**
+**Date:** 2026-10-10
 
 **Goal:** Sourcing is ready for one customer. Invites go out by email, with copy-link as the fallback. Integrations, an optional tick, the demo seed, and the docs land here.
 
@@ -543,7 +543,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Merge SHA:**
 
-**Status:** planned.
+**Status:** in review.
 
 ### Done when
 
@@ -554,4 +554,12 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ### Decisions
 
-- **Not started.** Peter's 2026-10-08 decisions that bind this sprint: email is `none` (copy link) by default plus optional `smtp`, no HTTP mail provider yet. Public tenders stay out of scope. Losing-bidder notices stay open (default: the buyer decides). Retention and the pricing tier stay open. CORS allowlisting and the webhook cron are this sprint, not 8.0.
+- **Mail.** `sourcingMail.js` is the only sender for RFQ mail. `runMailAfterCommit` runs the send after the business transaction. On Vercel it is kept alive with `waitUntil`; with provider `none` or in tests it is awaited. Failures are written to `sourcing_mail_log` (kind, status, provider; no text, address or link) and logged by code only. New mail: Q&A answer (private to the asker, shared to non-declined invitees), bid receipt (no amounts, none on a replay or a late bid), award outcome (no amounts, no links).
+- **Outcome.** `POST /api/sourcing/events/:id/outcome` is owner or admin, only on an `awarded` event, idempotent by a conditional update. It audits, writes a compliance event, and mails every bidder. The portal `outcome` is null until it is shared; a winner sees own lines and prices, others only `awarded: false`. This resolves the open losing-bidder question as "the buyer decides when to share".
+- **Integrations.** Scopes `sourcing:read` and `sourcing:write`. Sealing applies to keys through `loadMachineBids` in the bid read model (the only module that names bid tables). A draft is created for the key's owner (procurement or admin) and is idempotent on `external_id` through `integration_sourcing_links` (a new table; the entity-links table is not rebuilt) plus `Idempotency-Key`. No publish, award, or cancel for a key. Responses carry no contact emails, links, or tokens.
+- **Tick.** `/api/sourcing/tick` is exempt from the session and needs `CRON_SECRET` (constant-time compare). It closes up to 50 due RFQs and drains the outbox. Not scheduled by default.
+- **CORS.** The allowlist is `CORS_ORIGINS` plus the origin of `APP_BASE_URL`. Denied origins are logged once each. Development with an empty allowlist stays open.
+- **Demo seed.** `sourcingDemoSeed.js` is called from `npm run seed`. RFQ 3 goes through the real services (evaluate, propose, approve, convert). Bids are written while the RFQ is still open, then it is closed, because a database trigger refuses a bid after the deadline.
+- **Docs.** Deploy manual env table and a go-live checklist (8.11), system manual, onboarding walkthrough.
+- **Not verified here.** 4 MiB uploads and deadline-rush concurrency need a Vercel preview.
+- **Peter's earlier decisions** that bind this sprint: Peter's 2026-10-08 decisions that bind this sprint: email is `none` (copy link) by default plus optional `smtp`, no HTTP mail provider yet. Public tenders stay out of scope. Losing-bidder notices stay open (default: the buyer decides). Retention and the pricing tier stay open. CORS allowlisting and the webhook cron are this sprint, not 8.0.

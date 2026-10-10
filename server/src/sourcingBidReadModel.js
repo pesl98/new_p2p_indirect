@@ -214,3 +214,37 @@ export async function readBuyerBidFile(db, event, actor, fileId, now = new Date(
   await recordBidsOpened(db, actor, event, now);
   return { ...meta, bytes: blob.bytes };
 }
+
+/**
+ * Bids for a machine client (an API key with sourcing:read). Sealing applies
+ * to keys exactly as to people: nothing before the deadline, nothing for an
+ * RFQ cancelled before it. No contact emails, links, files or notes.
+ */
+export async function loadMachineBids(db, event, now = new Date()) {
+  if (!bidPricesVisible(event, now)) return { sealed: true, bids: [] };
+  const revisions = await db.prepare(`
+    SELECT b.id AS bid_id, s.code AS supplier_code, s.name AS supplier_name,
+           b.status AS bid_status, r.revision, r.total_cents, r.quoted_line_count,
+           r.validity_until, r.default_lead_time_days, r.submitted_at
+    FROM sourcing_bids b
+    JOIN sourcing_invitations i ON i.id = b.invitation_id
+    JOIN suppliers s ON s.id = i.supplier_id
+    JOIN sourcing_bid_revisions r ON r.bid_id = b.id AND r.revision = b.current_revision
+    WHERE b.event_id = ? AND b.status = 'submitted'
+    ORDER BY b.id ASC
+  `).all(event.id);
+  const lines = await db.prepare(`
+    SELECT l.bid_id, l.event_line_id, l.quoted, l.unit_price_cents, l.line_total_cents, l.lead_time_days
+    FROM sourcing_bid_lines l
+    JOIN sourcing_bids b ON b.id = l.bid_id AND b.current_revision = l.revision
+    WHERE b.event_id = ?
+    ORDER BY l.event_line_id ASC
+  `).all(event.id);
+  return {
+    sealed: false,
+    bids: revisions.map(({ bid_id: bidId, ...rest }) => ({
+      ...rest,
+      lines: lines.filter((line) => line.bid_id === bidId).map(({ bid_id: _drop, ...line }) => line)
+    }))
+  };
+}

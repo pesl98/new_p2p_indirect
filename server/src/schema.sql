@@ -953,6 +953,8 @@ CREATE TABLE IF NOT EXISTS sourcing_events (
   weight_lead_time INTEGER NOT NULL DEFAULT 15 CHECK (weight_lead_time BETWEEN 0 AND 100),
   weight_quality INTEGER NOT NULL DEFAULT 15 CHECK (weight_quality BETWEEN 0 AND 100),
   target_total_cents INTEGER,
+  -- Set when the buyer shares the award outcome with the suppliers (portal outcome page + notices).
+  outcome_published_at TEXT,
   published_at TEXT, closed_at TEXT, evaluated_at TEXT, awarded_at TEXT,
   cancelled_at TEXT, cancel_reason TEXT,
   cancelled_before_deadline INTEGER CHECK (cancelled_before_deadline IS NULL OR cancelled_before_deadline IN (0, 1)),
@@ -1070,6 +1072,21 @@ CREATE TABLE IF NOT EXISTS sourcing_bid_lines (
   FOREIGN KEY (bid_id) REFERENCES sourcing_bids(id),
   FOREIGN KEY (event_line_id) REFERENCES sourcing_event_lines(id)
 );
+
+-- Delivery record for sourcing mail. It holds what was sent and how it went, never the
+-- message text, never a link or token.
+CREATE TABLE IF NOT EXISTS sourcing_mail_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  invitation_id INTEGER,
+  kind TEXT NOT NULL CHECK (kind IN ('invitation', 'link_rotated', 'deadline_extended', 'cancelled', 'qa_answer', 'bid_receipt', 'award_outcome')),
+  status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'skipped')),
+  provider TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id),
+  FOREIGN KEY (invitation_id) REFERENCES sourcing_invitations(id)
+);
+CREATE INDEX IF NOT EXISTS sourcing_mail_log_event ON sourcing_mail_log (event_id, created_at);
 
 CREATE TABLE IF NOT EXISTS sourcing_questions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1204,3 +1221,12 @@ WHEN (SELECT e.status != 'published' OR e.deadline_at <= NEW.submitted_at
       FROM sourcing_bids b JOIN sourcing_events e ON e.id = b.event_id WHERE b.id = NEW.bid_id)
 BEGIN SELECT RAISE(ABORT, 'sourcing bid after deadline'); END;
 
+
+-- External id for an RFQ draft created by a machine client (idempotent create).
+CREATE TABLE IF NOT EXISTS integration_sourcing_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL UNIQUE,
+  external_id TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (event_id) REFERENCES sourcing_events(id)
+);

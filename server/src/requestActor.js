@@ -37,7 +37,13 @@ export function isIntegrationMachineRoute(req) {
   if (path === '/api/integrations/invoices') return true;
   if (path === '/api/integrations/invoice-proposals') return true;
   if (path.startsWith('/api/integrations/exports/')) return true;
+  if (path === '/api/integrations/sourcing/events' || path.startsWith('/api/integrations/sourcing/events/')) return true;
   return false;
+}
+
+/** The cron tick authenticates itself with CRON_SECRET, not a session. */
+export function isTickRoute(req) {
+  return requestPath(req) === '/api/sourcing/tick';
 }
 
 export function isPortalRoute(req) {
@@ -57,6 +63,7 @@ export function requireApiSession(req, res, next) {
   if (isPublicApiRequest(req)) return next();
   if (isIntegrationMachineRoute(req)) return next();
   if (isPortalRoute(req)) return next();
+  if (isTickRoute(req)) return next();
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }

@@ -17,6 +17,7 @@ import { awardExclusions } from './sourcingApprovalHooks.js';
 import { loadBuyerComparison } from './sourcingBidReadModel.js';
 import { utcIso } from './sourcingConfig.js';
 import { buildMatrix } from './sourcingEvaluationService.js';
+import { awardOutcomeMessage, runMailAfterCommit, sendSourcingMails } from './sourcingMail.js';
 import { assertOwner, assertWriter, closeDueEvents, fail, loadEventRow, writeAudit } from './sourcingService.js';
 
 const SQL_VARIABLE_BUDGET = 900;
@@ -446,4 +447,64 @@ export async function awardSnapshotForRequisition(db, actor, requisitionId) {
     view.total_cents = null;
   }
   return view;
+}
+
+/**
+ * "Uitkomst delen": the buyer decides when suppliers learn the outcome (losing-bidder notices
+ * stay a buyer decision). It sets outcome_published_at, which opens the portal outcome page, and
+ * sends one notice per supplier who bid: awarded or not awarded. Repeating it changes nothing.
+ */
+export async function publishOutcome(db, actor, id, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const event = await loadEventRow(db, id);
+  if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  assertOwner(actor, event);
+  if (event.status !== 'awarded') fail('The award must be approved first.', 409, 'award_not_approved');
+  if (event.outcome_published_at) {
+    return { replayed: true, published_at: event.outcome_published_at, notified: 0 };
+  }
+  const now = utcIso(nowDate);
+  const changed = await withBusyRetry(() => db.immediateTransaction(async () => {
+    const result = await db.prepare(`
+      UPDATE sourcing_events
+      SET outcome_published_at = ?, row_version = row_version + 1, updated_at = ?
+      WHERE id = ? AND status = 'awarded' AND outcome_published_at IS NULL
+    `).run(now, now, event.id);
+    if (!result.changes) return 0;
+    await writeAudit(db, 'sourcing_event', event.id, 'OUTCOME_PUBLISHED', actor.name,
+      `Outcome of ${event.event_number} shared with the suppliers`);
+    await appendComplianceEvent(db, {
+      ...actorFromSession(actor),
+      action: 'SOURCING_OUTCOME_PUBLISHED',
+      entity_type: 'sourcing_event',
+      entity_id: event.id,
+      details: JSON.stringify({ event_number: event.event_number }),
+      created_at: utcTimestamp(nowDate)
+    });
+    return 1;
+  }));
+  if (!changed) {
+    const again = await loadEventRow(db, id);
+    return { replayed: true, published_at: again?.outcome_published_at || null, notified: 0 };
+  }
+  const bidders = await db.prepare(`
+    SELECT i.id, i.supplier_id, i.contact_email,
+           EXISTS (
+             SELECT 1 FROM sourcing_award_lines al
+             JOIN sourcing_awards a ON a.id = al.award_id AND a.status = 'approved'
+             WHERE a.event_id = i.event_id AND al.supplier_id = i.supplier_id
+           ) AS awarded
+    FROM sourcing_invitations i
+    JOIN sourcing_bids b ON b.invitation_id = i.id
+    WHERE i.event_id = ? AND i.revoked_at IS NULL
+    ORDER BY i.id ASC
+  `).all(event.id);
+  const messages = bidders.map((row) => ({
+    invitation_id: row.id,
+    kind: 'award_outcome',
+    to: row.contact_email,
+    ...awardOutcomeMessage(event, Number(row.awarded) === 1)
+  }));
+  await runMailAfterCommit(() => sendSourcingMails(db, event.id, messages, { ...options, now: nowDate }), options);
+  return { replayed: false, published_at: now, notified: messages.length };
 }

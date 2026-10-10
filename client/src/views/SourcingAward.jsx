@@ -57,6 +57,8 @@ export default function SourcingAward({ detail, evaluation, currentUser, onReloa
     setPoProgress(null);
   });
 
+  const publishOutcome = () => run(() => api.publishSourcingOutcome(detail.id));
+
   const propose = () => run(() => api.proposeSourcingAward(detail.id, type === 'full'
     ? { award_type: 'full', bid_id: Number(fullBid), reason }
     : {
@@ -120,6 +122,19 @@ export default function SourcingAward({ detail, evaluation, currentUser, onReloa
               className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold">
               {t('sourcing.award.createPos')}
             </button>
+          )}
+          {detail.status === 'awarded' && (currentUser?.role === 'procurement' || currentUser?.role === 'admin') && (
+            detail.outcome_published_at
+              ? <p className="text-slate-600">{t('sourcing.award.outcomePublished')}</p>
+              : (
+                <div className="space-y-1">
+                  <button type="button" disabled={busy} onClick={publishOutcome}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-semibold">
+                    {t('sourcing.award.publishOutcome')}
+                  </button>
+                  <p className="text-xs text-slate-500">{t('sourcing.award.outcomeHint')}</p>
+                </div>
+              )
           )}
           {poProgress && <p className="text-slate-600">{t('sourcing.award.posProgress', { n: poProgress.remaining })}</p>}
         </div>

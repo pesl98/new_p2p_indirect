@@ -8,6 +8,15 @@ import {
   revokeApiKey
 } from '../apiKeys.js';
 import { publicIntegrationConfig } from '../integrationConfig.js';
+import { mailOverview } from '../sourcingMail.js';
+import { requireSourcingEnabled } from '../sourcingConfig.js';
+import {
+  addSourcingInvitations,
+  createSourcingDraft,
+  listSourcingEvents,
+  readSourcingAward,
+  readSourcingEvent
+} from '../sourcingIntegrations.js';
 import {
   exportInvoices,
   exportPaymentRuns,
@@ -63,6 +72,16 @@ router.use((req, res, next) => {
 
 router.get('/config', (req, res) => {
   res.json(publicIntegrationConfig(req.integrationConfig));
+});
+
+// Mail status for admins: provider, whether it is configured, delivery counts, recent failures.
+// Addresses and message texts are not stored, so they cannot be shown.
+router.get('/mail-status', async (req, res) => {
+  try {
+    res.json(await mailOverview(req.db));
+  } catch (error) {
+    sendError(res, error);
+  }
 });
 
 router.get('/keys', async (req, res) => {
@@ -226,6 +245,51 @@ router.get('/exports/payment-runs', requireMachine('export:read'), async (req, r
     return res.json(exported.body);
   } catch (error) {
     return sendError(res, error);
+  }
+});
+
+const sourcingRead = [requireMachine('sourcing:read'), requireSourcingEnabled];
+const sourcingWrite = [requireMachine('sourcing:write'), requireSourcingEnabled];
+
+router.get('/sourcing/events', ...sourcingRead, async (req, res) => {
+  try {
+    res.json(await listSourcingEvents(req.db, req.query));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/sourcing/events', ...sourcingWrite, async (req, res) => {
+  try {
+    await sendIdempotent(req, res, () => createSourcingDraft(req.db, req.integrationKey, req.body, {
+      currency: req.currency
+    }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.get('/sourcing/events/:number', ...sourcingRead, async (req, res) => {
+  try {
+    res.json(await readSourcingEvent(req.db, req.params.number));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.get('/sourcing/events/:number/award', ...sourcingRead, async (req, res) => {
+  try {
+    res.json(await readSourcingAward(req.db, req.params.number));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/sourcing/events/:number/invitations', ...sourcingWrite, async (req, res) => {
+  try {
+    await sendIdempotent(req, res, () => addSourcingInvitations(req.db, req.integrationKey, req.params.number, req.body));
+  } catch (error) {
+    sendError(res, error);
   }
 });
 

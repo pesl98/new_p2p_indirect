@@ -3,13 +3,15 @@ import { KeyRound, Plus, RefreshCw, RotateCcw } from 'lucide-react';
 import { api } from '../api';
 import { presentError, statusLabel, t } from '../i18n';
 
-const SCOPES = ['vendors:write', 'catalog:write', 'export:read', 'invoices:write'];
+const SCOPES = ['vendors:write', 'catalog:write', 'export:read', 'invoices:write', 'sourcing:read', 'sourcing:write'];
 
 const SCOPE_LABEL_KEYS = {
   'vendors:write': 'admin.integrations.scope.vendorsWrite',
   'catalog:write': 'admin.integrations.scope.catalogWrite',
   'export:read': 'admin.integrations.scope.exportRead',
-  'invoices:write': 'admin.integrations.scope.invoicesWrite'
+  'invoices:write': 'admin.integrations.scope.invoicesWrite',
+  'sourcing:read': 'admin.integrations.scope.sourcingRead',
+  'sourcing:write': 'admin.integrations.scope.sourcingWrite'
 };
 
 function emptyForm() {
@@ -31,6 +33,7 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
   const [keys, setKeys] = useState([]);
   const [events, setEvents] = useState([]);
   const [config, setConfig] = useState(null);
+  const [mail, setMail] = useState(null);
   const [outboxStatus, setOutboxStatus] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -44,11 +47,13 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
     setLoading(true);
     setError('');
     try {
-      const [keyList, outbox, settings] = await Promise.all([
+      const [keyList, outbox, settings, mailStatus] = await Promise.all([
         api.getApiKeys(),
         api.getWebhookOutbox(status),
-        api.getIntegrationConfig()
+        api.getIntegrationConfig(),
+        api.getMailStatus().catch(() => null)
       ]);
+      setMail(mailStatus);
       setKeys(Array.isArray(keyList) ? keyList : []);
       setEvents(Array.isArray(outbox?.events) ? outbox.events : []);
       setConfig(settings);
@@ -160,6 +165,23 @@ export default function IntegrationsView({ currentUser, sessionUser }) {
             <span className="font-mono">WEBHOOK_SIGNING_SECRET</span>{' '}
             {t('admin.integrations.setEnvAfter')}
           </p>
+        )}
+        {mail && (
+          <div className="text-[11px] text-slate-600 mt-3 space-y-1">
+            <p className="font-semibold">{t('admin.integrations.mail.title')}</p>
+            <p>
+              {t('admin.integrations.mail.provider')}: <span className="font-mono">{mail.provider}</span>{' · '}
+              {mail.invalid_provider
+                ? t('admin.integrations.mail.invalid')
+                : mail.configured ? t('admin.integrations.mail.ok') : t('admin.integrations.mail.none')}
+            </p>
+            <p>
+              {t('admin.integrations.mail.failures')}:{' '}
+              {mail.recent_failures?.length
+                ? mail.recent_failures.map((row) => `${row.event_number} (${row.kind})`).join(', ')
+                : t('admin.integrations.mail.none_failures')}
+            </p>
+          </div>
         )}
       </div>
 

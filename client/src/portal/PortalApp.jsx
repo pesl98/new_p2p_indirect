@@ -188,6 +188,24 @@ export default function PortalApp() {
         <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">{label('closed')}</p>
       )}
       {view.invitation.declined_at && <p className="text-sm text-slate-600">{label('declined')}</p>}
+      {view.outcome && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-2">
+          <h2 className="font-semibold">{label('outcomeTitle')}</h2>
+          <p>{view.outcome.awarded ? label('outcomeAwarded') : label('outcomeNotAwarded')}</p>
+          {view.outcome.awarded && view.outcome.lines?.length > 0 && (
+            <>
+              <p className="font-semibold">{label('outcomeLines')}</p>
+              <ul className="list-disc ml-5">
+                {view.outcome.lines.map((line, index) => (
+                  <li key={index}>
+                    {line.description} · {line.quantity} × {formatMoney(line.unit_price_cents)} = {formatMoney(line.line_total_cents)}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-1">
         <p>{label('deadline')}: {formatWhen(view.event.deadline_at, lang)}</p>

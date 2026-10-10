@@ -555,6 +555,18 @@ Rotate or delete the URL, database token, and `SESSION_SECRET` in the password m
 
 ---
 
+## Your first RFQ in five minutes (after sourcing is switched on)
+
+1. **Offerteaanvragen → Nieuwe offerteaanvraag.** Give it a title and a deadline (Europe/Amsterdam unless you add a zone).
+2. Add the lines you want priced (description and quantity). Optionally attach a PDF specification.
+3. Pick the suppliers to invite. Each needs a contact email.
+4. Press **Publiceren**. If mail is configured, each supplier gets an email. Otherwise copy each link from the screen now. It is shown once and not stored.
+5. Suppliers open their link, submit a quote, and may ask questions until the deadline. You cannot see their prices before the deadline.
+6. After the deadline open **Vergelijking**, score the bids, and propose an award. It follows the normal approval chain.
+7. When approved, press **Bestelling(en) aanmaken**, then **Uitkomst delen** to tell the bidders.
+
+---
+
 ## Laptop demo (not a customer)
 
 The README walkthrough still uses local SQLite + seed. That is **training**, not onboarding.

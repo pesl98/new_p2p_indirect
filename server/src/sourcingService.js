@@ -12,6 +12,7 @@ import { LineTypeError, normalizeLineType, resolveServiceBasis } from './lineTyp
 import { isUniqueConstraint } from './masterData.js';
 import { lineTotalCents, requireIntegerCents } from './money.js';
 import { loadMailConfig, mailIsConfigured, sendMail } from './mail/index.js';
+import { qaAnswerMessage, recordMail, runMailAfterCommit, sendSourcingMails } from './sourcingMail.js';
 import {
   MAX_EVENT_FILES,
   MAX_EVENT_FILE_BYTES,
@@ -1048,7 +1049,7 @@ export async function getEvent(db, id, now = new Date()) {
       e.id, e.event_number, e.kind, e.title, e.description, e.category, e.department_id,
       e.owner_user_id, e.source_requisition_id, e.status, e.currency, e.deadline_at,
       e.qa_enabled, e.qa_deadline_at, e.weight_price, e.weight_lead_time, e.weight_quality,
-      e.target_total_cents, e.published_at, e.closed_at, e.evaluated_at, e.awarded_at,
+      e.target_total_cents, e.outcome_published_at, e.published_at, e.closed_at, e.evaluated_at, e.awarded_at,
       e.cancelled_at, e.cancel_reason, e.cancelled_before_deadline, e.row_version,
       e.created_at, e.updated_at,
       u.name AS owner_name,
@@ -1359,6 +1360,13 @@ async function notifyInvitees(db, event, message, options = {}) {
     });
   }
   if (deliveries.length) {
+    const kind = message.tag === 'sourcing_cancelled' ? 'cancelled' : 'deadline_extended';
+    await recordMail(db, event.id, deliveries.map((row) => ({
+      invitation_id: row.invitation_id,
+      kind,
+      status: row.delivery_status === 'sent' ? 'sent' : row.delivery_status === 'failed' ? 'failed' : 'skipped',
+      provider: loadMailConfig(options.env).provider
+    })));
     const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
     const marks = deliveries.map(() => '?').join(', ');
     await db.prepare(`
@@ -1477,11 +1485,8 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   kickWebhookDispatch(db);
   // Links are in the response whether or not SMTP finishes. A hung relay
   // must not hold the request, because the plaintext token is not stored.
-  const mailSettled = deliverInvitationMail(db, existing, minted, options);
-  if (shouldAwaitMail(options)) await mailSettled;
-  else mailSettled.catch((error) => {
-    console.error('mail: background send failed', error?.code || error?.name || 'smtp_error');
-  });
+  // After the commit; on Vercel the send is kept alive with waitUntil.
+  await runMailAfterCommit(() => deliverInvitationMail(db, existing, minted, options), options);
   const view = await getEvent(db, existing.id, nowDate);
   const links = new Map(minted.map((row) => [row.id, row.portal_url]));
   view.invitations = view.invitations.map((row) => (
@@ -1489,13 +1494,6 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   ));
   if (fewInvitations) view.warnings = [...(view.warnings || []), 'few_invitations'];
   return view;
-}
-
-function shouldAwaitMail(options) {
-  if (options.awaitMail === true) return true;
-  if (options.awaitMail === false) return false;
-  if (typeof options.mailTransport === 'function') return false;
-  return !mailIsConfigured(loadMailConfig(options.env));
 }
 
 async function deliverInvitationMail(db, event, minted, options) {
@@ -1519,6 +1517,12 @@ async function deliverInvitationMail(db, event, minted, options) {
     });
   }
   if (!deliveries.length) return;
+  await recordMail(db, event.id, deliveries.map((row) => ({
+    invitation_id: row.id,
+    kind: 'invitation',
+    status: row.delivery_status === 'copied' ? 'skipped' : row.delivery_status,
+    provider: loadMailConfig(options.env).provider
+  })));
   const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
   const marks = deliveries.map(() => '?').join(', ');
   await db.prepare(`
@@ -1635,6 +1639,12 @@ export async function rotateInvitationLink(db, actor, eventId, invitationId, opt
   }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
   const delivery = sent.status === 'sent' ? 'sent' : sent.status === 'failed' ? 'failed' : 'copied';
   await db.prepare(`UPDATE sourcing_invitations SET delivery_status = ? WHERE id = ?`).run(delivery, invitation.id);
+  await recordMail(db, existing.id, [{
+    invitation_id: invitation.id,
+    kind: 'link_rotated',
+    status: delivery === 'copied' ? 'skipped' : delivery,
+    provider: loadMailConfig(options.env).provider
+  }]);
   return {
     invitation_id: invitation.id,
     token_prefix: token.token_prefix,
@@ -1693,6 +1703,24 @@ export async function answerQuestion(db, actor, eventId, questionId, input = {},
     question_id: Number(questionId),
     visibility
   });
+  // After the commit: the asker gets a private answer; a shared answer goes to every live invitee.
+  const asked = await db.prepare(`SELECT question, invitation_id FROM sourcing_questions WHERE id = ?`).get(questionId);
+  const recipients = visibility === 'all'
+    ? await db.prepare(`
+        SELECT id, contact_email FROM sourcing_invitations
+        WHERE event_id = ? AND revoked_at IS NULL AND declined_at IS NULL
+      `).all(existing.id)
+    : await db.prepare(`
+        SELECT id, contact_email FROM sourcing_invitations
+        WHERE id = ? AND event_id = ? AND revoked_at IS NULL
+      `).all(asked?.invitation_id ?? 0, existing.id);
+  const content = qaAnswerMessage(existing, asked?.question || '', answer);
+  await runMailAfterCommit(() => sendSourcingMails(db, existing.id, recipients.map((row) => ({
+    invitation_id: row.id,
+    kind: 'qa_answer',
+    to: row.contact_email,
+    ...content
+  })), { ...options, now: nowDate }), options);
   return { id: Number(questionId), answer, visibility, answered_at: now };
 }
 
