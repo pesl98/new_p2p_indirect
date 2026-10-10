@@ -7,7 +7,7 @@ import {
   ContractError
 } from '../contractsService.js';
 import { matchContractForLines } from '../contractAssignment.js';
-import { withSessionActor } from '../requestActor.js';
+import { withSessionActor, PROCUREMENT_ROLES, requireRole } from '../requestActor.js';
 
 const router = express.Router();
 
@@ -65,7 +65,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const body = withSessionActor(req, req.body || {}, { names: ['actor_name'] });
     const contract = await createContract(req.db, body);
@@ -75,7 +75,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.post('/:id/renew-pr', async (req, res) => {
+router.post('/:id/renew-pr', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const body = withSessionActor(req, req.body || {}, {
       ids: ['requester_id'],

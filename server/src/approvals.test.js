@@ -279,4 +279,21 @@ describe('sequential approval decisions', () => {
     `).get(prId);
     assert.ok(log);
   });
+
+  test('requester cannot decide their own requisition', async () => {
+    const db = await createTestDb();
+    const prId = await insertPr(db, 50_000);
+    await insertApprovalChain(db, prId, 50_000, 1);
+    const [step1] = chainRows(db, prId);
+    db.prepare(`UPDATE purchase_requisitions SET requester_id = ? WHERE id = ?`).run(step1.approver_id, prId);
+    await assert.rejects(
+      decideApprovalStep(db, {
+        approvalId: step1.id,
+        decision: 'approved',
+        approver_id: step1.approver_id,
+        approver_name: 'Bob Martinez'
+      }),
+      (e) => e.statusCode === 403 && /own requisition/.test(e.message)
+    );
+  });
 });

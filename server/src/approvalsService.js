@@ -161,6 +161,10 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       throw new ApprovalDecisionError('Associated requisition not found', 404);
     }
 
+    if (Number(pr.requester_id) === Number(approver_id)) {
+      throw new ApprovalDecisionError('You cannot decide your own requisition', 403);
+    }
+
     let contractUseDecision = null;
     if (decision === 'approved' && pr.contract_use_status === CONTRACT_USE_PROPOSED) {
       const allowUse = parseAllowContractUse(allow_contract_use);
