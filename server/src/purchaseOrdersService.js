@@ -178,6 +178,18 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
   if (!pr) {
     throw new PurchaseOrderError('Requisition not found', 404);
   }
+  // An award requisition becomes POs only through "Bestelling(en) aanmaken",
+  // which keys every PO to the award. This old path would bypass that.
+  const awardSourced = await db.prepare(`
+    SELECT id FROM sourcing_awards WHERE award_requisition_id = ? LIMIT 1
+  `).get(pr.id);
+  if (awardSourced) {
+    throw new PurchaseOrderError(
+      'This requisition comes from an RFQ award. Create its purchase orders from the RFQ.',
+      409,
+      'award_requisition_via_sourcing'
+    );
+  }
   if (pr.status !== 'approved') {
     throw new PurchaseOrderError('Requisition must be in "approved" state to generate a Purchase Order.');
   }
@@ -385,16 +397,31 @@ function awardPoNote(eventNumber, awardId, prNumber) {
   return `RFQ ${eventNumber}. Gunning ${awardId}. ${prNumber}.`;
 }
 
-async function loadAwardPurchaseOrders(db, requisitionId) {
+async function loadAwardPurchaseOrders(db, awardId) {
   return db.prepare(`
-    SELECT po.id, po.po_number, po.supplier_id, po.status, po.total_amount, po.requisition_id,
+    SELECT po.id, po.po_number, po.supplier_id, po.status, po.total_amount, po.requisition_id, po.award_id,
            s.name AS supplier_name, s.code AS supplier_code
     FROM purchase_orders po
     JOIN suppliers s ON s.id = po.supplier_id
-    WHERE po.requisition_id = ?
+    WHERE po.award_id = ?
     ORDER BY po.id ASC
-  `).all(requisitionId);
+  `).all(awardId);
 }
+
+/** Awarded suppliers that do not have exactly one PO yet. "Done" means none. */
+async function remainingAwardSuppliers(db, awardId) {
+  const rows = await db.prepare(`
+    SELECT al.supplier_id,
+           (SELECT COUNT(*) FROM purchase_orders po
+             WHERE po.award_id = ? AND po.supplier_id = al.supplier_id) AS po_count
+    FROM (SELECT DISTINCT supplier_id FROM sourcing_award_lines WHERE award_id = ?) al
+    ORDER BY al.supplier_id ASC
+  `).all(awardId, awardId);
+  return rows.filter((row) => Number(row.po_count) !== 1).map((row) => Number(row.supplier_id));
+}
+
+/** Wall-clock budget for one request. The UI calls again while `done` is false. */
+export const AWARD_PO_TIME_BUDGET_MS = 10_000;
 
 export async function issueAwardPurchaseOrders(db, {
   requisitionId,
@@ -403,8 +430,11 @@ export async function issueAwardPurchaseOrders(db, {
   eventId,
   eventNumber,
   awardId,
-  chunkSize = AWARD_PO_SUPPLIERS_PER_TRANSACTION
+  chunkSize = AWARD_PO_SUPPLIERS_PER_TRANSACTION,
+  timeBudgetMs = AWARD_PO_TIME_BUDGET_MS,
+  clock = () => Date.now()
 } = {}) {
+  const startedAt = clock();
   const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(requisitionId);
   if (!pr) throw new PurchaseOrderError('Requisition not found', 404);
   if (pr.status !== 'approved' && pr.status !== 'converted_to_po') {
@@ -417,6 +447,15 @@ export async function issueAwardPurchaseOrders(db, {
     throw new PurchaseOrderError('Cannot convert requisition: a line has no supplier.');
   }
   const supplierIds = [...groups.keys()];
+  const stillTodo = await remainingAwardSuppliers(db, awardId);
+  if (!stillTodo.length) {
+    return {
+      purchase_orders: await loadAwardPurchaseOrders(db, awardId),
+      replayed: true,
+      done: true,
+      remaining: []
+    };
+  }
   const suppliers = new Map();
   for (const supplierId of supplierIds) {
     const supplier = await loadSupplier(db, supplierId);
@@ -429,11 +468,6 @@ export async function issueAwardPurchaseOrders(db, {
     suppliers.set(supplierId, supplier);
   }
 
-  const existing = await loadAwardPurchaseOrders(db, requisitionId);
-  if (pr.status === 'converted_to_po' && existing.length >= supplierIds.length) {
-    return { purchase_orders: existing, replayed: true };
-  }
-
   const actorName = actor?.name || await actorNameFor(db, createdBy);
   const issueDate = new Date().toISOString().split('T')[0];
   const deliveryDate = pr.needed_by_date || new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0];
@@ -441,14 +475,16 @@ export async function issueAwardPurchaseOrders(db, {
   const note = awardPoNote(eventNumber, awardId, pr.pr_number);
   const size = Math.max(1, Math.min(AWARD_PO_SUPPLIERS_PER_TRANSACTION, Number(chunkSize) || AWARD_PO_SUPPLIERS_PER_TRANSACTION));
   let createdThisCall = 0;
+  const todo = supplierIds.filter((id) => stillTodo.includes(Number(id)));
 
-  for (let offset = 0; offset < supplierIds.length; offset += size) {
-    const chunk = supplierIds.slice(offset, offset + size);
+  for (let offset = 0; offset < todo.length; offset += size) {
+    if (offset > 0 && clock() - startedAt >= timeBudgetMs) break;
+    const chunk = todo.slice(offset, offset + size);
     createdThisCall += await withBusyRetry(() => db.immediateTransaction(async () => {
       const present = await db.prepare(`
         SELECT supplier_id FROM purchase_orders
-        WHERE requisition_id = ? AND supplier_id IN (${chunk.map(() => '?').join(', ')})
-      `).all(requisitionId, ...chunk);
+        WHERE award_id = ? AND supplier_id IN (${chunk.map(() => '?').join(', ')})
+      `).all(awardId, ...chunk);
       const have = new Set(present.map((row) => Number(row.supplier_id)));
       let written = 0;
       const year = new Date().getFullYear();
@@ -461,11 +497,11 @@ export async function issueAwardPurchaseOrders(db, {
         const inserted = await db.prepare(`
           INSERT INTO purchase_orders (
             po_number, requisition_id, supplier_id, created_by, status, total_amount,
-            issue_date, expected_delivery_date, payment_terms, shipping_address, notes
+            issue_date, expected_delivery_date, payment_terms, shipping_address, notes, award_id
           )
-          SELECT ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?
           WHERE NOT EXISTS (
-            SELECT 1 FROM purchase_orders WHERE requisition_id = ? AND supplier_id = ?
+            SELECT 1 FROM purchase_orders WHERE award_id = ? AND supplier_id = ?
           )
         `).run(
           poNumber,
@@ -478,7 +514,8 @@ export async function issueAwardPurchaseOrders(db, {
           supplier.payment_terms || 'Net 30',
           shipTo,
           note,
-          requisitionId,
+          awardId,
+          awardId,
           supplierId
         );
         if (!inserted.changes) continue;
@@ -545,8 +582,9 @@ export async function issueAwardPurchaseOrders(db, {
     }));
   }
 
-  const purchaseOrders = await loadAwardPurchaseOrders(db, requisitionId);
-  const complete = purchaseOrders.length >= supplierIds.length;
+  const purchaseOrders = await loadAwardPurchaseOrders(db, awardId);
+  const remaining = await remainingAwardSuppliers(db, awardId);
+  const complete = remaining.length === 0;
   if (complete && pr.status === 'approved') {
     await withBusyRetry(() => db.immediateTransaction(async () => {
       const marked = await db.prepare(`
@@ -601,7 +639,9 @@ export async function issueAwardPurchaseOrders(db, {
 
   kickWebhookDispatch(db);
   return {
-    purchase_orders: await loadAwardPurchaseOrders(db, requisitionId),
-    replayed: createdThisCall === 0
+    purchase_orders: await loadAwardPurchaseOrders(db, awardId),
+    replayed: createdThisCall === 0,
+    done: complete,
+    remaining
   };
 }

@@ -221,5 +221,11 @@ export const sourcing = {
   'sourcing.award.createPos': 'Bestelling(en) aanmaken',
   'sourcing.award.sod': 'Boven € 1.000,00 keurt de eigenaar de gunning niet zelf goed.',
   'sourcing.award.rejected': 'De gunning is afgewezen. U kunt een nieuwe gunning indienen.',
-  'sourcing.approval.badge': 'RFQ'
+  'sourcing.approval.badge': 'RFQ',
+  'code.coi_locked': 'Een verklaard belangenconflict kan alleen door een beheerder worden gewist.',
+  'code.coi_not_found': 'Deze gebruiker heeft geen verklaard belangenconflict.',
+  'code.reason_required': 'Een reden van minstens 10 tekens is verplicht.',
+  'code.approval_already_decided': 'Deze stap is al beoordeeld. Vernieuw het scherm.',
+  'code.award_requisition_via_sourcing': 'Deze aanvraag komt uit een gunning. Maak de bestellingen aan vanuit de offerteaanvraag.',
+  'code.busy': 'Het systeem is bezig. Probeer het over een moment opnieuw.'
 };

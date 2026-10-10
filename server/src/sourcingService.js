@@ -25,7 +25,14 @@ import {
   sha256Pdf,
   utcIso
 } from './sourcingConfig.js';
-import { buyerInvitationActivity, loadBuyerComparison, presentInvitationActivity, readBuyerBidFile } from './sourcingBidReadModel.js';
+import {
+  actorMaySeeBidPrices,
+  bidPricesVisible,
+  buyerInvitationActivity,
+  loadBuyerComparison,
+  presentInvitationActivity,
+  readBuyerBidFile
+} from './sourcingBidReadModel.js';
 import { invitationExpiry, mintPortalToken, portalLink, portalTokenSecret } from './sourcingPortalTokens.js';
 import { BUYER_UPLOADS_PER_MINUTE, consumeRateWindow } from './sourcingRates.js';
 import { assertTransition, publishBlockers } from './sourcingStatus.js';
@@ -767,7 +774,7 @@ export async function createEvent(db, actor, input, { currency } = {}) {
     qa_deadline_at: schedule.qa_deadline_at || null,
     weights
   }, lines, invitations, evaluators, 'scratch');
-  return getEvent(db, eventId);
+  return getEvent(db, eventId, new Date(), actor);
 }
 
 export async function createEventFromRequisition(db, actor, requisitionId, input = {}, { currency } = {}) {
@@ -807,7 +814,7 @@ export async function createEventFromRequisition(db, actor, requisitionId, input
     qa_deadline_at: schedule.qa_deadline_at || null,
     weights
   }, lines, invitations, evaluators, 'requisition');
-  return getEvent(db, eventId);
+  return getEvent(db, eventId, new Date(), actor);
 }
 
 export async function updateEvent(db, actor, id, input, options = {}) {
@@ -896,7 +903,7 @@ export async function updateEvent(db, actor, id, input, options = {}) {
   })();
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   const nowDate = options.now instanceof Date ? options.now : new Date();
-  return getEvent(db, existing.id, nowDate);
+  return getEvent(db, existing.id, nowDate, actor);
 }
 
 export async function cancelEvent(db, actor, id, input = {}, options = {}) {
@@ -927,8 +934,21 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
       SET status = 'cancelled', cancel_reason = ?, cancelled_at = ?,
           cancelled_before_deadline = ?, row_version = row_version + 1, updated_at = ?
       WHERE id = ? AND status = ?
-    `).run(reason, now, beforeDeadline, now, existing.id, fromStatus);
-    if (!result.changes) return 0;
+        AND NOT EXISTS (
+          SELECT 1 FROM sourcing_awards
+          WHERE event_id = ? AND status IN ('pending_approval', 'approved')
+        )
+    `).run(reason, now, beforeDeadline, now, existing.id, fromStatus, existing.id);
+    if (!result.changes) {
+      // The open-award test above ran in the UPDATE itself, under BEGIN IMMEDIATE,
+      // so an award proposed after the earlier read is still seen here.
+      const raced = await db.prepare(`
+        SELECT id FROM sourcing_awards
+        WHERE event_id = ? AND status IN ('pending_approval', 'approved')
+        LIMIT 1
+      `).get(existing.id);
+      return raced ? 'award_open' : 0;
+    }
     await writeAudit(
       db,
       'sourcing_event',
@@ -958,9 +978,10 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
     }
     return result.changes;
   })();
+  if (changed === 'award_open') fail('An RFQ with an open award cannot be cancelled.', 409, 'award_open');
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   kickWebhookDispatch(db);
-  const view = await getEvent(db, existing.id, nowDate);
+  const view = await getEvent(db, existing.id, nowDate, actor);
   if (fromStatus !== 'draft') {
     const notice = await notifyInvitees(db, existing, {
       subject: `Offerteaanvraag ${existing.event_number} geannuleerd`,
@@ -1028,6 +1049,17 @@ const FILE_META_SQL = `
   WHERE event_id = ? AND owner_kind = 'event'
   ORDER BY id ASC
 `;
+
+/** Keeps the shape and the weights; drops every bid price, total, score, and supplier name. */
+export function redactSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  return {
+    captured_at: snapshot.captured_at ?? null,
+    weights: snapshot.weights ?? null,
+    warnings: snapshot.warnings ?? [],
+    redacted: true
+  };
+}
 
 export async function getEvent(db, id, now = new Date(), actor = null) {
   await closeDueEvents(db, now, { eventId: id });
@@ -1118,15 +1150,18 @@ export async function getEvent(db, id, now = new Date(), actor = null) {
       decided_at: awardRow.decided_at,
       comparison_snapshot: comparisonSnapshot
     };
-    if (award.award_requisition_id) {
-      purchaseOrders = await db.prepare(`
-        SELECT po.id, po.po_number, po.supplier_id, po.status, po.total_amount, s.name AS supplier_name
-        FROM purchase_orders po
-        JOIN suppliers s ON s.id = po.supplier_id
-        WHERE po.requisition_id = ?
-        ORDER BY po.id ASC
-      `).all(award.award_requisition_id);
+    // Same rule as the comparison screen. No actor means no prices (fail closed).
+    if (!bidPricesVisible(event, now) || !actorMaySeeBidPrices(actor, event, evaluators)) {
+      award.comparison_snapshot = redactSnapshot(comparisonSnapshot);
+      award.snapshot_redacted = true;
     }
+    purchaseOrders = await db.prepare(`
+      SELECT po.id, po.po_number, po.supplier_id, po.status, po.total_amount, s.name AS supplier_name
+      FROM purchase_orders po
+      JOIN suppliers s ON s.id = po.supplier_id
+      WHERE po.award_id = ?
+      ORDER BY po.id ASC
+    `).all(award.id);
   }
 
   return {
@@ -1225,8 +1260,12 @@ export async function addEventFile(db, actor, id, { buffer, filename } = {}) {
   return file;
 }
 
-export async function readEventFile(db, eventId, fileId, now = new Date()) {
+export async function readEventFile(db, eventId, fileId, now = new Date(), actor = null) {
   await closeDueEvents(db, now, { eventId });
+  const event = await loadEventRow(db, eventId);
+  if (!event) fail('File was not found.', 404, 'file_not_found');
+  // A user named on another RFQ must not read this RFQ's attachments.
+  await assertEventVisible(db, actor, event);
   const meta = await db.prepare(`
     SELECT id, event_id, filename, content_type, size_bytes, removed_at
     FROM sourcing_files
@@ -1511,7 +1550,7 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   const mailWork = () => deliverInvitationMail(db, existing, minted, options);
   if (shouldAwaitMail(options)) await mailWork();
   else scheduleBackground(mailWork, options);
-  const view = await getEvent(db, existing.id, nowDate);
+  const view = await getEvent(db, existing.id, nowDate, actor);
   const links = new Map(minted.map((row) => [row.id, row.portal_url]));
   view.invitations = view.invitations.map((row) => (
     links.has(row.id) ? { ...row, portal_url: links.get(row.id) } : row
@@ -1610,7 +1649,7 @@ export async function extendDeadline(db, actor, id, input = {}, options = {}) {
     ].join('\n'),
     tag: 'sourcing_deadline_extended'
   }, options);
-  const view = await getEvent(db, existing.id, nowDate);
+  const view = await getEvent(db, existing.id, nowDate, actor);
   view.notice = notice;
   return view;
 }
@@ -1764,8 +1803,11 @@ export async function sourcingAccess(db, actor) {
     JOIN sourcing_awards a ON a.event_id = e.id AND a.status = 'approved'
     WHERE e.status = 'awarded'
       AND a.award_requisition_id IS NOT NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM purchase_orders po WHERE po.requisition_id = a.award_requisition_id
+      AND EXISTS (
+        SELECT 1 FROM sourcing_award_lines al
+        WHERE al.award_id = a.id
+          AND (SELECT COUNT(*) FROM purchase_orders po
+                WHERE po.award_id = a.id AND po.supplier_id = al.supplier_id) <> 1
       )
   `).get();
   return {

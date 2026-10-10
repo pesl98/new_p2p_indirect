@@ -5,15 +5,21 @@
  */
 
 import { actorFromSession, appendComplianceEvents } from './complianceAudit.js';
-import { APPROVAL_TIER2_CENTS } from './money.js';
+import { APPROVAL_TIER2_CENTS, APPROVAL_TIER3_CENTS } from './money.js';
 import { enqueueWebhook, WEBHOOK_EVENTS } from './webhookOutbox.js';
 
 export const AWARD_FISCAL_YEAR = 2026;
 
+/**
+ * Awards strictly above this value are segregated. The env value is clamped to
+ * € 10.000,00 (APPROVAL_TIER3_CENTS) so a typo cannot switch the control off.
+ */
 export function awardSodThresholdCents(env = process.env) {
   const raw = env.SOURCING_AWARD_SOD_THRESHOLD_CENTS;
   if (raw == null || String(raw).trim() === '') return APPROVAL_TIER2_CENTS;
-  return Number.isInteger(Number(raw)) && Number(raw) >= 0 ? Number(raw) : APPROVAL_TIER2_CENTS;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) return APPROVAL_TIER2_CENTS;
+  return Math.min(value, APPROVAL_TIER3_CENTS);
 }
 
 export class SourcingApprovalError extends Error {
@@ -29,6 +35,7 @@ export async function loadAwardForRequisition(db, requisitionId) {
   return db.prepare(`
     SELECT
       a.id, a.event_id, a.status, a.total_cents, a.award_requisition_id,
+      a.proposed_by_user_id, a.owner_user_id AS award_owner_user_id,
       e.event_number, e.owner_user_id, e.status AS event_status,
       e.source_requisition_id, e.currency, e.row_version
     FROM sourcing_awards a
@@ -39,25 +46,52 @@ export async function loadAwardForRequisition(db, requisitionId) {
 }
 
 /**
- * Before the decision is written. Above the threshold the owner cannot
- * decide, including through a delegation granted after the chain was built.
- * Returns the award row, or null when this requisition is not an award.
+ * Users who may not take part in approving an award above the threshold: the
+ * RFQ owner (at proposal time and now), the user who proposed it, and every
+ * evaluator who declared a conflict.
+ */
+export async function restrictedAwardUsers(db, award) {
+  const ids = new Set([
+    Number(award.award_owner_user_id),
+    Number(award.owner_user_id),
+    Number(award.proposed_by_user_id)
+  ]);
+  const conflicted = await db.prepare(`
+    SELECT user_id FROM sourcing_evaluators WHERE event_id = ? AND coi_status = 'conflict_declared'
+  `).all(award.event_id);
+  for (const row of conflicted || []) ids.add(Number(row.user_id));
+  ids.delete(0);
+  ids.delete(NaN);
+  return ids;
+}
+
+/**
+ * Before the decision is written. Strictly above the threshold none of the
+ * restricted users may decide: directly, as the delegate of a step, as the
+ * delegator whose step a delegate decides, or when the step itself is
+ * assigned to one of them. This holds for admins too. Returns the award row,
+ * or null when this requisition is not an award.
  */
 export async function guardAwardSelfApproval(db, {
   requisitionId,
   decidingUserId,
   delegation = null,
+  stepApproverId = null,
   env = process.env
 } = {}) {
   const award = await loadAwardForRequisition(db, requisitionId);
   if (!award || award.status !== 'pending_approval') return null;
   if (Number(award.total_cents) <= awardSodThresholdCents(env)) return award;
-  const ownerId = Number(award.owner_user_id);
-  const decider = Number(decidingUserId);
-  const delegator = delegation ? Number(delegation.delegator_user_id) : null;
-  if (decider === ownerId || delegator === ownerId) {
+  const restricted = await restrictedAwardUsers(db, award);
+  const involved = [
+    Number(decidingUserId),
+    stepApproverId == null ? NaN : Number(stepApproverId),
+    delegation ? Number(delegation.delegator_user_id) : NaN,
+    delegation ? Number(delegation.delegate_user_id) : NaN
+  ];
+  if (involved.some((id) => restricted.has(id))) {
     throw new SourcingApprovalError(
-      'The RFQ owner cannot approve this award.',
+      'The RFQ owner, the proposer, and users with a declared conflict cannot approve this award.',
       403,
       'sod_award_self_approval'
     );

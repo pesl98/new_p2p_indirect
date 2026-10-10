@@ -243,10 +243,21 @@ export async function declareCoi(db, actor, eventId, input = {}, options = {}) {
   }
   if (note && note.length > 2000) fail('Text is too long.', 400, 'text_too_long');
   const now = nowDate.toISOString();
+  // One-way: a declared conflict cannot be withdrawn by the declarer. Only an
+  // admin can clear it (clearCoi), and that is audited.
+  const current = await db.prepare(`
+    SELECT coi_status, coi_note FROM sourcing_evaluators WHERE event_id = ? AND user_id = ?
+  `).get(event.id, actor.id);
+  if (current?.coi_status === 'conflict_declared') {
+    if (status !== 'conflict_declared') {
+      fail('A declared conflict can only be cleared by an admin.', 409, 'coi_locked');
+    }
+    return { user_id: Number(actor.id), coi_status: 'conflict_declared', coi_note: current.coi_note };
+  }
   const changed = await db.prepare(`
     UPDATE sourcing_evaluators
     SET coi_status = ?, coi_declared_at = ?, coi_note = ?
-    WHERE event_id = ? AND user_id = ?
+    WHERE event_id = ? AND user_id = ? AND coi_status <> 'conflict_declared'
   `).run(status, now, note, event.id, actor.id);
   if (!changed.changes) {
     if (Number(event.owner_user_id) !== Number(actor.id) && actor.role !== 'admin') {
@@ -267,6 +278,48 @@ export async function declareCoi(db, actor, eventId, input = {}, options = {}) {
     created_at: utcTimestamp(nowDate)
   });
   return { user_id: Number(actor.id), coi_status: status, coi_note: note };
+}
+
+/** Admin only. Resets a conflict declaration to pending so the user must declare again. */
+export async function clearCoi(db, actor, eventId, input = {}, options = {}) {
+  const nowDate = options.now instanceof Date ? options.now : new Date();
+  const event = await loadEvent(db, eventId);
+  if (!event) fail('RFQ was not found.', 404, 'event_not_found');
+  if (actor?.role !== 'admin') fail('Only an admin can clear a conflict declaration.', 403, 'read_only');
+  if (['awarded', 'cancelled'].includes(event.status)) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+  const userId = Number(input.user_id);
+  const reason = input.reason == null ? '' : String(input.reason).trim();
+  if (reason.length < 10) fail('A reason of at least 10 characters is required.', 400, 'reason_required');
+  const open = await readOpenAward(db, event.id);
+  if (open) fail('A conflict cannot be cleared while an award is open.', 409, 'award_open');
+  const row = await db.prepare(`
+    SELECT coi_status, coi_note FROM sourcing_evaluators WHERE event_id = ? AND user_id = ?
+  `).get(event.id, userId);
+  if (!row || row.coi_status !== 'conflict_declared') fail('That user has no declared conflict.', 404, 'coi_not_found');
+  await withBusyRetry(() => db.immediateTransaction(async () => {
+    const result = await db.prepare(`
+      UPDATE sourcing_evaluators
+      SET coi_status = 'pending', coi_declared_at = NULL, coi_note = NULL
+      WHERE event_id = ? AND user_id = ? AND coi_status = 'conflict_declared'
+        AND NOT EXISTS (
+          SELECT 1 FROM sourcing_awards WHERE event_id = ? AND status IN ('pending_approval', 'approved')
+        )
+    `).run(event.id, userId, event.id);
+    if (!result.changes) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+      VALUES ('sourcing_event', ?, 'COI_CLEARED', ?, ?)
+    `).run(event.id, actor.name, `Conflict of user ${userId} on ${event.event_number} cleared: ${reason}`);
+    await appendComplianceEvent(db, {
+      ...actorFromSession(actor),
+      action: 'SOURCING_COI_CLEARED',
+      entity_type: 'sourcing_event',
+      entity_id: event.id,
+      details: JSON.stringify({ user_id: userId, previous_note: row.coi_note, reason }),
+      created_at: utcTimestamp(nowDate)
+    });
+  }));
+  return { user_id: userId, coi_status: 'pending' };
 }
 
 export async function recordScores(db, actor, eventId, input = {}, options = {}) {
@@ -440,10 +493,10 @@ export async function evaluateEvent(db, actor, eventId, input = {}, options = {}
   }));
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   kickWebhookDispatch(db);
-  return getEvent(db, event.id, nowDate);
+  return getEvent(db, event.id, nowDate, actor);
 }
 
-function snapshotFor(event, sheet, choice, digest, idempotencyKey, warnings) {
+function snapshotFor(event, sheet, choice, digest, idempotencyKey, warnings, proposedBy) {
   const scored = scoreComparison({
     lines: sheet.eventLines,
     bids: sheet.bids,
@@ -459,6 +512,8 @@ function snapshotFor(event, sheet, choice, digest, idempotencyKey, warnings) {
     selection_sha256: digest,
     idempotency_key: idempotencyKey || null,
     captured_at: new Date().toISOString(),
+    owner_user_id: Number(event.owner_user_id),
+    proposed_by_user_id: Number(proposedBy),
     weights: {
       price: Number(event.weight_price),
       lead_time: Number(event.weight_lead_time),
@@ -511,7 +566,7 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
   const digest = selectionDigest(choice.awardType, choice.awarded);
   const open = await readOpenAward(db, event.id);
   if (open && digestOf(open) === digest) {
-    return { replayed: true, award: presentAward(open), event: await getEvent(db, event.id, nowDate) };
+    return { replayed: true, award: presentAward(open), event: await getEvent(db, event.id, nowDate, actor) };
   }
   if (open) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   if (event.status !== 'evaluated') fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
@@ -527,6 +582,7 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
   const excludeUserIds = choice.total > threshold
     ? [
       Number(event.owner_user_id),
+      Number(actor.id),
       ...sheet.evaluators.filter((row) => row.coi_status === 'conflict_declared').map((row) => Number(row.user_id))
     ]
     : [];
@@ -537,7 +593,7 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
     excludeUserIds
   });
   const idempotencyKey = options.idempotencyKey ? String(options.idempotencyKey).slice(0, 200) : null;
-  const snapshot = snapshotFor(event, sheet, choice, digest, idempotencyKey, warnings);
+  const snapshot = snapshotFor(event, sheet, choice, digest, idempotencyKey, warnings, actor.id);
   const justification = `Gunning ${event.event_number} (${choice.awardType === 'full' ? 'volledig' : 'gesplitst'}): ${reason || 'laagste bieding'}`;
   const items = choice.awarded.map((line) => ({
     catalog_item_id: line.catalog_item_id,
@@ -552,9 +608,9 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
   }));
   const now = nowDate.toISOString();
   const created = await withBusyRetry(() => db.immediateTransaction(async () => {
-    const again = await readOpenAward(db, event.id);
-    if (again && digestOf(again) === digest) return { replayed: true, award: again };
-    if (again) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+    // No read of open awards here: the guarded UPDATE below fails when any other
+    // proposal bumped row_version, and the insert has its own NOT EXISTS. That
+    // keeps the transaction inside the statement budget.
     const bumped = await db.prepare(`
       UPDATE sourcing_events
       SET row_version = row_version + 1, updated_at = ?
@@ -568,13 +624,14 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
     const awardInsert = await db.prepare(`
       INSERT INTO sourcing_awards (
         event_id, award_type, status, total_cents, lowest_total_cents, is_lowest,
-        has_expired_validity, reason, comparison_snapshot_json, proposed_by_user_id, proposed_at
+        has_expired_validity, reason, comparison_snapshot_json, proposed_by_user_id, owner_user_id, proposed_at
       )
-      SELECT ?, ?, 'pending_approval', ?, ?, ?, ?, ?, ?, ?, ?
+      SELECT ?, ?, 'pending_approval', ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE NOT EXISTS (
         SELECT 1 FROM sourcing_awards
         WHERE event_id = ? AND status IN ('pending_approval', 'approved')
       )
+      AND EXISTS (SELECT 1 FROM sourcing_events WHERE id = ? AND status = 'evaluated')
     `).run(
       event.id,
       choice.awardType,
@@ -585,7 +642,9 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
       reason || null,
       JSON.stringify(snapshot),
       actor.id,
+      event.owner_user_id,
       now,
+      event.id,
       event.id
     );
     if (!awardInsert.changes) {
@@ -671,12 +730,12 @@ export async function proposeAward(db, actor, eventId, input = {}, options = {})
     };
   }));
   if (created.replayed) {
-    return { replayed: true, award: presentAward(created.award), event: await getEvent(db, event.id, nowDate) };
+    return { replayed: true, award: presentAward(created.award), event: await getEvent(db, event.id, nowDate, actor) };
   }
   return {
     replayed: false,
     award: presentAward(created.award, { warnings }),
-    event: await getEvent(db, event.id, nowDate)
+    event: await getEvent(db, event.id, nowDate, actor)
   };
 }
 
@@ -699,12 +758,16 @@ export async function createAwardPurchaseOrders(db, actor, eventId, options = {}
     actor,
     eventId: event.id,
     eventNumber: event.event_number,
-    awardId: award.id
+    awardId: award.id,
+    timeBudgetMs: options.timeBudgetMs,
+    clock: options.clock
   });
   return {
     replayed: issued.replayed,
+    done: issued.done,
+    remaining: issued.remaining,
     purchase_orders: issued.purchase_orders,
-    event: await getEvent(db, event.id, nowDate)
+    event: await getEvent(db, event.id, nowDate, actor)
   };
 }
 
@@ -718,6 +781,10 @@ export async function reassignOwner(db, actor, eventId, input = {}, options = {}
     fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   }
   const version = requireVersion(input, event);
+  const pendingAward = await readOpenAward(db, event.id);
+  if (pendingAward) {
+    fail('The owner cannot change while an award is open.', 409, 'award_open');
+  }
   const userId = Number(input.user_id);
   const user = await db.prepare(`SELECT id, name, role, status FROM users WHERE id = ?`).get(userId);
   if (!user || user.status === 'inactive') fail('User was not found.', 400, 'user_not_found');
@@ -730,7 +797,11 @@ export async function reassignOwner(db, actor, eventId, input = {}, options = {}
       UPDATE sourcing_events
       SET owner_user_id = ?, row_version = row_version + 1, updated_at = ?
       WHERE id = ? AND row_version = ? AND status NOT IN ('awarded', 'cancelled')
-    `).run(user.id, now, event.id, version);
+        AND NOT EXISTS (
+          SELECT 1 FROM sourcing_awards
+          WHERE event_id = ? AND status IN ('pending_approval', 'approved')
+        )
+    `).run(user.id, now, event.id, version, event.id);
     if (!result.changes) return 0;
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
@@ -747,7 +818,7 @@ export async function reassignOwner(db, actor, eventId, input = {}, options = {}
     return result.changes;
   }));
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
-  return getEvent(db, event.id, nowDate);
+  return getEvent(db, event.id, nowDate, actor);
 }
 
 export { selectionDigest };

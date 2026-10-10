@@ -322,7 +322,8 @@ export async function queryApprovalCompliance(db) {
     let steps;
     const award = await db.prepare(`
       SELECT a.total_cents, a.is_lowest, a.reason, a.status, a.id AS award_id,
-             e.owner_user_id, e.id AS event_id, e.event_number
+             a.proposed_by_user_id, COALESCE(a.owner_user_id, e.owner_user_id) AS owner_user_id,
+             e.owner_user_id AS current_owner_user_id, e.id AS event_id, e.event_number
       FROM sourcing_awards a
       JOIN sourcing_events e ON e.id = a.event_id
       WHERE a.award_requisition_id = ?
@@ -335,8 +336,10 @@ export async function queryApprovalCompliance(db) {
         SELECT user_id FROM sourcing_evaluators
         WHERE event_id = ? AND coi_status = 'conflict_declared'
       `).all(award.event_id);
+      // Same list as proposeAward: the owner at proposal time and the proposer.
       excludeUserIds = [
         Number(award.owner_user_id),
+        Number(award.proposed_by_user_id),
         ...conflicts.map((row) => Number(row.user_id))
       ];
     }
@@ -401,14 +404,20 @@ export async function queryApprovalCompliance(db) {
     }
     if (award && Number(award.total_cents) > awardSodThresholdCents()) {
       for (const row of stored || []) {
-        if (Number(row.approver_id) === Number(award.owner_user_id)) {
+        const restricted = new Set([
+          Number(award.owner_user_id),
+          Number(award.current_owner_user_id),
+          Number(award.proposed_by_user_id),
+          ...excludeUserIds
+        ]);
+        if (restricted.has(Number(row.approver_id))) {
           add(finding('sourcing_award_self_approval', {
             entity_type: 'approval_request',
             entity_id: row.id,
             document_number: pr.pr_number,
             actor_user_id: row.approver_id,
             actor_name: row.approver_name,
-            message: `${award.event_number} award ${pr.pr_number} step ${row.step_order} is assigned to the RFQ owner ${row.approver_name} (id=${row.approver_id}) above the segregation threshold.`
+            message: `${award.event_number} award ${pr.pr_number} step ${row.step_order} is assigned to ${row.approver_name} (id=${row.approver_id}), who is the RFQ owner, the proposer, or has a declared conflict, above the segregation threshold.`
           }));
         }
       }
@@ -551,7 +560,7 @@ export async function queryApprovalCompliance(db) {
       sod_requester_receiver: 'A goods receipt receiver, or the user who accepted a service entry sheet, is the requisition requester.',
       sod_approver_receiver: 'That same receiver approved the requisition.',
       sod_ap_overlap: 'The actor name on invoice APPROVED_FOR_PAYMENT, APPROVED_PAYMENT, or PAID matches a user who is the requester, an approver, or the receiver. audit_logs stores the session name, not a user id.',
-      sourcing_award_self_approval: 'An award above the segregation threshold has an approval step assigned to the RFQ owner.',
+      sourcing_award_self_approval: 'An award above the segregation threshold has an approval step assigned to the RFQ owner, the proposer, or an evaluator with a declared conflict.',
       sourcing_award_not_lowest: 'The award was not the lowest bid. The recorded reason is shown. This finding is informational.',
       sourcing_bid_after_deadline: 'A bid revision was submitted at or after the deadline. The database trigger should make this impossible.'
     }

@@ -651,32 +651,40 @@ async function migratePurchaseOrderChangeOrders(database) {
 }
 
 /**
- * One issued award PO per supplier. A partial index so a normal split of a
- * requisition (notes that do not start with "RFQ ") is not constrained.
- * Legacy purchase_orders tables in the migration tests lack requisition_id
- * or notes; the index waits until both columns exist.
+ * One PO per awarded supplier: unique(award_id, supplier_id) on POs issued from
+ * an RFQ award. Ordinary POs keep award_id NULL and are not constrained. The
+ * columns are added here for databases that predate them, and the index waits
+ * until award_id exists.
  */
 export const AWARD_PURCHASE_ORDER_INDEX_SQL = `
-  CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_award_supplier
-  ON purchase_orders (requisition_id, supplier_id)
-  WHERE requisition_id IS NOT NULL AND substr(COALESCE(notes, ''), 1, 4) = 'RFQ '
+  CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_award_unique
+  ON purchase_orders (award_id, supplier_id)
+  WHERE award_id IS NOT NULL
 `;
 
-async function migrateAwardPurchaseOrderIndex(database) {
+async function migrateAwardColumns(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
   ) || []).map((row) => row.name);
-  if (!tables.includes('purchase_orders')) return;
-  const hasRequisition = await tableHasColumn(database, 'purchase_orders', 'requisition_id');
-  const hasNotes = await tableHasColumn(database, 'purchase_orders', 'notes');
-  if (!hasRequisition || !hasNotes) return;
-  await maybe(database.exec(AWARD_PURCHASE_ORDER_INDEX_SQL));
+  if (tables.includes('purchase_orders')) {
+    if (!(await tableHasColumn(database, 'purchase_orders', 'award_id'))) {
+      await maybe(database.exec(`ALTER TABLE purchase_orders ADD COLUMN award_id INTEGER`));
+    }
+    if (await tableHasColumn(database, 'purchase_orders', 'award_id')) {
+      // Draft-PR builds used a notes-prefix index under this name.
+      await maybe(database.exec(`DROP INDEX IF EXISTS purchase_orders_award_supplier`));
+      await maybe(database.exec(AWARD_PURCHASE_ORDER_INDEX_SQL));
+    }
+  }
+  if (tables.includes('sourcing_awards') && !(await tableHasColumn(database, 'sourcing_awards', 'owner_user_id'))) {
+    await maybe(database.exec(`ALTER TABLE sourcing_awards ADD COLUMN owner_user_id INTEGER`));
+  }
 }
 
 export async function applySchema(database) {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   await maybe(database.exec(schema));
-  await migrateAwardPurchaseOrderIndex(database);
+  await migrateAwardColumns(database);
   await migrateApprovalRequestsWaitingStatus(database);
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);

@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   payment_terms TEXT DEFAULT 'Net 30',
   shipping_address TEXT,
   notes TEXT,
+  -- Set only on POs issued from an RFQ award. unique(award_id, supplier_id) is created in applySchema.
+  award_id INTEGER,
   revision INTEGER NOT NULL DEFAULT 0,
   change_order_count INTEGER NOT NULL DEFAULT 0,
   -- standard = buyer-owned PO (GRN or SES). consignment = discrete draw-down of supplier-owned stock.
@@ -1125,6 +1127,8 @@ CREATE TABLE IF NOT EXISTS sourcing_awards (
   reason TEXT,
   comparison_snapshot_json TEXT NOT NULL,
   proposed_by_user_id INTEGER NOT NULL,
+  -- RFQ owner at proposal time. Segregation of duties keys on this, not on the current owner.
+  owner_user_id INTEGER,
   proposed_at TEXT NOT NULL,
   decided_at TEXT,
   CHECK ((is_lowest = 1 AND has_expired_validity = 0) OR (reason IS NOT NULL AND length(trim(reason)) >= 10)),
@@ -1136,7 +1140,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS sourcing_awards_one_open
   ON sourcing_awards (event_id) WHERE status IN ('pending_approval', 'approved');
 CREATE INDEX IF NOT EXISTS sourcing_awards_requisition ON sourcing_awards (award_requisition_id);
 
--- purchase_orders_award_supplier is created in applySchema, after a legacy
+-- purchase_orders_award_unique is created in applySchema, after a legacy
 -- purchase_orders table has requisition_id and notes. Creating it here would
 -- abort the whole script on a database from before those columns existed.
 

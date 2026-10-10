@@ -576,7 +576,12 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
     setSaving(true);
     setError('');
     try {
-      const saved = await api.createSourcingPurchaseOrders(detail.id);
+      // The server stops after about 10 s and reports what is left; call again until done.
+      let saved = await api.createSourcingPurchaseOrders(detail.id);
+      for (let round = 0; saved.done === false && round < 50; round += 1) {
+        setDetail(saved.event || detail);
+        saved = await api.createSourcingPurchaseOrders(detail.id);
+      }
       setDetail(saved.event || await refreshDetail());
       setTab('award');
     } catch (err) {

@@ -176,17 +176,17 @@ export async function insertAwardRequisition(db, {
       Number(step.step_order) === 1 ? 'pending' : 'waiting'
     ]));
   }
+  // One statement for both rows: each INSERT costs two pipeline statements on Turso.
   await db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-    VALUES ('requisition', ?, 'CREATED', ?, ?)
+    VALUES ('requisition', ?, 'CREATED', ?, ?),
+           ('requisition', ?, 'SUBMITTED', ?, 'Submitted for multi-tier approval routing')
   `).run(
     prId,
     actorName,
-    `Requisition ${prNumber} created with ${items.length} item(s) for ${formatMoney(total)}`
+    `Requisition ${prNumber} created with ${items.length} item(s) for ${formatMoney(total)}`,
+    prId,
+    actorName
   );
-  await db.prepare(`
-    INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
-    VALUES ('requisition', ?, 'SUBMITTED', ?, 'Submitted for multi-tier approval routing')
-  `).run(prId, actorName);
   return { prId, prNumber, total, steps };
 }

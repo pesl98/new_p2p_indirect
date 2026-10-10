@@ -24,6 +24,7 @@ import {
 } from '../sourcingService.js';
 import { SourcingStatusError } from '../sourcingStatus.js';
 import {
+  clearCoi,
   createAwardPurchaseOrders,
   declareCoi,
   evaluateEvent,
@@ -197,6 +198,14 @@ router.post('/events/:id/coi', async (req, res) => {
   }
 });
 
+router.post('/events/:id/coi/clear', async (req, res) => {
+  try {
+    res.json(await clearCoi(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 router.post('/events/:id/scores', async (req, res) => {
   try {
     res.json(await recordScores(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
@@ -304,7 +313,7 @@ router.post('/events/:id/files', sourcingPdfUpload, async (req, res) => {
 
 router.get('/events/:id/files/:fileId', async (req, res) => {
   try {
-    const file = await readEventFile(req.db, req.params.id, req.params.fileId, now(req));
+    const file = await readEventFile(req.db, req.params.id, req.params.fileId, now(req), actor(req));
     const bytes = Buffer.isBuffer(file.bytes) ? file.bytes : Buffer.from(file.bytes);
     const filename = file.filename || 'attachment.pdf';
     const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '') || 'attachment.pdf';

@@ -655,7 +655,7 @@ describe('POST /api/purchase-orders/from-requisition', () => {
     });
   });
 
-  test('converting an award requisition is limited to procurement and admin', async () => {
+  test('an award requisition cannot be converted through the old convert path, by anyone', async () => {
     const db = await createTestDb();
     const now = '2026-10-09T12:00:00.000Z';
     const { prId } = insertApprovedPr(db, {
@@ -697,8 +697,40 @@ describe('POST /api/purchase-orders/from-requisition', () => {
         body: JSON.stringify({ requisition_id: prId })
       });
       const body = await allowed.json();
-      assert.equal(allowed.status, 201, JSON.stringify(body));
-      assert.equal(body.purchase_orders.length, 1);
+      assert.equal(allowed.status, 409, JSON.stringify(body));
+      assert.equal(body.code, 'award_requisition_via_sourcing');
+      const pos = db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE requisition_id = ?`).get(prId);
+      assert.equal(Number(pos.n), 0);
+      const pr = db.prepare(`SELECT status FROM purchase_requisitions WHERE id = ?`).get(prId);
+      assert.equal(pr.status, 'approved');
     });
+  });
+
+  test('the service refuses an award requisition too, not only the route', async () => {
+    const db = await createTestDb();
+    const now = '2026-10-09T12:00:00.000Z';
+    const { prId } = insertApprovedPr(db, {
+      prNumber: 'PR-2026-881',
+      items: [{
+        item_description: 'Tafels', category: 'Office Supplies', quantity: 1, unit_price: 1000,
+        total_price: 1000, estimated_supplier_id: 1, line_type: 'goods'
+      }]
+    });
+    const event = db.prepare(`
+      INSERT INTO sourcing_events (
+        event_number, title, department_id, owner_user_id, status, currency, deadline_at, created_at, updated_at
+      ) VALUES ('RFQ-2026-881', 'Award gate', 1, 3, 'awarded', 'EUR', '2026-10-01T00:00:00.000Z', ?, ?)
+    `).run(now, now);
+    db.prepare(`
+      INSERT INTO sourcing_awards (
+        event_id, award_type, status, award_requisition_id, total_cents, is_lowest,
+        has_expired_validity, comparison_snapshot_json, proposed_by_user_id, proposed_at
+      ) VALUES (?, 'full', 'approved', ?, 1000, 1, 0, '{}', 3, ?)
+    `).run(Number(event.lastInsertRowid), prId, now);
+    const { convertRequisitionToPurchaseOrders } = await import('./purchaseOrdersService.js');
+    await assert.rejects(
+      convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 }),
+      (e) => e.statusCode === 409 && e.code === 'award_requisition_via_sourcing'
+    );
   });
 });

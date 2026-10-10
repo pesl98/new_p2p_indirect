@@ -1,8 +1,11 @@
 /**
  * Keep work alive after the HTTP response on Vercel (waitUntil).
- * Tests pass waitUntil. Elsewhere the promise still runs, and a rejection
- * is logged without the SMTP dialogue.
+ * On Vercel the platform helper from @vercel/functions is used unless the
+ * caller passes its own waitUntil (tests do). Elsewhere the promise still runs,
+ * and a rejection is logged without the SMTP dialogue.
  */
+
+import { waitUntil as vercelWaitUntil } from '@vercel/functions';
 
 export function scheduleBackground(work, options = {}) {
   const promise = Promise.resolve()
@@ -12,14 +15,14 @@ export function scheduleBackground(work, options = {}) {
     });
   const env = options.env || process.env;
   const onVercel = options.onVercel === true || String(env.VERCEL || '') === '1';
-  if (onVercel && typeof options.waitUntil === 'function') {
-    options.waitUntil(promise);
-  } else if (onVercel && typeof options.waitUntil !== 'function') {
-    import('@vercel/functions')
-      .then((mod) => {
-        if (typeof mod.waitUntil === 'function') mod.waitUntil(promise);
-      })
-      .catch(() => {});
+  if (onVercel) {
+    const keepAlive = typeof options.waitUntil === 'function' ? options.waitUntil : vercelWaitUntil;
+    try {
+      keepAlive(promise);
+    } catch (error) {
+      // Outside a Vercel request context there is nothing to extend.
+      console.error('background: waitUntil unavailable', error?.code || error?.name || 'waitUntil_error');
+    }
   }
   return promise;
 }

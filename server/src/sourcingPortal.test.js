@@ -847,6 +847,7 @@ describe('sourcing portal', () => {
     const allowed = new Set([
       'sourcingBidReadModel.js',
       'sourcingPortalService.js',
+      'sourcingAwardKit.js',
       'provision.js'
     ]);
     const hits = [];

@@ -1,5 +1,6 @@
 import { formatMoney } from './money.js';
 import { resolveDecisionActor } from './delegationsService.js';
+import { withBusyRetry } from './sourcingService.js';
 import { applyAwardDecision, guardAwardSelfApproval } from './sourcingApprovalHooks.js';
 import {
   CONTRACT_USE_ALLOWED,
@@ -12,10 +13,11 @@ import {
 } from './contractAssignment.js';
 
 export class ApprovalDecisionError extends Error {
-  constructor(message, statusCode = 400) {
+  constructor(message, statusCode = 400, code) {
     super(message);
     this.name = 'ApprovalDecisionError';
     this.statusCode = statusCode;
+    if (code) this.code = code;
   }
 }
 
@@ -144,14 +146,21 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     throw new ApprovalDecisionError('approver_id is required');
   }
 
-  return db.transaction(async () => {
+  // BEGIN IMMEDIATE takes the write lock before the read, so two final approvals
+  // of the same step serialise: the second one sees a decided step and gets 409.
+  return withBusyRetry(() => db.immediateTransaction(async () => {
     const approval = await db.prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(approvalId);
     if (!approval) {
       throw new ApprovalDecisionError('Approval request not found', 404);
     }
 
     if (approval.status !== 'pending') {
-      throw new ApprovalDecisionError('Only the current pending approval step can be decided');
+      const decided = ['approved', 'rejected', 'skipped'].includes(approval.status);
+      throw new ApprovalDecisionError(
+        'Only the current pending approval step can be decided',
+        decided ? 409 : 400,
+        decided ? 'approval_already_decided' : undefined
+      );
     }
 
     const actorCheck = await resolveDecisionActor(db, approval.approver_id, approver_id);
@@ -170,7 +179,8 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     const award = await guardAwardSelfApproval(db, {
       requisitionId: pr.id,
       decidingUserId: approver_id,
-      delegation: actorCheck.delegation
+      delegation: actorCheck.delegation,
+      stepApproverId: approval.approver_id
     });
 
     let contractUseDecision = null;
@@ -337,5 +347,5 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       award: awardResult,
       ...delegateMeta
     };
-  });
+  }));
 }

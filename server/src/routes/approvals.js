@@ -45,6 +45,7 @@ router.post('/:id/decide', async (req, res) => {
     console.error('Error deciding approval:', error);
     const body = { error: error.message };
     if (error.code) body.code = error.code;
+    if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
     res.status(error.statusCode || 500).json(body);
   }
 });
