@@ -39,6 +39,7 @@ import { mountConfigErrorApp, sendConfigError } from './configError.js';
 import { loadCurrencyConfig } from './currencyConfig.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
 import { requireApiSession } from './requestActor.js';
+import { corsOptions, originCheck, rateLimit, securityHeaders } from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,10 +103,17 @@ export function createApp(options = {}) {
 
   const authConfig = options.authConfig || loadAuthConfig();
   const integrationConfig = options.integrationConfig || loadIntegrationConfig();
-  warnIfInsecureSessionSecret(authConfig);
   const runtimeEnv = options.env || process.env;
+  try {
+    warnIfInsecureSessionSecret(authConfig, runtimeEnv);
+  } catch (error) {
+    console.error(error.message);
+    return startupErrorApp(error);
+  }
 
   const app = express();
+  app.disable('x-powered-by');
+  app.use(securityHeaders);
   if (trustProxyEnabled(runtimeEnv, config.onVercel)) app.set('trust proxy', 1);
   // Bid JSON can hold 50 lines with 2000-character comments. Only that route
   // gets the larger parser. Everything else stays on the 100 kB default.
@@ -131,10 +139,14 @@ export function createApp(options = {}) {
 
   app.use(attachSession);
   // Portal is bearer-only and must not inherit credentialed CORS.
-  app.use('/api/portal', portalRouter);
-  app.use(cors({ origin: true, credentials: true }));
+  app.use('/api/portal', options.portalRateLimit || rateLimit({ max: 300 }), portalRouter);
+  app.use(cors(corsOptions(runtimeEnv)));
+  app.use('/api', originCheck(runtimeEnv));
   app.use(requireApiSession);
 
+  const loginLimiter = options.loginRateLimit || rateLimit({ max: 20 });
+  app.use('/api/auth/login', loginLimiter);
+  app.use('/api/auth/bootstrap', loginLimiter);
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/departments', departmentsRouter);

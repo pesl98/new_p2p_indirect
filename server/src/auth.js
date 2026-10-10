@@ -220,8 +220,9 @@ export function requireAdmin(req, res, next) {
 export function warnIfInsecureSessionSecret(config, env = process.env) {
   if (!config?.usingDevSecret) return;
   if (runningOnVercel(env) || env.NODE_ENV === 'production') {
-    console.warn(
-      'SESSION_SECRET is not set. Using an insecure development default. Set SESSION_SECRET in the environment.'
-    );
+    const error = new Error('SESSION_SECRET must be set in production. Refusing to start with the insecure development default.');
+    error.statusCode = 503;
+    error.code = 'session_secret_missing';
+    throw error;
   }
 }
