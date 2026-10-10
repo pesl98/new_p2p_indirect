@@ -73,7 +73,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | | in review |
-| 8c | | Comparison, scoring, award requisition, SoD, and POs | | Sprint 8c — Comparison, scoring, award, and POs | | planned |
+| 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | | in review |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
 
 ## Sprint 1 — Full authorization rewrite
@@ -481,27 +481,39 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ## Sprint 8c — Comparison, scoring, award, and POs
 
-**Date:**
+**Date:** 2026-10-10
 
 **Goal:** After the deadline, buyers compare bids, score them, and propose a full or split award. The award goes through the existing approval chain with segregation of duties and becomes purchase orders through the existing convert.
 
-**PR:**
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/59 (#59). It carries the security hardening and role-gate work from the same branch.
 
 **Merge SHA:**
 
-**Status:** planned.
+**Status:** in review.
 
 ### Done when
 
-- The matrix marks the lowest price per line and the lowest complete total. Scores match the formula in the sourcing plan.
-- A non-lowest award without a reason gets 400. A split award converts to one PO per supplier at the awarded prices.
-- Above €1.000 the owner is never an approver of their own award. Below that, the existing self-approval finding still reports it.
-- Final approval commits the award total and releases the source PR's commitment in the same transaction. A rejection leaves no POs.
-- Creating the PO is a separate "Bestelling(en) aanmaken" step after approval. POs are issued as they are today.
+- The matrix marks the lowest price per line and the lowest complete total. Incomplete and withdrawn bids are handled. Scores are deterministic and match the formula in the sourcing plan (§8.1). `sourcingScoring.js` is pure and has a table of cases.
+- A non-lowest award, or one with an expired bid validity, without a reason of at least 10 characters gets 400 `award_reason_required`. The database CHECK rejects a direct insert too.
+- A split award produces one award requisition. Converting it yields one PO per awarded supplier at the awarded prices, with the RFQ number in the PO notes.
+- The owner and any evaluator who declared a conflict are excluded when the chain is built. A step that resolves to an excluded user goes to the next user with the same role, then escalates (approver, procurement, finance, admin). When nobody is left the proposal fails closed with 422 `sod_no_alternate_approver` and leaves no rows. The owner deciding an award, directly or as a delegate, gets 403 `sod_award_self_approval`.
+- Final approval releases the source PR's commitment and commits the award total in the same transaction, so the department is charged the awarded amount and not estimate plus award. A budget failure rolls the release back. A rejection leaves the event `evaluated`, the source PR locked, and no POs.
+- The compliance report builds the expected chain with the same exclusions, so award PRs raise no false `wrong_approver`. New findings: `sourcing_award_self_approval`, `sourcing_award_not_lowest` (info), `sourcing_bid_after_deadline`.
+- Statement counts, one interactive transaction each, measured by a test on the SQLite adapter: propose a split award 20, final approval of an award with a source PR 23. Both are under 25. Not measured on a Turso preview yet; the plan asks for that after the preview database split.
 
 ### Decisions
 
-- **Not started.** Peter's 2026-10-08 decisions that bind this sprint: manual "Bestelling(en) aanmaken" after award approval, no draft PO state, SoD threshold €1.000, minimum 3 quotes above €10.000 is a warning only.
+- **Scope.** [SOURCING-PLAN.md](SOURCING-PLAN.md) §8 Sprint 8c, with the 2026-10-08 (Peter) decisions: manual "Bestelling(en) aanmaken" after award approval, no draft PO state, SoD threshold € 1.000, a minimum of 3 quotes above € 10.000 stays a warning only.
+- **Modules.** `sourcingScoring.js` (pure), `sourcingEvaluationService.js` (comparison, COI, scores, "Beoordeling afronden", owner reassignment), `sourcingAwardService.js` (proposal, read, PO creation, approver snapshot), `sourcingApprovalHooks.js` (called from `decideApprovalStep` inside its transaction). `buildApprovalSteps` and `insertApprovalChain` take `excludeUserIds`.
+- **Routes.** On `/api/sourcing/events/:id`: `POST coi`, `POST scores`, `POST evaluate`, `POST owner` (admin), `GET award`, `POST awards`, `POST purchase-orders`. `GET comparison` now returns the matrix and scores when prices are visible. `GET /api/approvals/award-snapshot/:requisitionId` serves the frozen snapshot to the approval chain and to procurement, finance, and admin. Finance stays read-only except for `coi` and `scores`.
+- **Evaluation.** COI can be declared while the RFQ is `published` or `closed`. The owner declares too; the owner gets an evaluator row for that purpose. "Beoordeling afronden" needs at least one submitted bid. A pending COI or a bid without any score blocks it unless the owner gives an override reason of at least 10 characters, which is recorded on `SOURCING_EVENT_EVALUATED`.
+- **Award.** The proposal runs in one `immediateTransaction`. The unique index on open awards backs the precheck, so of two concurrent proposals one gets 409 `award_already_open`. Every RFQ line must be awarded. A full award goes to one supplier that quoted every line; a split award needs at least two suppliers. Every awarded supplier must be active. The snapshot (matrix, scores, lowest markers, chosen lines) is stored once and never recomputed.
+- **Deviations from the plan, on purpose.**
+  - The owner is excluded from the chain for every award, not only above the threshold. Since the 2026-10-10 hardening a requester cannot decide their own requisition at all, and the award PR's requester is the owner, so a chain that resolved to the owner would deadlock. `SOURCING_AWARD_SOD_THRESHOLD_CENTS` (default € 1.000) therefore only scopes the detective finding `sourcing_award_self_approval`.
+  - `createRequisition` was not extracted from `routes/requisitions.js`. The award service inserts its requisition directly with the same columns and audit rows. The extraction is a later refactor that does not change behaviour.
+  - The convert role gate (procurement or admin) already applied to every PR from the hardening work, so no award-specific gate was added.
+  - Evaluators who are not procurement, admin, or finance cannot reach the sourcing screens, as in 8a. Evaluator COI and scoring work for those three roles only.
+- **Not in this sprint.** Cancelling an RFQ from `closed` or `evaluated` keeps the 8b rule (only `draft` and `published` can be cancelled), so a pending award can never lose its event. The per-user "evaluator sees only their event" access for requesters and approvers, auto-convert on final approval, and losing-bidder notices stay open (see §10 of the plan). The webhook `sourcing_event.awarded` is enqueued in the approval transaction and carries the award total and per-supplier totals in cents.
 
 ## Sprint 8d — Hardening, email, integrations, demo seed, and docs
 

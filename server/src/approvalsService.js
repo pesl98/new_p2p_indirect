@@ -2,6 +2,13 @@ import { formatMoney } from './money.js';
 import { currentFiscalYear } from './fiscalYear.js';
 import { resolveDecisionActor } from './delegationsService.js';
 import {
+  guardAwardDecision,
+  onAwardApproved,
+  onAwardRejected,
+  releaseSourceCommitment
+} from './sourcingApprovalHooks.js';
+import { kickWebhookDispatch } from './webhookOutbox.js';
+import {
   CONTRACT_USE_ALLOWED,
   CONTRACT_USE_PROPOSED,
   CONTRACT_USE_REFUSED,
@@ -12,10 +19,11 @@ import {
 } from './contractAssignment.js';
 
 export class ApprovalDecisionError extends Error {
-  constructor(message, statusCode = 400) {
+  constructor(message, statusCode = 400, code) {
     super(message);
     this.name = 'ApprovalDecisionError';
     this.statusCode = statusCode;
+    if (code) this.code = code;
   }
 }
 
@@ -78,6 +86,8 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
         b.actual_spent,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
         (SELECT COUNT(*) FROM requisition_items WHERE requisition_id = pr.id) as item_count,
+        (SELECT e.event_number FROM sourcing_awards sa JOIN sourcing_events e ON e.id = sa.event_id
+          WHERE sa.award_requisition_id = pr.id) as rfq_number,
         ${SOURCE_CONTRACT_SELECT_SQL}
       FROM approval_requests ar
       JOIN purchase_requisitions pr ON ar.requisition_id = pr.id
@@ -138,7 +148,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     throw new ApprovalDecisionError('approver_id is required');
   }
 
-  return db.transaction(async () => {
+  const decided = await db.transaction(async () => {
     const approval = await db.prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(approvalId);
     if (!approval) {
       throw new ApprovalDecisionError('Approval request not found', 404);
@@ -160,6 +170,12 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     if (!pr) {
       throw new ApprovalDecisionError('Associated requisition not found', 404);
     }
+
+    const award = await guardAwardDecision(db, pr, {
+      approverId: approver_id,
+      actorCheck,
+      makeError: (message, status, code) => new ApprovalDecisionError(message, status, code)
+    });
 
     if (Number(pr.requester_id) === Number(approver_id)) {
       throw new ApprovalDecisionError('You cannot decide your own requisition', 403);
@@ -233,6 +249,8 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         VALUES ('requisition', ?, 'REJECTED', ?, ?)
       `).run(pr.id, actor, `Rejected by ${actor}.${viaNote} Reason: ${comments || 'No reason specified'}`);
 
+      if (award) await onAwardRejected(db, award, pr, { userId: approver_id, actorName: actor });
+
       return { outcome: 'rejected', budgetCommitted: false, contract_use_status: pr.contract_use_status, ...delegateMeta };
     }
 
@@ -257,6 +275,10 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         ...delegateMeta
       };
     }
+
+    // Award PR: free the source PR's commitment first so the department is
+    // charged the awarded amount, not estimate + award.
+    if (award) await releaseSourceCommitment(db, award, { userId: approver_id, actorName: actor });
 
     const budget = await db.prepare(
       `SELECT * FROM budgets WHERE department_id = ? AND fiscal_year = ?`
@@ -309,11 +331,16 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       );
     }
 
+    if (award) await onAwardApproved(db, award, pr, { userId: approver_id, actorName: actor });
+
     return {
       outcome: 'approved',
       budgetCommitted: true,
+      sourcing_event_id: award ? award.event_id : undefined,
       contract_use_status: contractUseDecision || pr.contract_use_status,
       ...delegateMeta
     };
   });
+  if (decided.sourcing_event_id) kickWebhookDispatch(db);
+  return decided;
 }

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { FileQuestion, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { t, presentError, statusLabel, categoryLabel } from '../i18n';
+import SourcingEvaluation from './SourcingEvaluation';
+import SourcingAward from './SourcingAward';
 import { formatMoney, moneyInputProps, parseMajorAmount, toCents, formatMajorInput } from '../money';
 
 const CATEGORIES = [
@@ -363,7 +365,7 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
     setTab(key);
     if (!detail?.id) return;
     try {
-      if (key === 'comparison') setComparison(await api.getSourcingComparison(detail.id));
+      if (key === 'comparison' || key === 'award') setComparison(await api.getSourcingComparison(detail.id));
       if (key === 'qa') setQuestions(await api.listSourcingQuestions(detail.id) || []);
     } catch (err) {
       setError(presentError(err, 'errors.sourcing'));
@@ -949,6 +951,7 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
               ['suppliers', 'sourcing.tab.suppliers'],
               ['files', 'sourcing.tab.files'],
               ['comparison', 'sourcing.tab.comparison'],
+              ['award', 'sourcing.tab.award'],
               ['qa', 'sourcing.tab.qa'],
               ['history', 'sourcing.tab.history']
             ].map(([key, label]) => (
@@ -1092,15 +1095,17 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
 
           {tab === 'comparison' && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm space-y-3">
-              {!comparison && <p className="text-slate-500">{t('common.loading')}</p>}
-              {comparison?.sealed && (
-                <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-3">
-                  <p className="font-semibold">{t('sourcing.comparison.sealedTitle')}</p>
-                  <p className="mt-1">{t('sourcing.comparison.sealedBody', { time: formatAmsterdam(comparison.deadline_at) })}</p>
-                  {comparison.prices_hidden && <p className="mt-1">{t('sourcing.comparison.hidden')}</p>}
-                </div>
-              )}
-              {comparison && !comparison.sealed && <p className="font-semibold">{t('sourcing.comparison.open')}</p>}
+              <SourcingEvaluation
+                detail={detail}
+                evaluation={comparison}
+                currentUser={currentUser}
+                formatTime={formatAmsterdam}
+                onError={setError}
+                onReload={async () => {
+                  setDetail(await api.getSourcingEvent(detail.id));
+                  setComparison(await api.getSourcingComparison(detail.id));
+                }}
+              />
               <ul className="divide-y divide-slate-100">
                 {(comparison?.invitations || []).map((row) => (
                   <li key={row.id} className="py-2">
@@ -1109,11 +1114,21 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
                   </li>
                 ))}
               </ul>
-              {!comparison?.sealed && (comparison?.bids || []).map((bid) => (
-                <div key={bid.invitation_id} className="border-t border-slate-100 pt-2">
-                  <p>{t('sourcing.comparison.total')}: {formatMoney(bid.total_cents)} · {t('sourcing.comparison.revision')} {bid.revision}</p>
-                </div>
-              ))}
+            </div>
+          )}
+
+          {tab === 'award' && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
+              <SourcingAward
+                detail={detail}
+                evaluation={comparison}
+                currentUser={currentUser}
+                onError={setError}
+                onReload={async () => {
+                  setDetail(await api.getSourcingEvent(detail.id));
+                  setComparison(await api.getSourcingComparison(detail.id));
+                }}
+              />
             </div>
           )}
 

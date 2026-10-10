@@ -45,7 +45,7 @@ const EVENT_NUMBER_ATTEMPTS = 3;
 /** Stay under SQLite's historical 999-variable limit, including Turso. */
 const SQL_VARIABLE_BUDGET = 900;
 
-function fail(message, statusCode, code, extra) {
+export function fail(message, statusCode, code, extra) {
   const error = new SourcingError(message, statusCode, code);
   if (extra?.retryAfterSeconds) error.retryAfterSeconds = extra.retryAfterSeconds;
   throw error;
@@ -161,13 +161,13 @@ function assertScheduleOrder(deadline, qaEnabled, qaDeadline) {
   }
 }
 
-function assertWriter(actor) {
+export function assertWriter(actor) {
   if (actor?.role !== 'procurement' && actor?.role !== 'admin') {
     fail('Insufficient role for this action', 403, 'read_only');
   }
 }
 
-function assertOwner(actor, event) {
+export function assertOwner(actor, event) {
   assertWriter(actor);
   if (actor.role === 'admin') return;
   if (Number(event.owner_user_id) !== Number(actor.id)) {
@@ -188,14 +188,14 @@ function rejectStatusSpoof(input, currentStatus) {
   }
 }
 
-async function writeAudit(db, entityType, entityId, action, actorName, details) {
+export async function writeAudit(db, entityType, entityId, action, actorName, details) {
   await db.prepare(`
     INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
     VALUES (?, ?, ?, ?, ?)
   `).run(entityType, entityId, action, actorName, details);
 }
 
-async function writeCompliance(db, actor, action, entityType, entityId, details) {
+export async function writeCompliance(db, actor, action, entityType, entityId, details) {
   await appendComplianceEvent(db, {
     ...actorFromSession(actor),
     action,
@@ -520,7 +520,7 @@ async function insertEvaluators(db, eventId, actor, userIds, now) {
   );
 }
 
-async function loadEventRow(db, id) {
+export async function loadEventRow(db, id) {
   const eventId = Number(id);
   if (!Number.isInteger(eventId) || eventId <= 0) return null;
   return db.prepare(`SELECT * FROM sourcing_events WHERE id = ?`).get(eventId);
@@ -1268,7 +1268,7 @@ export async function closeDueEvents(db, now = new Date(), { limit = 20, eventId
   return closed;
 }
 
-function requireRowVersion(input, existing) {
+export function requireRowVersion(input, existing) {
   if (input.row_version == null || input.row_version === '') {
     fail('row_version is required.', 400, 'row_version_required');
   }
