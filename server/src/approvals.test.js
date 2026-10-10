@@ -311,6 +311,24 @@ describe('sequential approval decisions', () => {
     assert.equal(decided.outcome, 'approved');
   });
 
+  test('re-routing a step avoids approvers who already hold another step of the chain', async () => {
+    const db = await createTestDb();
+    db.exec(`UPDATE departments SET approver_user_id = 2 WHERE id = 1`);
+    const amount = APPROVAL_TIER2_CENTS + 500;
+    const prId = await insertPr(db, amount);
+    await insertApprovalChain(db, prId, amount, 1);
+    assert.deepEqual(chainRows(db, prId).map((row) => row.approver_id), [2, 3]);
+    db.prepare(`UPDATE purchase_requisitions SET requester_id = 2 WHERE id = ?`).run(prId);
+    const [step1] = chainRows(db, prId);
+    const result = await decideApprovalStep(db, {
+      approvalId: step1.id, decision: 'approved', approver_id: 2, approver_name: 'Bob Martinez'
+    });
+    assert.equal(result.outcome, 'rerouted');
+    // Carol already holds step 2, so step 1 moves to finance rather than doubling her up.
+    assert.equal(result.rerouted_to.id, 4);
+    assert.deepEqual(chainRows(db, prId).map((row) => row.approver_id), [4, 3]);
+  });
+
   test('the chain for a department head\'s own requisition is built without them', async () => {
     const db = await createTestDb();
     db.exec(`INSERT INTO users (id, name, email, role, department_id, title) VALUES (5, 'Dana Head', 'dana@example.com', 'approver', 1, 'Deputy')`);

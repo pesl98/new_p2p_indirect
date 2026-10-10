@@ -10,7 +10,7 @@ import { nextDocumentNumber } from './docNumbers.js';
 import { normalizeLineType, resolveServiceBasis } from './lineType.js';
 import { isUniqueConstraint } from './masterData.js';
 import { formatMoney, lineTotalCents } from './money.js';
-import { buildApprovalSteps } from './approvalPolicy.js';
+import { APPROVAL_POLICY_VERSION, buildApprovalSteps } from './approvalPolicy.js';
 import { withBusyRetry } from './busyRetry.js';
 import { issueAwardPurchaseOrders } from './purchaseOrdersService.js';
 import { awardExclusions } from './sourcingApprovalHooks.js';
@@ -231,8 +231,8 @@ export async function proposeAward(db, actor, id, input = {}, options = {}) {
         'requisition_id', 'catalog_item_id', 'item_description', 'category', 'quantity',
         'unit_price', 'total_price', 'estimated_supplier_id', 'line_type', 'service_basis'
       ], itemRows.map((row) => [prId, ...row]));
-      await insertRows(db, 'approval_requests', ['requisition_id', 'approver_id', 'step_order', 'status'],
-        steps.map((step) => [prId, step.approver_id, step.step_order, Number(step.step_order) === 1 ? 'pending' : 'waiting']));
+      await insertRows(db, 'approval_requests', ['requisition_id', 'approver_id', 'step_order', 'status', 'policy_version'],
+        steps.map((step) => [prId, step.approver_id, step.step_order, Number(step.step_order) === 1 ? 'pending' : 'waiting', APPROVAL_POLICY_VERSION]));
 
       const award = await db.prepare(`
         INSERT INTO sourcing_awards (

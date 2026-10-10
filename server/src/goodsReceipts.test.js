@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase } from './db.js';
 import { createGoodsReceipt, GoodsReceiptError } from './goodsReceiptsService.js';
 
+const YEAR = new Date().getFullYear();
+
 
 async function createTestDb() {
   const db = await createMemoryDatabase();
@@ -13,7 +15,7 @@ async function createTestDb() {
              (3, 'Carol', 'carol@example.com', 'procurement', 1);
     INSERT INTO suppliers (id, name, code) VALUES (1, 'Vendor Co', 'SUP-1');
     INSERT INTO purchase_orders (id, po_number, supplier_id, created_by, status, total_amount, issue_date)
-      VALUES (1, 'PO-2026-001', 1, 3, 'issued', 259000, '2026-08-29');
+      VALUES (1, 'PO-${YEAR}-001', 1, 3, 'issued', 259000, '2026-08-29');
     INSERT INTO po_items (id, po_id, item_description, category, quantity, unit_price, total_price, quantity_received, quantity_invoiced)
       VALUES (1, 1, 'Herman Miller Aeron', 'Office Supplies', 2, 129500, 259000, 0, 0);
   `);
@@ -34,7 +36,7 @@ describe('goods receipt over-receipt control', () => {
   test('accepts a receipt that does not exceed ordered qty', async () => {
     const db = await createTestDb();
     const result = await createGoodsReceipt(db, receiptPayload({ items: [{ po_item_id: 1, quantity_received: 2 }] }));
-    assert.equal(result.grnNumber, 'GRN-2026-001');
+    assert.equal(result.grnNumber, `GRN-${YEAR}-001`);
     assert.equal(result.newPOStatus, 'received');
     const poItem = db.prepare(`SELECT quantity_received FROM po_items WHERE id = 1`).get();
     assert.equal(poItem.quantity_received, 2);

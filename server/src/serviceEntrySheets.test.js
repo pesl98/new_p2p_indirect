@@ -10,6 +10,8 @@ import {
 } from './serviceEntrySheetsService.js';
 import { createGoodsReceipt, GoodsReceiptError } from './goodsReceiptsService.js';
 
+const YEAR = new Date().getFullYear();
+
 
 async function createTestDb() {
   const db = await createMemoryDatabase();
@@ -20,7 +22,7 @@ async function createTestDb() {
              (3, 'Carol', 'carol@example.com', 'procurement', 1);
     INSERT INTO suppliers (id, name, code) VALUES (1, 'Apex Advisory', 'SUP-AAD');
     INSERT INTO purchase_orders (id, po_number, supplier_id, created_by, status, total_amount, issue_date)
-      VALUES (1, 'PO-2026-010', 1, 3, 'issued', 1250000, '2026-08-26');
+      VALUES (1, 'PO-${YEAR}-010', 1, 3, 'issued', 1250000, '2026-08-26');
     INSERT INTO po_items (id, po_id, item_description, category, quantity, unit_price, total_price, line_type)
       VALUES (1, 1, 'SOC 2 Type II Annual Security Penetration Test', 'Consulting & Professional Services', 1, 1250000, 1250000, 'service');
   `);
@@ -44,19 +46,19 @@ describe('service entry sheet numbering and lifecycle', () => {
   test('allocates SES-YYYY-NNN via MAX suffix', async () => {
     const db = await createTestDb();
     const first = await createServiceEntrySheet(db, sesPayload({ submitImmediately: false }));
-    assert.equal(first.sesNumber, 'SES-2026-001');
+    assert.equal(first.sesNumber, `SES-${YEAR}-001`);
     assert.equal(first.status, 'draft');
 
     db.prepare(`
       INSERT INTO service_entry_sheets (ses_number, po_id, created_by, status)
-      VALUES ('SES-2026-003', 1, 1, 'draft')
+      VALUES ('SES-${YEAR}-003', 1, 1, 'draft')
     `).run();
 
     const next = await createServiceEntrySheet(db, sesPayload({
       submitImmediately: false,
       items: [{ po_item_id: 1, quantity_accepted: 1 }]
     }));
-    assert.equal(next.sesNumber, 'SES-2026-004');
+    assert.equal(next.sesNumber, `SES-${YEAR}-004`);
   });
 
   test('submit then accept increments quantity_accepted and marks PO received', async () => {

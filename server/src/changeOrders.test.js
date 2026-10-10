@@ -16,6 +16,9 @@ import {
 } from './changeOrdersService.js';
 import { withCookie } from './testSession.js';
 import { formatMoney } from './money.js';
+import { currentFiscalYear } from './fiscalYear.js';
+
+const YEAR = new Date().getFullYear();
 
 function authed(url, options) {
   return fetch(url, withCookie(3, options));
@@ -45,8 +48,8 @@ async function createTestDb() {
              (3, 'Carol Zhang', 'carol@example.com', 'procurement', 3, 'Sourcing'),
              (7, 'James Okonkwo', 'james@example.com', 'approver', 3, 'Facilities');
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-      VALUES (1, 2026, 15000000, 500000, 100000),
-             (3, 2026, 9500000, 267000, 0);
+      VALUES (1, ${currentFiscalYear()}, 15000000, 500000, 100000),
+             (3, ${currentFiscalYear()}, 9500000, 267000, 0);
     INSERT INTO suppliers (id, name, code, payment_terms, status)
       VALUES (1, 'TechSupply Global', 'SUP-TSG', 'Net 30', 'active'),
              (4, 'FacilityCare & Janitorial Pro', 'SUP-FCJ', 'Net 30', 'active');
@@ -56,9 +59,9 @@ async function createTestDb() {
 
 function insertLinkedPo(db, {
   poId = 10,
-  poNumber = 'PO-2026-100',
+  poNumber = `PO-${YEAR}-100`,
   prId = 20,
-  prNumber = 'PR-2026-100',
+  prNumber = `PR-${YEAR}-100`,
   departmentId = 3,
   supplierId = 4,
   status = 'issued',
@@ -92,7 +95,7 @@ function insertLinkedPo(db, {
 function insertStandalonePo(db, overrides = {}) {
   const {
     poId = 11,
-    poNumber = 'PO-2026-101',
+    poNumber = `PO-${YEAR}-101`,
     status = 'issued',
     quantity = 2,
     unitPrice = 54000,
@@ -146,7 +149,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
       lines: [{ po_item_id: itemId, quantity: 3, unit_price: 50000 }]
     });
 
-    assert.equal(result.change_order.co_number, 'CO-2026-001');
+    assert.equal(result.change_order.co_number, `CO-${YEAR}-001`);
     assert.equal(result.change_order.revision, 1);
     assert.equal(result.change_order.status, 'applied');
     assert.equal(result.change_order.before_total_cents, 108000);
@@ -169,7 +172,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
     `).get(poId, CHANGE_ORDER_AUDIT_ACTION);
     assert.ok(audit);
     assert.equal(audit.actor_name, 'Carol Zhang');
-    assert.match(audit.details, /CO-2026-001/);
+    assert.match(audit.details, /CO-\d{4}-001/);
     assert.ok(audit.details.includes(formatMoney(108000)));
     assert.ok(audit.details.includes(formatMoney(150000)));
     assert.match(audit.details, /→/);
@@ -179,7 +182,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
     const db = await createTestDb();
     const goods = insertStandalonePo(db, {
       poId: 12,
-      poNumber: 'PO-2026-102',
+      poNumber: `PO-${YEAR}-102`,
       lineType: 'goods',
       category: 'IT Hardware',
       description: 'Monitor',
@@ -199,7 +202,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
 
     const services = insertStandalonePo(db, {
       poId: 13,
-      poNumber: 'PO-2026-103',
+      poNumber: `PO-${YEAR}-103`,
       quantity: 2,
       unitPrice: 54000,
       accepted: 1,
@@ -216,7 +219,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
 
     const invoiced = insertStandalonePo(db, {
       poId: 14,
-      poNumber: 'PO-2026-104',
+      poNumber: `PO-${YEAR}-104`,
       lineType: 'goods',
       category: 'IT Hardware',
       description: 'Mouse',
@@ -368,12 +371,12 @@ describe('applyPurchaseOrderChangeOrder', () => {
     const db = await createTestDb();
     const { poId, itemId } = insertLinkedPo(db, {
       poId: 30,
-      poNumber: 'PO-2026-130',
+      poNumber: `PO-${YEAR}-130`,
       prId: 30,
-      prNumber: 'PR-2026-130'
+      prNumber: `PR-${YEAR}-130`
     });
 
-    const before = await getDocumentTrail(db, { po_number: 'PO-2026-130' });
+    const before = await getDocumentTrail(db, { po_number: `PO-${YEAR}-130` });
     assert.equal(before.timeline.filter((event) => event.kind === 'change_order').length, 0);
     assert.equal(before.purchase_orders[0].change_order_events.length, 0);
 
@@ -387,7 +390,7 @@ describe('applyPurchaseOrderChangeOrder', () => {
     const events = after.timeline.filter((event) => event.kind === 'change_order');
     assert.equal(events.length, 1);
     assert.equal(events[0].title, 'Change order applied');
-    assert.equal(events[0].number, 'CO-2026-001');
+    assert.equal(events[0].number, `CO-${YEAR}-001`);
     assert.equal(events[0].source, 'audit');
     assert.equal(events[0].actor_name, 'Carol Zhang');
     assert.equal(after.purchase_orders[0].change_order_events[0].action, CHANGE_ORDER_AUDIT_ACTION);
@@ -418,7 +421,7 @@ describe('change order HTTP API', () => {
       });
       assert.equal(created.status, 201);
       const createdBody = await created.json();
-      assert.equal(createdBody.change_order.co_number, 'CO-2026-001');
+      assert.equal(createdBody.change_order.co_number, `CO-${YEAR}-001`);
       assert.equal(createdBody.change_order.after_total_cents, 162000);
 
       const listed = await authed(`${base}/api/purchase-orders/${poId}/change-orders`);

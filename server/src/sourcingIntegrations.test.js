@@ -73,7 +73,7 @@ const auth = (token, extra = {}) => ({ 'Content-Type': 'application/json', Autho
 const DRAFT = {
   external_id: 'ERP-RFQ-1',
   title: 'Stoelen',
-  deadline_at: '2026-10-30T14:00:00.000Z',
+  deadline_at: '2999-10-30T14:00:00.000Z',
   lines: [{ description: 'Stoel', category: 'Office Supplies', quantity: 2 }],
   invitations: [{ supplier_external_id: 'ERP-ACT' }]
 };
@@ -199,7 +199,7 @@ describe('sourcing machine API', () => {
   const bigDraft = (externalId, lines, suppliers, offset = 0) => ({
     external_id: externalId,
     title: 'Groot',
-    deadline_at: '2026-10-30T14:00:00.000Z',
+    deadline_at: '2999-10-30T14:00:00.000Z',
     lines: Array.from({ length: lines }, (_, i) => ({ description: `Regel ${i + 1}`, category: 'Office Supplies', quantity: 1 })),
     invitations: Array.from({ length: suppliers }, (_, i) => ({ supplier_external_id: `ERP-S${101 + offset + i}` }))
   });

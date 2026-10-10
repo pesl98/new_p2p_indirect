@@ -10,6 +10,8 @@ import {
 import { createGoodsReceipt, GoodsReceiptError } from './goodsReceiptsService.js';
 import { createVendorInvoice } from './invoicesService.js';
 
+const YEAR = new Date().getFullYear();
+
 async function createTestDb() {
   const db = await createMemoryDatabase();
   db.exec(`
@@ -223,7 +225,7 @@ describe('consignment stock', () => {
       receipt_date: '2026-09-19',
       items: [{ po_item_id: 1, quantity_received: 2, condition: 'good' }]
     });
-    assert.equal(grn.grnNumber, 'GRN-2026-001');
+    assert.equal(grn.grnNumber, `GRN-${YEAR}-001`);
     assert.equal(db.prepare(`SELECT quantity_received FROM po_items WHERE id = 1`).get().quantity_received, 2);
     assert.equal(
       db.prepare(`SELECT quantity_on_hand FROM consignment_balances WHERE id = ?`).get(received.balanceId).quantity_on_hand,

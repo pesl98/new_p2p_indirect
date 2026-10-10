@@ -14,6 +14,7 @@ import {
   parseAllowContractUse
 } from './contractAssignment.js';
 import { withCookie } from './testSession.js';
+import { currentFiscalYear } from './fiscalYear.js';
 
 function authed(url, options) {
   return fetch(url, withCookie(1, options));
@@ -45,7 +46,7 @@ async function makeDb() {
   `).run();
   await db.prepare(`
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-    VALUES (1, 2026, 15000000, 0, 0)
+    VALUES (1, ${currentFiscalYear()}, 15000000, 0, 0)
   `).run();
   await db.prepare(`
     INSERT INTO suppliers (id, name, code, payment_terms)

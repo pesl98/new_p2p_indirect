@@ -247,7 +247,13 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
     );
   }
 
-  const issued = await db.transaction(async () => {
+  // BEGIN IMMEDIATE takes the write lock first, so two converts of one requisition cannot both
+  // read it as approved. A busy database retries, then answers 503 (409 when the snapshot moved).
+  const issued = await withBusyRetry(() => db.immediateTransaction(async () => {
+    const fresh = await db.prepare(`SELECT status FROM purchase_requisitions WHERE id = ?`).get(requisition_id);
+    if (fresh?.status !== 'approved') {
+      throw new PurchaseOrderError('Requisition must be in "approved" state to generate a Purchase Order.', 409, 'requisition_state_changed');
+    }
     const currentYear = new Date().getFullYear();
     const created = [];
 
@@ -374,7 +380,7 @@ export async function convertRequisitionToPurchaseOrders(db, payload) {
     );
 
     return created;
-  });
+  }));
   kickWebhookDispatch(db);
   return issued;
 }

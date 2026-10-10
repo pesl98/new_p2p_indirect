@@ -14,6 +14,8 @@ import {
 } from './purchaseOrdersService.js';
 import { withCookie } from './testSession.js';
 
+const YEAR = new Date().getFullYear();
+
 function authed(url, options) {
   return fetch(url, withCookie(3, options));
 }
@@ -53,7 +55,7 @@ async function createTestDb() {
   return db;
 }
 
-function insertApprovedPr(db, { items, status = 'approved', prNumber = 'PR-2026-100', total } = {}) {
+function insertApprovedPr(db, { items, status = 'approved', prNumber = `PR-${YEAR}-100`, total } = {}) {
   const amount = total ?? items.reduce((sum, item) => sum + item.total_price, 0);
   const pr = db.prepare(`
     INSERT INTO purchase_requisitions (pr_number, requester_id, department_id, status, total_amount, justification, needed_by_date)
@@ -189,7 +191,7 @@ describe('convert approved PR to purchase orders', () => {
 
     const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.equal(created.length, 1);
-    assert.equal(created[0].poNumber, 'PO-2026-001');
+    assert.equal(created[0].poNumber, `PO-${YEAR}-001`);
     assert.equal(created[0].supplier_id, 1);
     assert.equal(created[0].total_amount, 424800);
     assert.equal(created[0].item_count, 2);
@@ -210,7 +212,7 @@ describe('convert approved PR to purchase orders', () => {
   test('multi-supplier PR creates one issued PO per supplier with correct lines and totals', async () => {
     const db = await createTestDb();
     const { prId, itemIds } = await insertApprovedPr(db, {
-      prNumber: 'PR-2026-200',
+      prNumber: `PR-${YEAR}-200`,
       items: [
         {
           catalog_item_id: 1,
@@ -245,7 +247,7 @@ describe('convert approved PR to purchase orders', () => {
 
     const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
     assert.equal(created.length, 3);
-    assert.deepEqual(created.map((po) => po.poNumber), ['PO-2026-001', 'PO-2026-002', 'PO-2026-003']);
+    assert.deepEqual(created.map((po) => po.poNumber), [`PO-${YEAR}-001`, `PO-${YEAR}-002`, `PO-${YEAR}-003`]);
     assert.deepEqual(created.map((po) => po.supplier_id), [1, 3, 2]);
     assert.deepEqual(created.map((po) => po.total_amount), [349900, 259000, 54000]);
 
@@ -284,9 +286,9 @@ describe('convert approved PR to purchase orders', () => {
       WHERE entity_type = 'requisition' AND entity_id = ? AND action = 'SPLIT_CONVERTED_TO_PO'
     `).get(prId);
     assert.ok(splitAudit);
-    assert.match(splitAudit.details, /PO-2026-001/);
-    assert.match(splitAudit.details, /PO-2026-002/);
-    assert.match(splitAudit.details, /PO-2026-003/);
+    assert.match(splitAudit.details, /PO-\d{4}-001/);
+    assert.match(splitAudit.details, /PO-\d{4}-002/);
+    assert.match(splitAudit.details, /PO-\d{4}-003/);
     assert.match(splitAudit.details, /TechSupply Global/);
     assert.match(splitAudit.details, /WorkSpace Ergonomics Depot/);
     assert.match(splitAudit.details, /CloudCore Software LLC/);
@@ -534,7 +536,7 @@ describe('convert approved PR to purchase orders', () => {
     const db = await createTestDb();
     db.prepare(`
       INSERT INTO purchase_orders (po_number, supplier_id, created_by, status, total_amount, issue_date)
-      VALUES ('PO-2026-004', 1, 3, 'issued', 100, '2026-09-01')
+      VALUES ('PO-${YEAR}-004', 1, 3, 'issued', 100, '2026-09-01')
     `).run();
 
     const { prId } = await insertApprovedPr(db, {
@@ -561,7 +563,7 @@ describe('convert approved PR to purchase orders', () => {
     });
 
     const created = await convertRequisitionToPurchaseOrders(db, { requisition_id: prId, created_by: 3 });
-    assert.deepEqual(created.map((po) => po.poNumber), ['PO-2026-005', 'PO-2026-006']);
+    assert.deepEqual(created.map((po) => po.poNumber), [`PO-${YEAR}-005`, `PO-${YEAR}-006`]);
   });
 });
 

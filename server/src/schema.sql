@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS approval_requests (
   comments TEXT,
   decided_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  -- Routing rule the chain was built under. NULL = version 1, before requesters were excluded.
+  policy_version INTEGER,
   FOREIGN KEY (requisition_id) REFERENCES purchase_requisitions(id) ON DELETE CASCADE,
   FOREIGN KEY (approver_id) REFERENCES users(id)
 );

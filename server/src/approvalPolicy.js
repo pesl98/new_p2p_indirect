@@ -11,6 +11,13 @@ export class ApprovalPolicyError extends Error {
   }
 }
 
+/**
+ * Routing rule version stored on every approval_requests row. 1 (stored as NULL): the chain was
+ * built before requesters were kept off their own requisitions. 2: requesters, and for RFQ awards
+ * the owner, proposer and conflicted evaluators, are excluded when the chain is built.
+ */
+export const APPROVAL_POLICY_VERSION = 2;
+
 /** Roles a step can escalate to when every user at its own tier is excluded. */
 const ESCALATION_LADDER = ['approver', 'procurement', 'finance', 'admin'];
 
@@ -190,8 +197,8 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db, exclud
 export async function insertApprovalChain(db, prId, totalAmount, departmentId, { excludeUserIds = [] } = {}) {
   const steps = await buildApprovalSteps({ totalAmount, departmentId, db, excludeUserIds });
   const insert = db.prepare(`
-    INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO approval_requests (requisition_id, approver_id, step_order, status, policy_version)
+    VALUES (?, ?, ?, ?, ${APPROVAL_POLICY_VERSION})
   `);
   for (const step of steps) {
     const status = step.step_order === 1 ? 'pending' : 'waiting';

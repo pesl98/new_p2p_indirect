@@ -10,6 +10,8 @@ import { createServiceEntrySheet, ServiceEntrySheetError } from './serviceEntryS
 import { applyPurchaseOrderChangeOrder, ChangeOrderError } from './changeOrdersService.js';
 import { createVendorInvoice } from './invoicesService.js';
 
+const YEAR = new Date().getFullYear();
+
 async function createTestDb() {
   const db = await createMemoryDatabase();
   db.exec(`
@@ -68,7 +70,7 @@ describe('metered utilities', () => {
   test('a reading opens a payable for the measured usage and does not post a GRN', async () => {
     const db = await createTestDb();
     const opened = await openUtilityArrangement(db, arrangementPayload());
-    assert.equal(opened.arrangementNumber, 'UTA-2026-001');
+    assert.equal(opened.arrangementNumber, `UTA-${YEAR}-001`);
 
     const recorded = await recordUtilityConsumption(db, {
       arrangement_id: opened.arrangementId,
@@ -244,7 +246,7 @@ describe('vendor-managed bulk', () => {
       registered_by: 3,
       actor_name: 'Carol Zhang'
     });
-    assert.equal(registered.containerNumber, 'BVL-2026-001');
+    assert.equal(registered.containerNumber, `BVL-${YEAR}-001`);
     assert.equal(registered.levelMilli, 0);
 
     await assert.rejects(
