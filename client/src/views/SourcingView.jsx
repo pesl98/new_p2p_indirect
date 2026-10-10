@@ -342,6 +342,8 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
   const isOwner = currentUser?.role === 'admin' || Number(detail?.owner_user_id) === Number(currentUser?.id);
   const ownerCanEdit = canWrite && detail?.status === 'draft' && isOwner;
   const ownerCanManage = canWrite && (detail?.status === 'draft' || detail?.status === 'published') && isOwner;
+  // Cancel is also possible after the deadline (closed, evaluated); a pending award is withdrawn with it.
+  const canCancel = canWrite && isOwner && ['draft', 'published', 'closed', 'evaluated'].includes(detail?.status);
 
   const publish = async (source = detail) => {
     if (!source?.id) return;
@@ -1204,8 +1206,9 @@ export default function SourcingView({ currentUser, navFocus, onNavigate }) {
             </ul>
           )}
 
-          {ownerCanManage && (
+          {canCancel && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-wrap gap-2 items-end">
+              {detail.status === 'evaluated' && <p className="w-full text-xs text-amber-700">{t('sourcing.cancelWithdrawsAward')}</p>}
               <label className="text-sm text-slate-600 flex-1">
                 {t('sourcing.cancelReason')}
                 <input

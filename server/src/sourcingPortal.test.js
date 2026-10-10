@@ -849,7 +849,8 @@ describe('sourcing portal', () => {
       'sourcingPortalService.js',
       'provision.js',
       // Sprint 8c detective check reads submitted_at only, never prices.
-      'complianceReports.js'
+      'complianceReports.js',
+      'sourcingAwardFixtures.js'
     ]);
     const hits = [];
     const walkJs = (dir) => {

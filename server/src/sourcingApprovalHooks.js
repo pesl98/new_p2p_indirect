@@ -21,6 +21,7 @@ export async function loadAwardByRequisition(db, requisitionId) {
   return db.prepare(`
     SELECT a.id AS award_id, a.event_id, a.award_type, a.status AS award_status, a.total_cents,
            a.is_lowest, a.reason, a.award_requisition_id,
+           a.proposed_by_user_id, a.owner_user_id AS award_owner_user_id,
            e.event_number, e.owner_user_id, e.source_requisition_id, e.currency, e.status AS event_status
     FROM sourcing_awards a
     JOIN sourcing_events e ON e.id = a.event_id
@@ -29,15 +30,33 @@ export async function loadAwardByRequisition(db, requisitionId) {
 }
 
 /**
- * Users who must not approve an award: the event owner and every evaluator
- * who declared a conflict. Applied to the chain when it is built, and again
- * by the compliance report, so the report raises no false wrong_approver.
+ * Users who must not approve an award: the RFQ owner, the user who proposed it,
+ * and every evaluator who declared a conflict. Applied to the chain when it is
+ * built, and again by the compliance report, so the report raises no false
+ * wrong_approver.
  */
-export async function awardExclusions(db, eventId, ownerUserId) {
+export async function awardExclusions(db, eventId, ownerUserId, proposerUserId = null) {
   const rows = await db.prepare(`
     SELECT user_id FROM sourcing_evaluators WHERE event_id = ? AND coi_status = 'conflict_declared'
   `).all(eventId);
-  return [...new Set([Number(ownerUserId), ...rows.map((row) => Number(row.user_id))])];
+  const ids = new Set([Number(ownerUserId), ...rows.map((row) => Number(row.user_id))]);
+  if (proposerUserId != null) ids.add(Number(proposerUserId));
+  ids.delete(NaN);
+  return [...ids];
+}
+
+/** Everyone an award decision must not involve (stored owner and proposer, current owner, conflicts). */
+export async function restrictedAwardUsers(db, award) {
+  const ids = await awardExclusions(
+    db,
+    award.event_id,
+    award.award_owner_user_id ?? award.owner_user_id,
+    award.proposed_by_user_id
+  );
+  const set = new Set(ids);
+  set.add(Number(award.owner_user_id));
+  set.delete(0);
+  return set;
 }
 
 export async function awardExclusionsForRequisition(db, requisitionId) {
@@ -45,18 +64,40 @@ export async function awardExclusionsForRequisition(db, requisitionId) {
   if (!award) return null;
   return {
     award,
-    excludeUserIds: await awardExclusions(db, award.event_id, award.owner_user_id)
+    excludeUserIds: await awardExclusions(
+      db,
+      award.event_id,
+      award.award_owner_user_id ?? award.owner_user_id,
+      award.proposed_by_user_id
+    )
   };
 }
 
-/** 403 when the owner decides an award, directly or as a delegate. */
-export async function guardAwardDecision(db, pr, { approverId, actorCheck, makeError }) {
+/**
+ * 403 when anyone involved in the decision is restricted: the deciding user, the
+ * step's assigned approver, either side of a delegation, or the user who
+ * created that delegation. Covers direct decisions, delegates, delegators, and
+ * an admin deciding through a delegation they set up for themselves.
+ */
+export async function guardAwardDecision(db, pr, { approverId, actorCheck, stepApproverId = null, makeError }) {
   const award = await loadAwardByRequisition(db, pr.id);
   if (!award) return null;
-  const owner = Number(award.owner_user_id);
-  const viaOwner = actorCheck?.viaDelegation && Number(actorCheck.delegation?.delegator_user_id) === owner;
-  if (Number(approverId) === owner || viaOwner) {
-    throw makeError('The RFQ owner cannot decide the award of their own RFQ.', 403, SOD_CODE);
+  if (award.award_status !== 'pending_approval') return award;
+  const restricted = await restrictedAwardUsers(db, award);
+  const delegation = actorCheck?.delegation || null;
+  const involved = [
+    Number(approverId),
+    stepApproverId == null ? NaN : Number(stepApproverId),
+    delegation ? Number(delegation.delegator_user_id) : NaN,
+    delegation ? Number(delegation.delegate_user_id) : NaN,
+    delegation && delegation.created_by_user_id != null ? Number(delegation.created_by_user_id) : NaN
+  ];
+  if (involved.some((id) => restricted.has(id))) {
+    throw makeError(
+      'The RFQ owner, the proposer, and users with a declared conflict cannot decide this award.',
+      403,
+      SOD_CODE
+    );
   }
   return award;
 }

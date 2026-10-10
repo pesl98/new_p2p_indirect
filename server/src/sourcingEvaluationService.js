@@ -5,6 +5,7 @@
  */
 
 import { actorFromSession, appendComplianceEvent, utcTimestamp } from './complianceAudit.js';
+import { withBusyRetry } from './busyRetry.js';
 import { loadBuyerComparison } from './sourcingBidReadModel.js';
 import { utcIso } from './sourcingConfig.js';
 import {
@@ -301,10 +302,6 @@ export async function reassignOwner(db, actor, id, input = {}, options = {}) {
   const event = await loadEventRow(db, id);
   if (!event) fail('RFQ was not found.', 404, 'event_not_found');
   if (['awarded', 'cancelled'].includes(event.status)) fail('This RFQ can no longer change owner.', 409, 'event_state_changed');
-  const open = await db.prepare(`
-    SELECT id FROM sourcing_awards WHERE event_id = ? AND status = 'pending_approval'
-  `).get(event.id);
-  if (open) fail('An award is waiting for approval.', 409, 'award_already_open');
   const userId = Number(input.user_id);
   const reason = String(input.reason || '').trim();
   if (reason.length < 10) fail('A reason of at least 10 characters is required.', 400, 'reason_required');
@@ -315,12 +312,23 @@ export async function reassignOwner(db, actor, id, input = {}, options = {}) {
     fail('The new owner must be an active procurement or admin user.', 400, 'invalid_owner');
   }
   const now = utcIso(nowDate);
-  await db.immediateTransaction(async () => {
+  await withBusyRetry(() => db.immediateTransaction(async () => {
+    // The open-award test is part of the UPDATE, under BEGIN IMMEDIATE: an award proposed a
+    // moment ago still blocks the change, and the owner recorded on it stays the real owner.
     const result = await db.prepare(`
       UPDATE sourcing_events SET owner_user_id = ?, row_version = row_version + 1, updated_at = ?
       WHERE id = ? AND status NOT IN ('awarded', 'cancelled')
-    `).run(next.id, now, event.id);
-    if (!result.changes) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+        AND NOT EXISTS (
+          SELECT 1 FROM sourcing_awards WHERE event_id = ? AND status IN ('pending_approval', 'approved')
+        )
+    `).run(next.id, now, event.id, event.id);
+    if (!result.changes) {
+      const open = await db.prepare(`
+        SELECT id FROM sourcing_awards WHERE event_id = ? AND status IN ('pending_approval', 'approved') LIMIT 1
+      `).get(event.id);
+      if (open) fail('An award is open, so the owner cannot change.', 409, 'award_already_open');
+      fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+    }
     await writeAudit(db, 'sourcing_event', event.id, 'OWNER_REASSIGNED', actor.name,
       `RFQ ${event.event_number} owner changed to ${next.name}: ${reason}`);
     await appendComplianceEvent(db, {
@@ -331,6 +339,6 @@ export async function reassignOwner(db, actor, id, input = {}, options = {}) {
       details: JSON.stringify({ from_user_id: event.owner_user_id, to_user_id: next.id, reason }),
       created_at: utcTimestamp(nowDate)
     });
-  })();
+  }));
   return buyerEvaluation(db, actor, event.id, nowDate);
 }

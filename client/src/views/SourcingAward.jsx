@@ -12,6 +12,7 @@ export default function SourcingAward({ detail, evaluation, currentUser, onReloa
   const [reassignUser, setReassignUser] = useState('');
   const [reassignReason, setReassignReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [poProgress, setPoProgress] = useState(null);
 
   const load = async () => {
     try {
@@ -45,6 +46,17 @@ export default function SourcingAward({ detail, evaluation, currentUser, onReloa
     }
   };
 
+  // The server works for about 10 seconds per request and says what is left; ask again until done.
+  const createPos = () => run(async () => {
+    setPoProgress(null);
+    let result = await api.createSourcingPurchaseOrders(detail.id);
+    for (let round = 0; result.done === false && round < 50; round += 1) {
+      setPoProgress({ remaining: result.remaining.length });
+      result = await api.createSourcingPurchaseOrders(detail.id);
+    }
+    setPoProgress(null);
+  });
+
   const propose = () => run(() => api.proposeSourcingAward(detail.id, type === 'full'
     ? { award_type: 'full', bid_id: Number(fullBid), reason }
     : {
@@ -74,13 +86,16 @@ export default function SourcingAward({ detail, evaluation, currentUser, onReloa
       {award && (
         <div className="rounded-lg border border-slate-200 p-3 space-y-2">
           <p className="font-semibold">{t('sourcing.award.status')}: {t(`sourcing.award.${award.status}`)}</p>
-          <p>{t('sourcing.award.total')}: {formatMoney(award.total_cents)} · {award.is_lowest ? t('sourcing.award.isLowest') : t('sourcing.award.notLowest')}</p>
+          {award.prices_hidden
+            ? <p className="text-slate-500">{t('sourcing.award.pricesHidden')}</p>
+            : <p>{t('sourcing.award.total')}: {formatMoney(award.total_cents)} · {award.is_lowest ? t('sourcing.award.isLowest') : t('sourcing.award.notLowest')}</p>}
           {award.reason && <p className="text-slate-600">{award.reason}</p>}
           {award.requisition && <p>{t('sourcing.award.requisition')}: <span className="font-mono">{award.requisition.pr_number}</span> ({statusLabel(award.requisition.status)})</p>}
           <ul className="list-disc ml-5">
             {award.lines.map((line) => (
               <li key={line.event_line_id}>
-                {line.line_no}. {line.description}: {line.supplier_name} · {formatMoney(line.unit_price_cents)} × {line.quantity} = {formatMoney(line.line_total_cents)}
+                {line.line_no}. {line.description}
+                {!award.prices_hidden && <>: {line.supplier_name} · {formatMoney(line.unit_price_cents)} × {line.quantity} = {formatMoney(line.line_total_cents)}</>}
               </li>
             ))}
           </ul>
@@ -95,17 +110,18 @@ export default function SourcingAward({ detail, evaluation, currentUser, onReloa
               <p className="font-semibold">{t('sourcing.award.pos')}</p>
               <ul className="list-disc ml-5">
                 {award.purchase_orders.map((po) => (
-                  <li key={po.id}><span className="font-mono">{po.po_number}</span> · {po.supplier_name} · {formatMoney(po.total_amount)}</li>
+                  <li key={po.id}><span className="font-mono">{po.po_number}</span>{!award.prices_hidden && <> · {po.supplier_name} · {formatMoney(po.total_amount)}</>}</li>
                 ))}
               </ul>
             </>
           )}
-          {detail.status === 'awarded' && award.purchase_orders.length === 0 && (currentUser?.role === 'procurement' || currentUser?.role === 'admin') && (
-            <button type="button" disabled={busy} onClick={() => run(() => api.createSourcingPurchaseOrders(detail.id))}
+          {detail.status === 'awarded' && award.requisition?.status !== 'converted_to_po' && (currentUser?.role === 'procurement' || currentUser?.role === 'admin') && (
+            <button type="button" disabled={busy} onClick={createPos}
               className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold">
               {t('sourcing.award.createPos')}
             </button>
           )}
+          {poProgress && <p className="text-slate-600">{t('sourcing.award.posProgress', { n: poProgress.remaining })}</p>}
         </div>
       )}
 

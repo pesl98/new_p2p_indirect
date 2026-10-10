@@ -35,11 +35,17 @@ async function firstAllowedUser(db, role, excluded, departmentId = null) {
  * role, then escalate up the ladder (procurement -> finance -> admin).
  * Fails closed with 422 sod_no_alternate_approver when nobody is left.
  */
-async function resolveAllowed(db, user, excluded, departmentId) {
+async function resolveAllowed(db, user, excluded, departmentId, { departmentStep = false } = {}) {
   if (!excluded.size || !excluded.has(Number(user.id))) return user;
   const sameRole = await firstAllowedUser(db, user.role, excluded, user.role === 'approver' ? departmentId : null);
   if (sameRole) return sameRole;
-  const start = Math.max(0, ESCALATION_LADDER.indexOf(user.role)) + 1;
+  if (departmentStep) {
+    // A department head who is not role=approver (an admin mapped as head) falls back
+    // to the department's approvers first, then up the ladder.
+    const approver = await firstAllowedUser(db, 'approver', excluded, departmentId);
+    if (approver) return approver;
+  }
+  const start = departmentStep ? 1 : Math.max(0, ESCALATION_LADDER.indexOf(user.role)) + 1;
   for (const role of ESCALATION_LADDER.slice(start)) {
     const next = await firstAllowedUser(db, role, excluded);
     if (next) return next;
@@ -127,7 +133,7 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db, exclud
   const steps = [];
   const excluded = new Set((excludeUserIds || []).map(Number).filter(Number.isInteger));
 
-  const deptApprover = await resolveAllowed(db, await resolveDepartmentApprover(db, deptId), excluded, deptId);
+  const deptApprover = await resolveAllowed(db, await resolveDepartmentApprover(db, deptId), excluded, deptId, { departmentStep: true });
   steps.push({
     step_order: 1,
     approver_id: deptApprover.id,

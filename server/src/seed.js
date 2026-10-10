@@ -6,7 +6,6 @@ import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
 import { measuredAmountCents } from './measuredQty.js';
 import { formatMoney } from './money.js';
 
-const FISCAL_YEAR = currentFiscalYear();
 
 const ELECTRICITY_MILLI = 842500;
 const ELECTRICITY_PRICE = 18;
@@ -160,11 +159,11 @@ export async function insertDemoData(rootDb) {
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
     VALUES (?, ?, ?, ?, ?)
   `);
-  await insertBudget.run(1, FISCAL_YEAR, 15000000, 1782100, 2435000); // MKT € 150.000,00 / € 17.821,00 committed (PR-2026-006 + buyer-inbox PR-2026-007) / € 24.350,00
-  await insertBudget.run(2, FISCAL_YEAR, 32000000, 6070000, 8910000); // ITE + € 12.500,00 committed for SOC 2 SES PO
-  await insertBudget.run(3, FISCAL_YEAR, 9500000, 1485000, 1845000);  // FAC + € 2.670,00 PR-2026-008 minus € 120,00 CO-2026-001 volume discount
-  await insertBudget.run(4, FISCAL_YEAR, 6000000, 450000, 1131600);   // HRP + € 116,00 AP-aging INV-WED-3308 (approved; committed already released)
-  await insertBudget.run(5, FISCAL_YEAR, 5000000, 320000, 890000);    // ADM
+  await insertBudget.run(1, currentFiscalYear(), 15000000, 1782100, 2435000); // MKT € 150.000,00 / € 17.821,00 committed (PR-2026-006 + buyer-inbox PR-2026-007) / € 24.350,00
+  await insertBudget.run(2, currentFiscalYear(), 32000000, 6070000, 8910000); // ITE + € 12.500,00 committed for SOC 2 SES PO
+  await insertBudget.run(3, currentFiscalYear(), 9500000, 1485000, 1845000);  // FAC + € 2.670,00 PR-2026-008 minus € 120,00 CO-2026-001 volume discount
+  await insertBudget.run(4, currentFiscalYear(), 6000000, 450000, 1131600);   // HRP + € 116,00 AP-aging INV-WED-3308 (approved; committed already released)
+  await insertBudget.run(5, currentFiscalYear(), 5000000, 320000, 890000);    // ADM
 
   // 4. Suppliers
   const insertSupplier = db.prepare(`

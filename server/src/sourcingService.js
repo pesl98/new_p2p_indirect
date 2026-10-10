@@ -904,7 +904,7 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   const existing = await loadEventRow(db, id);
   if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
   assertOwner(actor, existing);
-  if (existing.status !== 'draft' && existing.status !== 'published') {
+  if (!['draft', 'published', 'closed', 'evaluated'].includes(existing.status)) {
     fail('This RFQ cannot be cancelled from its current status.', 409, 'event_state_changed');
   }
   assertTransition(existing.status, 'cancelled');
@@ -913,13 +913,47 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   const beforeDeadline = !existing.deadline_at || existing.deadline_at > now ? 1 : 0;
   const fromStatus = existing.status;
   const changed = await db.immediateTransaction(async () => {
+    // The guard lives in the UPDATE, under BEGIN IMMEDIATE: an approved award means the
+    // RFQ is already awarded and cannot be cancelled, whatever was read earlier.
     const result = await db.prepare(`
       UPDATE sourcing_events
       SET status = 'cancelled', cancel_reason = ?, cancelled_at = ?,
           cancelled_before_deadline = ?, row_version = row_version + 1, updated_at = ?
       WHERE id = ? AND status = ?
-    `).run(reason, now, beforeDeadline, now, existing.id, fromStatus);
+        AND NOT EXISTS (SELECT 1 FROM sourcing_awards WHERE event_id = ? AND status = 'approved')
+    `).run(reason, now, beforeDeadline, now, existing.id, fromStatus, existing.id);
     if (!result.changes) return 0;
+    // A pending award dies with the RFQ: its requisition is rejected and its approval
+    // steps skipped in this same transaction, so nobody can approve it afterwards.
+    const pending = await db.prepare(`
+      SELECT a.id, a.award_requisition_id, pr.pr_number
+      FROM sourcing_awards a
+      LEFT JOIN purchase_requisitions pr ON pr.id = a.award_requisition_id
+      WHERE a.event_id = ? AND a.status = 'pending_approval'
+    `).get(existing.id);
+    if (pending) {
+      await db.prepare(`
+        UPDATE purchase_requisitions SET status = 'rejected', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'pending_approval'
+      `).run(pending.award_requisition_id);
+      await db.prepare(`
+        UPDATE approval_requests SET status = 'skipped'
+        WHERE requisition_id = ? AND status IN ('pending', 'waiting')
+      `).run(pending.award_requisition_id);
+      await db.prepare(`
+        UPDATE sourcing_awards SET status = 'rejected', decided_at = ?
+        WHERE id = ? AND status = 'pending_approval'
+      `).run(now, pending.id);
+      await db.prepare(`
+        INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+        VALUES ('requisition', ?, 'REJECTED', ?, ?)
+      `).run(pending.award_requisition_id, actor.name, `Award ${pending.pr_number} withdrawn because ${existing.event_number} was cancelled: ${reason}`);
+      await writeCompliance(db, actor, 'SOURCING_AWARD_WITHDRAWN', 'sourcing_award', pending.id, {
+        award_requisition_number: pending.pr_number,
+        event_number: existing.event_number,
+        reason
+      });
+    }
     await writeAudit(
       db,
       'sourcing_event',
@@ -933,7 +967,7 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
       before_deadline: beforeDeadline === 1,
       from_status: fromStatus
     });
-    if (fromStatus === 'published') {
+    if (fromStatus !== 'draft') {
       await enqueueWebhook(db, {
         eventType: WEBHOOK_EVENTS.SOURCING_EVENT_CANCELLED,
         entityType: 'sourcing_event',
@@ -941,7 +975,9 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
         data: {
           event_number: existing.event_number,
           status: 'cancelled',
-          cancel_reason: reason
+          cancel_reason: reason,
+          from_status: fromStatus,
+          award_withdrawn: Boolean(pending)
         },
         now: nowDate
       });
@@ -951,7 +987,8 @@ export async function cancelEvent(db, actor, id, input = {}, options = {}) {
   if (!changed) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
   kickWebhookDispatch(db);
   const view = await getEvent(db, existing.id, nowDate);
-  if (fromStatus === 'published') {
+  if (fromStatus !== 'draft') {
+    // The notice never carries a portal link or token; the supplier's own link shows the cancelled state.
     const notice = await notifyInvitees(db, existing, {
       subject: `Offerteaanvraag ${existing.event_number} geannuleerd`,
       text: [

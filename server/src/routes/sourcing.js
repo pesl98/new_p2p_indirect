@@ -232,7 +232,7 @@ router.post('/events/:id/awards', async (req, res) => {
 router.post('/events/:id/purchase-orders', async (req, res) => {
   try {
     const result = await createAwardPurchaseOrders(req.db, actor(req), req.params.id);
-    res.status(201).json(result);
+    res.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     sendError(res, error);
   }

@@ -231,6 +231,9 @@ export const sourcing = {
   'sourcing.award.approved': 'Goedgekeurd',
   'sourcing.award.rejected': 'Afgewezen',
   'sourcing.award.snapshot': 'Vastgelegde vergelijking bij het voorstel',
+  'sourcing.cancelWithdrawsAward': 'Annuleren trekt een lopende gunning en de bijbehorende inkoopaanvraag in.',
+  'sourcing.award.pricesHidden': 'U mag de prijzen van deze gunning niet zien.',
+  'sourcing.award.posProgress': 'Bestellingen worden aangemaakt. Nog {n} leverancier(s). Even geduld.',
   'sourcing.award.conflictOwner': 'De eigenaar verklaarde een belangenconflict. Een beheerder moet de eigenaar wijzigen.',
   'sourcing.award.reassign': 'Eigenaar wijzigen',
   'sourcing.award.reassignReason': 'Reden (minstens 10 tekens)',
@@ -258,5 +261,9 @@ export const sourcing = {
   'code.prices_hidden': 'U mag de prijzen niet zien.',
   'code.admin_required': 'Alleen een beheerder mag de eigenaar wijzigen.',
   'code.invalid_owner': 'De nieuwe eigenaar moet een actieve inkoper of beheerder zijn.',
-  'code.reason_required': 'Een reden van minstens 10 tekens is verplicht.'
+  'code.reason_required': 'Een reden van minstens 10 tekens is verplicht.',
+  'code.award_requisition_via_sourcing': 'Deze aanvraag komt uit een gunning. Maak de bestellingen aan vanuit de offerteaanvraag.',
+  'code.busy': 'Het systeem is bezig. Probeer het over een moment opnieuw.',
+  'code.busy_snapshot': 'De gegevens zijn intussen gewijzigd. Vernieuw het scherm en probeer opnieuw.',
+  'code.approval_already_decided': 'Deze stap is al beoordeeld. Vernieuw het scherm.'
 };

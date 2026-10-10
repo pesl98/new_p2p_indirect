@@ -39,7 +39,7 @@ import { mountConfigErrorApp, sendConfigError } from './configError.js';
 import { loadCurrencyConfig } from './currencyConfig.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
 import { requireApiSession } from './requestActor.js';
-import { corsOptions, originCheck, rateLimit, securityHeaders } from './security.js';
+import { corsOptions, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,9 +144,15 @@ export function createApp(options = {}) {
   app.use('/api', originCheck(runtimeEnv));
   app.use(requireApiSession);
 
-  const loginLimiter = options.loginRateLimit || rateLimit({ max: 20 });
-  app.use('/api/auth/login', loginLimiter);
-  app.use('/api/auth/bootstrap', loginLimiter);
+  // Per account and address (10 tries), plus a generous cap per address. With TRUST_PROXY off
+  // every visitor shares the proxy's address, so the address alone must not be the lock.
+  const loginLimiters = options.loginRateLimit
+    ? [options.loginRateLimit]
+    : [rateLimit({ max: 300 }), rateLimit({ max: 10, key: loginAttemptKey })];
+  for (const limiter of loginLimiters) {
+    app.use('/api/auth/login', limiter);
+    app.use('/api/auth/bootstrap', limiter);
+  }
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/departments', departmentsRouter);

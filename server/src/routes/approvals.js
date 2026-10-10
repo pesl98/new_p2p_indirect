@@ -53,8 +53,11 @@ router.post('/:id/decide', async (req, res) => {
 
     res.json({ message: `Requisition ${body.decision} successfully`, ...result });
   } catch (error) {
-    console.error('Error deciding approval:', error);
-    res.status(error.statusCode || 500).json({ error: error.message });
+    if (!error.statusCode || error.statusCode >= 500) console.error('Error deciding approval:', error);
+    const body = { error: error.message };
+    if (error.code) body.code = error.code;
+    if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
+    res.status(error.statusCode || 500).json(body);
   }
 });
 

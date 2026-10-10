@@ -358,7 +358,11 @@ describe('award', () => {
     const pos = await db.prepare(`SELECT supplier_id, total_amount, notes FROM purchase_orders WHERE requisition_id = ? ORDER BY supplier_id`).all(view.award.requisition.id);
     assert.deepEqual(pos.map((p) => [Number(p.supplier_id), Number(p.total_amount)]), [[3, 22500], [4, 90000]]);
     assert.match(pos[0].notes, /RFQ-2026-001/);
-    await assert.rejects(createAwardPurchaseOrders(db, CAROL, ctx.eventId), (e) => e.statusCode === 400);
+    const again = await createAwardPurchaseOrders(db, CAROL, ctx.eventId);
+    assert.equal(again.replayed, true);
+    assert.equal(again.done, true);
+    assert.equal(again.purchase_orders.length, 2);
+    assert.equal(Number((await db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE requisition_id = ?`).get(view.award.requisition.id)).n), 2);
     await assert.rejects(createAwardPurchaseOrders(db, DAVID, ctx.eventId), (e) => e.statusCode === 403);
   });
 
