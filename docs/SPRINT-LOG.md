@@ -72,7 +72,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | `cdefb448106f0c5a52d583e9abe69f02facc8802` | merged |
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
-| 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | | in review |
+| 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | 2026-10-10 | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | in review |
 
@@ -446,11 +446,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Publishing creates one magic link per invitation. Suppliers submit and revise bids until the deadline in a separate portal. The server keeps prices sealed.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/57 (#57, draft). Base is `main` at `b2d2b01e18109946d489d4a5080a999775671da4`. Do not merge until the Architect reviews and Peter OKs.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/57 (#57). Base was `main` at `b2d2b01e18109946d489d4a5080a999775671da4`.
 
-**Merge SHA:**
+**Merge SHA:** `f55f7177cf5514236f3be6454711296193a8d036` (squash-merged).
 
-**Status:** in review. Draft PR #57. The Architect's first review is addressed on this branch. Do not merge until the Architect reviews again and Peter OKs.
+**Status:** merged.
 
 ### Done when
 
