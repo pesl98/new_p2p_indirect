@@ -4,6 +4,7 @@
  */
 
 import { parsePositiveId } from './masterData.js';
+import { currentFiscalYear } from './fiscalYear.js';
 
 export const ELIGIBLE_APPROVER_ROLES = ['approver', 'admin', 'finance', 'procurement'];
 
@@ -31,7 +32,7 @@ const DEPARTMENT_SELECT = `
     (b.total_budget - b.committed_amount - b.actual_spent) AS remaining_budget
   FROM departments d
   LEFT JOIN users au ON au.id = d.approver_user_id
-  LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
+  LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = ${currentFiscalYear()}
 `;
 
 export async function listDepartments(db) {

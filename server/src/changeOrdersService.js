@@ -19,6 +19,7 @@
  */
 
 import { nextDocumentNumber } from './docNumbers.js';
+import { currentFiscalYear } from './fiscalYear.js';
 import {
   asCents,
   CHANGE_ORDER_INCREASE_CONFIRM_CENTS,
@@ -41,7 +42,7 @@ export const AMENDABLE_PO_STATUSES = Object.freeze([
   'received'
 ]);
 
-const FISCAL_YEAR = 2026;
+const FISCAL_YEAR = currentFiscalYear();
 
 export class ChangeOrderError extends Error {
   constructor(message, statusCode = 400) {

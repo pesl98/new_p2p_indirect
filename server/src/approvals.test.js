@@ -254,6 +254,18 @@ describe('sequential approval decisions', () => {
     await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
+    await assert.rejects(
+      decideApprovalStep(db, {
+        approvalId: step1.id,
+        decision: 'approved',
+        approver_id: step1.approver_id,
+        approver_name: 'Bob Martinez',
+        override_budget: true
+      }),
+      (e) => e.statusCode === 403 && /finance or admin/.test(e.message)
+    );
+
+    db.prepare(`UPDATE users SET role = 'finance' WHERE id = ?`).run(step1.approver_id);
     const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',

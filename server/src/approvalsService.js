@@ -1,4 +1,5 @@
 import { formatMoney } from './money.js';
+import { currentFiscalYear } from './fiscalYear.js';
 import { resolveDecisionActor } from './delegationsService.js';
 import {
   CONTRACT_USE_ALLOWED,
@@ -18,7 +19,8 @@ export class ApprovalDecisionError extends Error {
   }
 }
 
-const FISCAL_YEAR = 2026;
+const FISCAL_YEAR = currentFiscalYear();
+const BUDGET_OVERRIDE_ROLES = ['finance', 'admin'];
 
 function isExplicitTrue(value) {
   return value === true || value === 1 || value === 'true' || value === '1';
@@ -82,7 +84,7 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
       JOIN users u ON pr.requester_id = u.id
       JOIN users approver ON ar.approver_id = approver.id
       JOIN departments d ON pr.department_id = d.id
-      LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
+      LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = ${FISCAL_YEAR}
       ${SOURCE_CONTRACT_JOIN_SQL}
       WHERE ar.status = ?
     `;
@@ -263,6 +265,12 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
 
     const remaining = remainingBudgetCents(budget);
     const allowBudgetOverride = isExplicitTrue(override_budget);
+    if (allowBudgetOverride) {
+      const actorRow = await db.prepare(`SELECT role FROM users WHERE id = ?`).get(approver_id);
+      if (!BUDGET_OVERRIDE_ROLES.includes(actorRow?.role)) {
+        throw new ApprovalDecisionError('Only finance or admin may override the department budget', 403);
+      }
+    }
     if (remaining < pr.total_amount && !allowBudgetOverride) {
       throw new ApprovalDecisionError(
         `Insufficient remaining budget to commit this requisition. ` +

@@ -12,12 +12,13 @@
  */
 
 import path from 'node:path';
+import { currentFiscalYear } from './fiscalYear.js';
 import { pathToFileURL } from 'node:url';
 import { openDatabase } from './db.js';
 import { formatMoney } from './money.js';
 import { assertCustomerDbConfig, runProvisionCli } from './provision.js';
 
-export const DEFAULT_FISCAL_YEAR = 2026;
+export const DEFAULT_FISCAL_YEAR = currentFiscalYear();
 export const DEFAULT_BUDGET_CENTS = 10_000_000;
 
 /** Default cost centers (codes are the idempotency key). Names match the onboarding docs. */
@@ -51,7 +52,7 @@ Usage:
     approver_user_id left unset (map heads in Admin → Department Approvers)
 
 Flags:
-  --fiscal-year <n>     Budget fiscal year (default ${DEFAULT_FISCAL_YEAR}; match hardcoded joins)
+  --fiscal-year <n>     Budget fiscal year (default ${DEFAULT_FISCAL_YEAR}; defaults to the current year; budgets must exist for the active year)
   --budget-cents <n>    total_budget for newly created rows (default ${DEFAULT_BUDGET_CENTS})
   --force-budget        Update total_budget on existing FY rows to --budget-cents.
                         Does not touch committed_amount or actual_spent.

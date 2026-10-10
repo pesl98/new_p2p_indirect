@@ -1,4 +1,5 @@
 import express from 'express';
+import { currentFiscalYear } from '../fiscalYear.js';
 
 const router = express.Router();
 
@@ -11,9 +12,9 @@ router.get('/', async (req, res) => {
     const pendingApprovals = (await db.prepare(`SELECT COUNT(*) as count FROM approval_requests WHERE status = 'pending'`).get()).count;
     const activePOs = (await db.prepare(`SELECT COUNT(*) as count FROM purchase_orders WHERE status IN ('issued', 'acknowledged', 'partially_received')`).get()).count;
     const invoiceVariances = (await db.prepare(`SELECT COUNT(*) as count FROM invoices WHERE status = 'variance_flagged'`).get()).count;
-    const totalCommitted = (await db.prepare(`SELECT COALESCE(SUM(committed_amount), 0) as total FROM budgets WHERE fiscal_year = 2026`).get()).total;
-    const totalSpent = (await db.prepare(`SELECT COALESCE(SUM(actual_spent), 0) as total FROM budgets WHERE fiscal_year = 2026`).get()).total;
-    const totalBudget = (await db.prepare(`SELECT COALESCE(SUM(total_budget), 0) as total FROM budgets WHERE fiscal_year = 2026`).get()).total;
+    const totalCommitted = (await db.prepare(`SELECT COALESCE(SUM(committed_amount), 0) as total FROM budgets WHERE fiscal_year = ${currentFiscalYear()}`).get()).total;
+    const totalSpent = (await db.prepare(`SELECT COALESCE(SUM(actual_spent), 0) as total FROM budgets WHERE fiscal_year = ${currentFiscalYear()}`).get()).total;
+    const totalBudget = (await db.prepare(`SELECT COALESCE(SUM(total_budget), 0) as total FROM budgets WHERE fiscal_year = ${currentFiscalYear()}`).get()).total;
 
     // 2. Spend by Category (from PO items)
     const spendByCategory = await db.prepare(`
@@ -52,7 +53,7 @@ router.get('/', async (req, res) => {
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
         ROUND(((b.committed_amount + b.actual_spent) * 100.0) / NULLIF(b.total_budget, 0), 1) as utilization_pct
       FROM departments d
-      LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
+      LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = ${currentFiscalYear()}
       ORDER BY utilization_pct DESC
     `).all();
 

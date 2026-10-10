@@ -1,4 +1,5 @@
 import { asCents, formatMoney, lineTotalCents, toQty } from './money.js';
+import { currentFiscalYear } from './fiscalYear.js';
 import { deploymentCurrency, withDeploymentCurrency } from './currencyConfig.js';
 import { MEASURED_SCALE, measuredAmountCents, parseMeasuredMilli } from './measuredQty.js';
 import { evaluate3WayMatch, run3WayMatch } from './match.js';
@@ -395,8 +396,8 @@ export async function approveInvoicePayment(db, id, { approver_name, override_re
         UPDATE budgets
         SET committed_amount = MAX(0, committed_amount - ?),
             actual_spent = actual_spent + ?
-        WHERE department_id = ? AND fiscal_year = 2026
-      `).run(payableCents, payableCents, invoice.department_id);
+        WHERE department_id = ? AND fiscal_year = ?
+      `).run(payableCents, payableCents, invoice.department_id, currentFiscalYear());
     }
 
     const amountNote = isShortPay
