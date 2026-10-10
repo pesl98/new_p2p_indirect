@@ -340,7 +340,7 @@ export async function listEligiblePaymentRunInvoices(db) {
   });
 }
 
-export async function createPaymentRun(db, { invoice_ids, actor_name, reason } = {}) {
+export async function createPaymentRun(db, { invoice_ids, actor_name, actor_id, reason } = {}) {
   const ids = normalizeInvoiceIds(invoice_ids);
   const actor = requireText(actor_name, 'actor_name');
   const note = reason == null || String(reason).trim() === '' ? null : String(reason).trim();
@@ -375,9 +375,9 @@ export async function createPaymentRun(db, { invoice_ids, actor_name, reason } =
     const runNumber = await nextDocumentNumber(db, 'pay');
     const insertRun = await db.prepare(`
       INSERT INTO payment_runs (
-        run_number, status, actor_name, billed_total_cents, payable_total_cents, invoice_count, reason
-      ) VALUES (?, 'draft', ?, ?, ?, ?, ?)
-    `).run(runNumber, actor, billedTotal, payableTotal, invoices.length, note);
+        run_number, status, actor_name, created_by_user_id, billed_total_cents, payable_total_cents, invoice_count, reason
+      ) VALUES (?, 'draft', ?, ?, ?, ?, ?, ?)
+    `).run(runNumber, actor, actor_id == null ? null : Number(actor_id), billedTotal, payableTotal, invoices.length, note);
     const runId = insertRun.lastInsertRowid;
 
     const insertItem = db.prepare(`
@@ -426,6 +426,7 @@ export async function executePaymentRun(db, id, {
   payment_date,
   payment_reference,
   actor_name,
+  actor_id,
   payer_name,
   reason
 } = {}) {
@@ -438,6 +439,16 @@ export async function executePaymentRun(db, id, {
     const run = await loadRun(db, runId);
     if (!run) {
       throw new PaymentRunError('Payment run not found.', 404);
+    }
+    if (
+      run.created_by_user_id != null
+      && actor_id != null
+      && Number(run.created_by_user_id) === Number(actor_id)
+    ) {
+      throw new PaymentRunError(
+        `Payment run ${run.run_number} must be executed by someone other than its creator.`,
+        403
+      );
     }
     if (run.status === 'executed') {
       throw new PaymentRunError(

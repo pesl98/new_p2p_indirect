@@ -27,9 +27,11 @@ export function bidPricesVisible(event, now = new Date()) {
 
 export function actorMaySeeBidPrices(actor, event, evaluators = []) {
   if (!actor) return false;
+  const row = evaluators.find((item) => Number(item.user_id) === Number(actor.id));
+  // A declared conflict always wins, for finance and admin too (same rule as the award view).
+  if (row?.coi_status === 'conflict_declared') return false;
   if (actor.role === 'admin' || actor.role === 'finance') return true;
   if (Number(event?.owner_user_id) === Number(actor.id)) return true;
-  const row = evaluators.find((item) => Number(item.user_id) === Number(actor.id));
   return row?.coi_status === 'none_declared';
 }
 
@@ -98,7 +100,7 @@ export async function loadBuyerComparison(db, event, actor, now = new Date()) {
   `).all(event.id);
   const activity = await buyerInvitationActivity(db, event.id);
   const invitations = await db.prepare(`
-    SELECT i.id, i.contact_name, i.contact_email, i.delivery_status, i.token_prefix,
+    SELECT i.id, i.supplier_id, i.contact_name, i.contact_email, i.delivery_status, i.token_prefix,
            i.expires_at, i.revoked_at, i.declined_at, i.first_opened_at,
            s.name AS supplier_name, s.code AS supplier_code
     FROM sourcing_invitations i
@@ -108,6 +110,7 @@ export async function loadBuyerComparison(db, event, actor, now = new Date()) {
   `).all(event.id);
   const rows = invitations.map((invitation) => ({
     id: invitation.id,
+    supplier_id: invitation.supplier_id,
     supplier_name: invitation.supplier_name,
     supplier_code: invitation.supplier_code,
     contact_name: invitation.contact_name,
@@ -175,6 +178,7 @@ export async function loadBuyerComparison(db, event, actor, now = new Date()) {
     server_now: now.toISOString(),
     invitations: rows,
     bids: revisions.map((revision) => ({
+      bid_id: revision.bid_id,
       invitation_id: revision.invitation_id,
       status: revision.bid_status,
       revision: revision.revision,

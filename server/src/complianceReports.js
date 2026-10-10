@@ -10,6 +10,7 @@
  */
 
 import { buildApprovalSteps } from './approvalPolicy.js';
+import { awardExclusionsForRequisition, awardSodThresholdCents, restrictedAwardUsers } from './sourcingApprovalHooks.js';
 import { deploymentCurrency } from './currencyConfig.js';
 import {
   GENESIS_HASH,
@@ -312,17 +313,20 @@ export async function queryApprovalCompliance(db) {
   }
 
   const requisitions = await db.prepare(`
-    SELECT DISTINCT pr.id, pr.pr_number, pr.total_amount, pr.department_id
+    SELECT DISTINCT pr.id, pr.pr_number, pr.total_amount, pr.department_id, pr.requester_id
     FROM purchase_requisitions pr
     JOIN approval_requests ar ON ar.requisition_id = pr.id
   `).all();
   for (const pr of requisitions || []) {
     let steps;
+    const awardInfo = await awardExclusionsForRequisition(db, pr.id);
     try {
       steps = await buildApprovalSteps({
         totalAmount: pr.total_amount,
         departmentId: pr.department_id,
-        db
+        db,
+        // Requesters are never routed their own requisition; awards also exclude owner/proposer.
+        excludeUserIds: [pr.requester_id, ...(awardInfo?.excludeUserIds || [])]
       });
     } catch (error) {
       add(finding('policy_unresolved', {
@@ -485,10 +489,68 @@ export async function queryApprovalCompliance(db) {
     }
   }
 
+  const threshold = awardSodThresholdCents();
+  const awards = await db.prepare(`
+    SELECT a.id, a.event_id, a.total_cents, a.is_lowest, a.reason, a.award_requisition_id,
+           a.proposed_by_user_id, a.owner_user_id AS award_owner_user_id,
+           e.owner_user_id, e.event_number, pr.pr_number
+    FROM sourcing_awards a
+    JOIN sourcing_events e ON e.id = a.event_id
+    JOIN purchase_requisitions pr ON pr.id = a.award_requisition_id
+  `).all();
+  for (const award of awards || []) {
+    if (Number(award.total_cents) > threshold) {
+      const restricted = await restrictedAwardUsers(db, award);
+      const steps = await db.prepare(`
+        SELECT ar.id, ar.step_order, ar.approver_id, u.name AS approver_name
+        FROM approval_requests ar JOIN users u ON u.id = ar.approver_id
+        WHERE ar.requisition_id = ? AND ar.status != 'skipped'
+      `).all(award.award_requisition_id);
+      for (const step of steps || []) {
+        if (!restricted.has(Number(step.approver_id))) continue;
+        add(finding('sourcing_award_self_approval', {
+          entity_type: 'approval_request',
+          entity_id: step.id,
+          document_number: award.pr_number,
+          actor_user_id: step.approver_id,
+          actor_name: step.approver_name,
+          message: `${award.event_number} award ${award.pr_number} (${award.total_cents} cents, above the ${threshold} cent threshold) has approval step ${step.step_order} assigned to ${step.approver_name} (id=${step.approver_id}), who is the RFQ owner, the proposer, or has a declared conflict.`
+        }));
+      }
+    }
+    if (Number(award.is_lowest) !== 1) {
+      add(finding('sourcing_award_not_lowest', {
+        severity: 'info',
+        entity_type: 'sourcing_award',
+        entity_id: award.id,
+        document_number: award.pr_number,
+        message: `${award.event_number} award ${award.pr_number} is not the lowest bid. Reason: ${award.reason || 'none recorded'}.`
+      }));
+    }
+  }
+  const late = await db.prepare(`
+    SELECT r.bid_id, r.revision, r.submitted_at, e.event_number, e.id AS event_id, e.deadline_at
+    FROM sourcing_bid_revisions r
+    JOIN sourcing_bids b ON b.id = r.bid_id
+    JOIN sourcing_events e ON e.id = b.event_id
+    WHERE e.deadline_at IS NOT NULL AND r.submitted_at >= e.deadline_at
+  `).all();
+  for (const row of late || []) {
+    add(finding('sourcing_bid_after_deadline', {
+      entity_type: 'sourcing_event',
+      entity_id: row.event_id,
+      document_number: row.event_number,
+      message: `${row.event_number} bid ${row.bid_id} revision ${row.revision} was submitted at ${row.submitted_at}, not before the deadline ${row.deadline_at}.`
+    }));
+  }
+
   return {
     findings,
     summary: summarize(findings),
     definition: {
+      sourcing_award_self_approval: 'An RFQ award above SOURCING_AWARD_SOD_THRESHOLD_CENTS has an approval step assigned to the RFQ owner, the proposer, or an evaluator with a declared conflict.',
+      sourcing_award_not_lowest: 'Informational. An RFQ award that is not the lowest bid, with the recorded reason.',
+      sourcing_bid_after_deadline: 'A bid revision has submitted_at at or after the RFQ deadline. The database blocks this, so it should never appear.',
       self_approval: 'An approval step that is not skipped is assigned to the requisition requester, or an APPROVED / STEP_APPROVED / REJECTED audit row was written in the requester’s name.',
       wrong_approver: 'An approval step’s approver_id is not the user buildApprovalSteps assigns today for that step, amount, and department. Delegations do not rewrite approver_id, so a delegate decision is not itself a violation.',
       sod_requester_receiver: 'A goods receipt receiver, or the user who accepted a service entry sheet, is the requisition requester.',

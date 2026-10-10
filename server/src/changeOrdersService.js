@@ -19,6 +19,7 @@
  */
 
 import { nextDocumentNumber } from './docNumbers.js';
+import { currentFiscalYear } from './fiscalYear.js';
 import {
   asCents,
   CHANGE_ORDER_INCREASE_CONFIRM_CENTS,
@@ -41,7 +42,8 @@ export const AMENDABLE_PO_STATUSES = Object.freeze([
   'received'
 ]);
 
-const FISCAL_YEAR = 2026;
+// The fiscal year is read when it is used, never frozen at start-up (a long-lived
+// process crosses 1 January, and FISCAL_YEAR can be changed without a restart).
 
 export class ChangeOrderError extends Error {
   constructor(message, statusCode = 400) {
@@ -407,14 +409,14 @@ export async function applyPurchaseOrderChangeOrder(db, poId, payload = {}) {
           UPDATE budgets
           SET committed_amount = committed_amount + ?
           WHERE department_id = ? AND fiscal_year = ?
-        `).run(deltaCents, po.department_id, FISCAL_YEAR);
+        `).run(deltaCents, po.department_id, currentFiscalYear());
         budgetDeltaApplied = deltaCents;
       } else {
         await db.prepare(`
           UPDATE budgets
           SET committed_amount = MAX(0, committed_amount - ?)
           WHERE department_id = ? AND fiscal_year = ?
-        `).run(Math.abs(deltaCents), po.department_id, FISCAL_YEAR);
+        `).run(Math.abs(deltaCents), po.department_id, currentFiscalYear());
         budgetDeltaApplied = deltaCents;
       }
     }

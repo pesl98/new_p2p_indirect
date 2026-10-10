@@ -1,5 +1,15 @@
 import { formatMoney } from './money.js';
+import { currentFiscalYear } from './fiscalYear.js';
+import { buildApprovalSteps } from './approvalPolicy.js';
+import { withBusyRetry } from './busyRetry.js';
 import { resolveDecisionActor } from './delegationsService.js';
+import {
+  guardAwardDecision,
+  onAwardApproved,
+  onAwardRejected,
+  releaseSourceCommitment
+} from './sourcingApprovalHooks.js';
+import { kickWebhookDispatch } from './webhookOutbox.js';
 import {
   CONTRACT_USE_ALLOWED,
   CONTRACT_USE_PROPOSED,
@@ -11,14 +21,17 @@ import {
 } from './contractAssignment.js';
 
 export class ApprovalDecisionError extends Error {
-  constructor(message, statusCode = 400) {
+  constructor(message, statusCode = 400, code) {
     super(message);
     this.name = 'ApprovalDecisionError';
     this.statusCode = statusCode;
+    if (code) this.code = code;
   }
 }
 
-const FISCAL_YEAR = 2026;
+// The fiscal year is read when it is used, never frozen at start-up (a long-lived
+// process crosses 1 January, and FISCAL_YEAR can be changed without a restart).
+const BUDGET_OVERRIDE_ROLES = ['finance', 'admin'];
 
 function isExplicitTrue(value) {
   return value === true || value === 1 || value === 'true' || value === '1';
@@ -76,13 +89,15 @@ export async function listApprovalInbox(db, { approver_id, status } = {}) {
         b.actual_spent,
         (b.total_budget - b.committed_amount - b.actual_spent) as available_budget,
         (SELECT COUNT(*) FROM requisition_items WHERE requisition_id = pr.id) as item_count,
+        (SELECT e.event_number FROM sourcing_awards sa JOIN sourcing_events e ON e.id = sa.event_id
+          WHERE sa.award_requisition_id = pr.id) as rfq_number,
         ${SOURCE_CONTRACT_SELECT_SQL}
       FROM approval_requests ar
       JOIN purchase_requisitions pr ON ar.requisition_id = pr.id
       JOIN users u ON pr.requester_id = u.id
       JOIN users approver ON ar.approver_id = approver.id
       JOIN departments d ON pr.department_id = d.id
-      LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = 2026
+      LEFT JOIN budgets b ON d.id = b.department_id AND b.fiscal_year = ${currentFiscalYear()}
       ${SOURCE_CONTRACT_JOIN_SQL}
       WHERE ar.status = ?
     `;
@@ -128,6 +143,27 @@ function delegationAuditNote(delegation) {
  * unless `override_budget` is true.
  * Actor may be the mapped step approver or an active delegate covering now.
  */
+/** Re-resolve one pending step without the requester and write the new approver on the row. */
+async function rerouteAroundRequester(db, pr, approval) {
+  const steps = await buildApprovalSteps({
+    totalAmount: pr.total_amount,
+    departmentId: pr.department_id,
+    db,
+    excludeUserIds: [pr.requester_id]
+  });
+  const planned = steps.find((step) => Number(step.step_order) === Number(approval.step_order));
+  if (!planned || Number(planned.approver_id) === Number(pr.requester_id)) {
+    throw new ApprovalDecisionError('No other approver is available for this step.', 422, 'sod_no_alternate_approver');
+  }
+  const user = await db.prepare(`SELECT id, name FROM users WHERE id = ?`).get(planned.approver_id);
+  await db.prepare(`UPDATE approval_requests SET approver_id = ? WHERE id = ?`).run(planned.approver_id, approval.id);
+  await db.prepare(`
+    INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
+    VALUES ('requisition', ?, 'APPROVAL_REROUTED', 'System', ?)
+  `).run(pr.id, `Step ${approval.step_order} was assigned to the requester and moved to ${user?.name || planned.approver_id}.`);
+  return { id: Number(planned.approver_id), name: user?.name || null };
+}
+
 export async function decideApprovalStep(db, { approvalId, decision, comments, approver_id, approver_name, override_budget, allow_contract_use }) {
   if (!['approved', 'rejected'].includes(decision)) {
     throw new ApprovalDecisionError('Decision must be approved or rejected');
@@ -136,14 +172,21 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     throw new ApprovalDecisionError('approver_id is required');
   }
 
-  return db.transaction(async () => {
+  // BEGIN IMMEDIATE takes the write lock before the first read, so two decisions on the
+  // same step serialise (the second sees a decided step: 409), and a busy lock is retried.
+  const decided = await withBusyRetry(() => db.immediateTransaction(async () => {
     const approval = await db.prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(approvalId);
     if (!approval) {
       throw new ApprovalDecisionError('Approval request not found', 404);
     }
 
     if (approval.status !== 'pending') {
-      throw new ApprovalDecisionError('Only the current pending approval step can be decided');
+      const alreadyDecided = ['approved', 'rejected', 'skipped'].includes(approval.status);
+      throw new ApprovalDecisionError(
+        'Only the current pending approval step can be decided',
+        alreadyDecided ? 409 : 400,
+        alreadyDecided ? 'approval_already_decided' : undefined
+      );
     }
 
     const actorCheck = await resolveDecisionActor(db, approval.approver_id, approver_id);
@@ -157,6 +200,31 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
     const pr = await db.prepare(`SELECT * FROM purchase_requisitions WHERE id = ?`).get(approval.requisition_id);
     if (!pr) {
       throw new ApprovalDecisionError('Associated requisition not found', 404);
+    }
+
+    const award = await guardAwardDecision(db, pr, {
+      approverId: approver_id,
+      actorCheck,
+      stepApproverId: approval.approver_id,
+      makeError: (message, status, code) => new ApprovalDecisionError(message, status, code)
+    });
+
+    // A step that was assigned to the requester themselves (a department head who raised the
+    // requisition, a chain built before requesters were excluded) is not a dead end: it is
+    // re-routed to the next eligible approver and the requester is told, instead of a 403.
+    if (!award && Number(approval.approver_id) === Number(pr.requester_id)) {
+      const replacement = await rerouteAroundRequester(db, pr, approval);
+      return {
+        outcome: 'rerouted',
+        budgetCommitted: false,
+        rerouted_to: replacement,
+        message: `This step was assigned to the requester. It now goes to ${replacement.name}.`,
+        contract_use_status: pr.contract_use_status
+      };
+    }
+
+    if (Number(pr.requester_id) === Number(approver_id)) {
+      throw new ApprovalDecisionError('You cannot decide your own requisition', 403);
     }
 
     let contractUseDecision = null;
@@ -227,6 +295,8 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
         VALUES ('requisition', ?, 'REJECTED', ?, ?)
       `).run(pr.id, actor, `Rejected by ${actor}.${viaNote} Reason: ${comments || 'No reason specified'}`);
 
+      if (award) await onAwardRejected(db, award, pr, { userId: approver_id, actorName: actor });
+
       return { outcome: 'rejected', budgetCommitted: false, contract_use_status: pr.contract_use_status, ...delegateMeta };
     }
 
@@ -252,17 +322,27 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       };
     }
 
+    // Award PR: free the source PR's commitment first so the department is
+    // charged the awarded amount, not estimate + award.
+    const release = award ? await releaseSourceCommitment(db, award) : null;
+
     const budget = await db.prepare(
       `SELECT * FROM budgets WHERE department_id = ? AND fiscal_year = ?`
-    ).get(pr.department_id, FISCAL_YEAR);
+    ).get(pr.department_id, currentFiscalYear());
     if (!budget) {
       throw new ApprovalDecisionError(
-        `No department budget found for fiscal year ${FISCAL_YEAR}`
+        `No department budget found for fiscal year ${currentFiscalYear()}`
       );
     }
 
     const remaining = remainingBudgetCents(budget);
     const allowBudgetOverride = isExplicitTrue(override_budget);
+    if (allowBudgetOverride) {
+      const actorRow = await db.prepare(`SELECT role FROM users WHERE id = ?`).get(approver_id);
+      if (!BUDGET_OVERRIDE_ROLES.includes(actorRow?.role)) {
+        throw new ApprovalDecisionError('Only finance or admin may override the department budget', 403);
+      }
+    }
     if (remaining < pr.total_amount && !allowBudgetOverride) {
       throw new ApprovalDecisionError(
         `Insufficient remaining budget to commit this requisition. ` +
@@ -279,7 +359,7 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       UPDATE budgets
       SET committed_amount = committed_amount + ?
       WHERE department_id = ? AND fiscal_year = ?
-    `).run(pr.total_amount, pr.department_id, FISCAL_YEAR);
+    `).run(pr.total_amount, pr.department_id, currentFiscalYear());
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
@@ -297,11 +377,16 @@ export async function decideApprovalStep(db, { approvalId, decision, comments, a
       );
     }
 
+    if (award) await onAwardApproved(db, award, pr, { userId: approver_id, actorName: actor, release });
+
     return {
       outcome: 'approved',
       budgetCommitted: true,
+      sourcing_event_id: award ? award.event_id : undefined,
       contract_use_status: contractUseDecision || pr.contract_use_status,
       ...delegateMeta
     };
-  });
+  }));
+  if (decided.sourcing_event_id) kickWebhookDispatch(db);
+  return decided;
 }

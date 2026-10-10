@@ -77,6 +77,7 @@ export function requireRole(...roles) {
 }
 
 export const AP_ROLES = ['finance', 'admin'];
+export const PROCUREMENT_ROLES = ['procurement', 'admin'];
 
 export function sessionActor(req) {
   if (!req.user) {

@@ -1,5 +1,5 @@
 import express from 'express';
-import { withSessionActor } from '../requestActor.js';
+import { withSessionActor, PROCUREMENT_ROLES, requireRole } from '../requestActor.js';
 import { convertRequisitionToPurchaseOrders } from '../purchaseOrdersService.js';
 import {
   applyPurchaseOrderChangeOrder,
@@ -143,7 +143,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create one issued PO per resolved supplier from an approved requisition
-router.post('/from-requisition', async (req, res) => {
+router.post('/from-requisition', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const body = withSessionActor(req, req.body, { ids: ['created_by'] });
@@ -178,7 +178,7 @@ router.get('/:id/change-orders', async (req, res) => {
 });
 
 // Create + apply a change order. actor_name is the signed-in user.
-router.post('/:id/change-orders', async (req, res) => {
+router.post('/:id/change-orders', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const body = withSessionActor(req, req.body, { names: ['actor_name'] });
     const result = await applyPurchaseOrderChangeOrder(req.db, req.params.id, body);
@@ -194,7 +194,7 @@ router.post('/:id/change-orders', async (req, res) => {
 });
 
 // Update PO status
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const { id } = req.params;

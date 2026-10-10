@@ -363,6 +363,14 @@ export default function DocumentTrailView({ onNavigate, lookupQ, lookup }) {
                 <p className="text-xs text-slate-500 mt-1 max-w-2xl">
                   {trail.requisition?.justification || t('trail.noRequisition')}
                 </p>
+                {trail.sourcing?.award_rfq_number && (
+                  <p className="text-xs text-sky-800 mt-1">{t('trail.sourcing.award', { number: trail.sourcing.award_rfq_number })}</p>
+                )}
+                {trail.sourcing?.source_rfq_number && (
+                  <p className="text-xs text-sky-800 mt-1">
+                    {t(trail.sourcing.source_rfq_status === 'awarded' ? 'trail.sourcing.superseded' : 'trail.sourcing.inRfq', { number: trail.sourcing.source_rfq_number })}
+                  </p>
+                )}
               </div>
               <div className="text-right">
                 {trail.requisition && (

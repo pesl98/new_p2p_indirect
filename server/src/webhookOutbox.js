@@ -34,7 +34,9 @@ export const WEBHOOK_EVENTS = Object.freeze({
   SOURCING_EVENT_PUBLISHED: 'sourcing_event.published',
   SOURCING_EVENT_CLOSED: 'sourcing_event.closed',
   SOURCING_EVENT_CANCELLED: 'sourcing_event.cancelled',
-  SOURCING_BID_SUBMITTED: 'sourcing_bid.submitted'
+  SOURCING_BID_SUBMITTED: 'sourcing_bid.submitted',
+  SOURCING_EVENT_AWARDED: 'sourcing_event.awarded',
+  SOURCING_EVENT_PURCHASE_ORDERS_CREATED: 'sourcing_event.purchase_orders_created'
 });
 
 export function signWebhook(secret, timestampSeconds, rawBody) {

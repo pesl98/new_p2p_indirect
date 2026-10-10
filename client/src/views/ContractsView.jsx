@@ -17,7 +17,11 @@ import { formatMoney, toCents, parseMajorAmount, moneyInputProps } from '../mone
 
 const RENEWABLE = new Set(['active', 'expiring_soon']);
 
+// The server limits contract writes and renewals to procurement and admin; the screen follows.
+const CONTRACT_MANAGER_ROLES = ['procurement', 'admin'];
+
 export default function ContractsView({ currentUser, onNavigate, onDataChanged }) {
+  const canManage = CONTRACT_MANAGER_ROLES.includes(currentUser?.role);
   const [contracts, setContracts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -167,7 +171,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
     }
   };
 
-  const renewButton = (contract, className) => (
+  const renewButton = (contract, className) => (!canManage ? null : (
     <button
       onClick={() => handleRenewPR(contract)}
       disabled={renewingId === contract.id || !RENEWABLE.has(contract.status)}
@@ -177,7 +181,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
       <RefreshCw className={`w-3 h-3 ${renewingId === contract.id ? 'animate-spin' : ''}`} />
       <span>{renewingId === contract.id ? t('contracts.creating') : t('contracts.renew')}</span>
     </button>
-  );
+  ));
 
   return (
     <div className="space-y-6">
@@ -193,6 +197,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
           </p>
         </div>
 
+        {canManage && (
         <div className="flex items-center space-x-3">
           <button
             onClick={() => setShowCreateModal(true)}
@@ -202,6 +207,7 @@ export default function ContractsView({ currentUser, onNavigate, onDataChanged }
             <span>{t('contracts.register')}</span>
           </button>
         </div>
+        )}
       </div>
 
       {expiringContracts.length > 0 && (

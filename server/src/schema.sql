@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   payment_terms TEXT DEFAULT 'Net 30',
   shipping_address TEXT,
   notes TEXT,
+  -- Set only on POs issued from an RFQ award; unique(award_id, supplier_id) is created in applySchema.
+  award_id INTEGER,
   revision INTEGER NOT NULL DEFAULT 0,
   change_order_count INTEGER NOT NULL DEFAULT 0,
   -- standard = buyer-owned PO (GRN or SES). consignment = discrete draw-down of supplier-owned stock.
@@ -439,6 +441,7 @@ CREATE TABLE IF NOT EXISTS payment_runs (
   payment_date TEXT,
   payment_reference TEXT,
   actor_name TEXT NOT NULL,
+  created_by_user_id INTEGER,
   billed_total_cents INTEGER NOT NULL DEFAULT 0,
   payable_total_cents INTEGER NOT NULL DEFAULT 0,
   invoice_count INTEGER NOT NULL DEFAULT 0,
@@ -1125,6 +1128,8 @@ CREATE TABLE IF NOT EXISTS sourcing_awards (
   reason TEXT,
   comparison_snapshot_json TEXT NOT NULL,
   proposed_by_user_id INTEGER NOT NULL,
+  -- RFQ owner at proposal time. Segregation of duties keys on this and on proposed_by_user_id.
+  owner_user_id INTEGER,
   proposed_at TEXT NOT NULL,
   decided_at TEXT,
   CHECK ((is_lowest = 1 AND has_expired_validity = 0) OR (reason IS NOT NULL AND length(trim(reason)) >= 10)),

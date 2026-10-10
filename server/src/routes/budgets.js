@@ -1,4 +1,5 @@
 import express from 'express';
+import { currentFiscalYear } from '../fiscalYear.js';
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ router.get('/', async (req, res) => {
         ROUND(((b.committed_amount + b.actual_spent) * 100.0) / NULLIF(b.total_budget, 0), 1) as utilization_pct
       FROM budgets b
       JOIN departments d ON b.department_id = d.id
-      WHERE b.fiscal_year = 2026
+      WHERE b.fiscal_year = ${currentFiscalYear()}
       ORDER BY b.department_id ASC
     `).all();
     res.json(budgets);

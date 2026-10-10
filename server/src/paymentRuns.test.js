@@ -1,4 +1,5 @@
 import { describe, test } from 'node:test';
+import { currentFiscalYear } from './fiscalYear.js';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createMemoryDatabase } from './db.js';
@@ -9,6 +10,10 @@ import { resolveInvoiceException } from './invoiceExceptionsService.js';
 import { getDocumentTrail } from './documentTrailService.js';
 import { nextDocumentNumber } from './docNumbers.js';
 import { withCookie } from './testSession.js';
+
+function authedAs(userId, url, options = {}) {
+  return fetch(url, withCookie(userId, options));
+}
 
 function authed(url, options) {
   return fetch(url, withCookie(1, options));
@@ -50,13 +55,14 @@ async function createTestDb() {
     INSERT INTO users (id, name, email, role, department_id, approval_limit) VALUES
       (1, 'David Miller', 'david@example.com', 'finance', 1, 15000000),
       (2, 'Alice Chen', 'alice@example.com', 'requester', 1, 0),
-      (8, 'Sofia Berg', 'sofia@example.com', 'approver', 4, 1000000);
+      (8, 'Sofia Berg', 'sofia@example.com', 'approver', 4, 1000000),
+      (9, 'Eve Admin', 'eve@example.com', 'admin', 1, 0);
     INSERT INTO suppliers (id, name, code) VALUES
       (1, 'TechSupply Global', 'SUP-TSG'),
       (3, 'WorkSpace Ergonomics Depot', 'SUP-WED'),
       (4, 'FacilityCare & Janitorial Pro', 'SUP-FCJ');
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-      VALUES (1, 2026, 50000000, 100000, 0), (4, 2026, 6000000, 0, 0);
+      VALUES (1, ${currentFiscalYear()}, 50000000, 100000, 0), (4, ${currentFiscalYear()}, 6000000, 0, 0);
   `);
   return db;
 }
@@ -330,6 +336,26 @@ describe('payment run draft', () => {
 });
 
 describe('payment run execute and cancel', () => {
+  test('creator cannot execute their own payment run; another user can', async () => {
+    const db = await createTestDb();
+    const a = await createMatchedApproved(db, {
+      invoiceNumber: 'INV-WED-4419', poId: 13, itemId: 13, poNumber: 'PO-PAY-013',
+      unitPriceCents: 7200, supplierId: 3
+    });
+    const draft = await createPaymentRun(db, {
+      invoice_ids: [a.invoiceId], actor_name: 'David Miller', actor_id: 7
+    });
+    const row = await db.prepare(`SELECT created_by_user_id FROM payment_runs WHERE id = ?`).get(draft.id);
+    assert.equal(row.created_by_user_id, 7);
+    const args = { payment_date: '2026-09-30', payment_reference: 'ACH-1', actor_name: 'X' };
+    await assert.rejects(
+      () => executePaymentRun(db, draft.id, { ...args, actor_id: 7 }),
+      (e) => e.statusCode === 403 && /other than its creator/.test(e.message)
+    );
+    const executed = await executePaymentRun(db, draft.id, { ...args, actor_id: 8 });
+    assert.equal(executed.status, 'executed');
+  });
+
   test('execute marks every line paid with a shared ACH reference', async () => {
     const db = await createTestDb();
     const a = await createMatchedApproved(db, {
@@ -399,7 +425,7 @@ describe('payment run execute and cancel', () => {
       requisitionId: 9
     });
     const afterApprove = await db.prepare(
-      `SELECT actual_spent, committed_amount FROM budgets WHERE department_id = 4 AND fiscal_year = 2026`
+      `SELECT actual_spent, committed_amount FROM budgets WHERE department_id = 4 AND fiscal_year = ${currentFiscalYear()}`
     ).get();
     assert.equal(afterApprove.actual_spent, 11600);
 
@@ -413,7 +439,7 @@ describe('payment run execute and cancel', () => {
       actor_name: 'David Miller'
     });
     const afterPay = await db.prepare(
-      `SELECT actual_spent, committed_amount FROM budgets WHERE department_id = 4 AND fiscal_year = 2026`
+      `SELECT actual_spent, committed_amount FROM budgets WHERE department_id = 4 AND fiscal_year = ${currentFiscalYear()}`
     ).get();
     assert.equal(afterPay.actual_spent, 11600);
     assert.equal(afterPay.committed_amount, afterApprove.committed_amount);
@@ -604,7 +630,7 @@ describe('GET /api/payment-runs', () => {
       assert.equal(detail.status, 200);
       assert.equal(detail.body.run_number, created.body.run_number);
 
-      const executed = await json(await authed(`${base}/api/payment-runs/${created.body.id}/execute`, {
+      const executed = await json(await authedAs(9, `${base}/api/payment-runs/${created.body.id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -616,7 +642,7 @@ describe('GET /api/payment-runs', () => {
       assert.equal(executed.status, 200);
       assert.equal(executed.body.status, 'executed');
 
-      const reexec = await json(await authed(`${base}/api/payment-runs/${created.body.id}/execute`, {
+      const reexec = await json(await authedAs(9, `${base}/api/payment-runs/${created.body.id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

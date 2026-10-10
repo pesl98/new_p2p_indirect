@@ -23,14 +23,28 @@ import {
   updateEvent
 } from '../sourcingService.js';
 import { SourcingStatusError } from '../sourcingStatus.js';
+import { createAwardPurchaseOrders, getAward, proposeAward } from '../sourcingAwardService.js';
+import {
+  buyerEvaluation,
+  completeEvaluation,
+  declareCoi,
+  recordScores,
+  reassignOwner
+} from '../sourcingEvaluationService.js';
 
 const router = express.Router();
 
 router.use(requireSourcingEnabled);
 router.use(requireRole('procurement', 'admin', 'finance'));
 
+// Finance is read-only, except that a finance evaluator declares conflicts and scores.
+const FINANCE_WRITE_PATHS = /^\/events\/\d+\/(coi|scores)$/;
+
 router.use((req, res, next) => {
-  if (req.user?.role === 'finance' && req.method !== 'GET' && req.method !== 'HEAD') {
+  if (
+    req.user?.role === 'finance' && req.method !== 'GET' && req.method !== 'HEAD'
+    && !FINANCE_WRITE_PATHS.test(req.path)
+  ) {
     return res.status(403).json({
       error: 'Insufficient role for this action',
       code: 'read_only'
@@ -161,7 +175,64 @@ router.post('/events/:id/invitations/:invitationId/revoke', async (req, res) => 
 
 router.get('/events/:id/comparison', async (req, res) => {
   try {
-    res.json(await buyerComparison(req.db, actor(req), req.params.id, now(req)));
+    res.json(await buyerEvaluation(req.db, actor(req), req.params.id, now(req)));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/coi', async (req, res) => {
+  try {
+    res.json(await declareCoi(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/scores', async (req, res) => {
+  try {
+    res.json(await recordScores(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/evaluate', async (req, res) => {
+  try {
+    res.json(await completeEvaluation(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/owner', async (req, res) => {
+  try {
+    res.json(await reassignOwner(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.get('/events/:id/award', async (req, res) => {
+  try {
+    res.json(await getAward(req.db, actor(req), req.params.id));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/awards', async (req, res) => {
+  try {
+    res.status(201).json(await proposeAward(req.db, actor(req), req.params.id, req.body || {}, { now: now(req) }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/events/:id/purchase-orders', async (req, res) => {
+  try {
+    const result = await createAwardPurchaseOrders(req.db, actor(req), req.params.id);
+    res.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     sendError(res, error);
   }

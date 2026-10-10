@@ -12,12 +12,12 @@
  */
 
 import path from 'node:path';
+import { currentFiscalYear } from './fiscalYear.js';
 import { pathToFileURL } from 'node:url';
 import { openDatabase } from './db.js';
 import { formatMoney } from './money.js';
 import { assertCustomerDbConfig, runProvisionCli } from './provision.js';
 
-export const DEFAULT_FISCAL_YEAR = 2026;
 export const DEFAULT_BUDGET_CENTS = 10_000_000;
 
 /** Default cost centers (codes are the idempotency key). Names match the onboarding docs. */
@@ -29,7 +29,9 @@ export const DEFAULT_ORG_DEPARTMENTS = Object.freeze([
   Object.freeze({ code: 'ADM', name: 'Finance' })
 ]);
 
-export const BOOTSTRAP_ORG_HELP = `ProcureFlow org skeleton (cost centers + FY budgets)
+/** Built when asked for, so the default fiscal year is the live one. */
+export function bootstrapOrgHelp() {
+  return `ProcureFlow org skeleton (cost centers + FY budgets)
 
 Usage:
   npm run bootstrap-org -- [--fiscal-year 2026] [--budget-cents 10000000] [--turso] [--json]
@@ -46,12 +48,12 @@ Usage:
 
   Default skeleton:
     MKT Marketing, ITE IT, FAC Facilities, HRP HR, ADM Finance
-    FY ${DEFAULT_FISCAL_YEAR} total_budget = ${DEFAULT_BUDGET_CENTS} cents (${formatBudget(DEFAULT_BUDGET_CENTS)})
+    FY ${currentFiscalYear()} total_budget = ${DEFAULT_BUDGET_CENTS} cents (${formatBudget(DEFAULT_BUDGET_CENTS)})
     committed_amount / actual_spent = 0
     approver_user_id left unset (map heads in Admin → Department Approvers)
 
 Flags:
-  --fiscal-year <n>     Budget fiscal year (default ${DEFAULT_FISCAL_YEAR}; match hardcoded joins)
+  --fiscal-year <n>     Budget fiscal year (default ${currentFiscalYear()}; defaults to the current year; budgets must exist for the active year)
   --budget-cents <n>    total_budget for newly created rows (default ${DEFAULT_BUDGET_CENTS})
   --force-budget        Update total_budget on existing FY rows to --budget-cents.
                         Does not touch committed_amount or actual_spent.
@@ -70,6 +72,7 @@ Three tiers:
 
 See docs/DEPLOY_MANUAL.md (cost centers). docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.
 `;
+}
 
 function formatBudget(cents) {
   return formatMoney(cents);
@@ -208,7 +211,7 @@ export function formatOrgSummary(result) {
 
 export async function bootstrapOrgSkeleton(db, {
   departments = DEFAULT_ORG_DEPARTMENTS,
-  fiscalYear = DEFAULT_FISCAL_YEAR,
+  fiscalYear = currentFiscalYear(),
   budgetCents = DEFAULT_BUDGET_CENTS,
   forceBudget = false
 } = {}) {
@@ -307,7 +310,7 @@ export async function runBootstrapOrgCli({
 } = {}) {
   const args = parseBootstrapOrgArgs(argv);
   if (args.help) {
-    write(stdout, BOOTSTRAP_ORG_HELP);
+    write(stdout, bootstrapOrgHelp());
     return 0;
   }
   if (args.seed) {
@@ -319,11 +322,11 @@ export async function runBootstrapOrgCli({
     return 1;
   }
   if (args.unknown.length) {
-    write(stderr, `Unknown argument: ${args.unknown[0]}\n${BOOTSTRAP_ORG_HELP}`);
+    write(stderr, `Unknown argument: ${args.unknown[0]}\n${bootstrapOrgHelp()}`);
     return 1;
   }
 
-  let fiscalYear = DEFAULT_FISCAL_YEAR;
+  let fiscalYear = currentFiscalYear();
   let budgetCents = DEFAULT_BUDGET_CENTS;
   try {
     if (args.fiscalYear != null) {

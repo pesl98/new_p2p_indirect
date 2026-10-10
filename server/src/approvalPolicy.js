@@ -3,11 +3,58 @@ import { APPROVAL_TIER2_CENTS, APPROVAL_TIER3_CENTS } from './money.js';
 export { APPROVAL_TIER2_CENTS, APPROVAL_TIER3_CENTS };
 
 export class ApprovalPolicyError extends Error {
-  constructor(message, statusCode = 400) {
+  constructor(message, statusCode = 400, code) {
     super(message);
     this.name = 'ApprovalPolicyError';
     this.statusCode = statusCode;
+    if (code) this.code = code;
   }
+}
+
+/** Roles a step can escalate to when every user at its own tier is excluded. */
+const ESCALATION_LADDER = ['approver', 'procurement', 'finance', 'admin'];
+
+async function firstAllowedUser(db, role, excluded, departmentId = null) {
+  const params = [role];
+  let sql = `SELECT id, role, name, department_id FROM users
+    WHERE role = ? AND COALESCE(status, 'active') = 'active'`;
+  if (departmentId != null) {
+    sql += ' AND department_id = ?';
+    params.push(departmentId);
+  }
+  if (excluded.size) {
+    sql += ` AND id NOT IN (${[...excluded].map(() => '?').join(', ')})`;
+    params.push(...excluded);
+  }
+  sql += ' ORDER BY id ASC LIMIT 1';
+  return db.prepare(sql).get(...params);
+}
+
+/**
+ * Keep `user` unless excluded. Otherwise take the next user with the same
+ * role, then escalate up the ladder (procurement -> finance -> admin).
+ * Fails closed with 422 sod_no_alternate_approver when nobody is left.
+ */
+async function resolveAllowed(db, user, excluded, departmentId, { departmentStep = false } = {}) {
+  if (!excluded.size || !excluded.has(Number(user.id))) return user;
+  const sameRole = await firstAllowedUser(db, user.role, excluded, user.role === 'approver' ? departmentId : null);
+  if (sameRole) return sameRole;
+  if (departmentStep) {
+    // A department head who is not role=approver (an admin mapped as head) falls back
+    // to the department's approvers first, then up the ladder.
+    const approver = await firstAllowedUser(db, 'approver', excluded, departmentId);
+    if (approver) return approver;
+  }
+  const start = departmentStep ? 1 : Math.max(0, ESCALATION_LADDER.indexOf(user.role)) + 1;
+  for (const role of ESCALATION_LADDER.slice(start)) {
+    const next = await firstAllowedUser(db, role, excluded);
+    if (next) return next;
+  }
+  throw new ApprovalPolicyError(
+    'No eligible approver is left after segregation-of-duties exclusions.',
+    422,
+    'sod_no_alternate_approver'
+  );
 }
 
 async function firstUserByRole(db, role, departmentId = null) {
@@ -80,12 +127,38 @@ async function resolveExecutive(db) {
  * Build ordered approval steps from amount (integer cents) and department.
  * Thresholds: above 100000 cents (1,000) adds procurement; above 1000000 cents (10,000) adds finance/admin.
  */
-export async function buildApprovalSteps({ totalAmount, departmentId, db }) {
+export async function buildApprovalSteps({ totalAmount, departmentId, db, excludeUserIds = [] }) {
   const amount = Number(totalAmount) || 0;
   const deptId = Number(departmentId);
   const steps = [];
+  const excluded = new Set((excludeUserIds || []).map(Number).filter(Number.isInteger));
+  // Everyone already on the chain, and everyone put there by a fallback. A fallback must
+  // not pick someone who already has a step, and a later step must not pick a fallback
+  // user again (that gave chains like [6, 6, 4]). When nobody else is left the old
+  // behaviour stays: the same user may appear twice before the step fails closed.
+  const used = new Set();
+  const fallbackPicked = new Set();
 
-  const deptApprover = await resolveDepartmentApprover(db, deptId);
+  async function resolveStep(primary, options = {}) {
+    const wasExcluded = excluded.has(Number(primary.id));
+    let chosen = primary;
+    if (wasExcluded || fallbackPicked.has(Number(primary.id))) {
+      const avoid = new Set([...excluded, ...fallbackPicked, ...used]);
+      try {
+        chosen = await resolveAllowed(db, primary, avoid, deptId, options);
+      } catch (error) {
+        if (error?.code !== 'sod_no_alternate_approver') throw error;
+        // Nobody new is left. An excluded primary still has to be replaced; a repeated
+        // fallback user is kept as it was before.
+        chosen = wasExcluded ? await resolveAllowed(db, primary, excluded, deptId, options) : primary;
+      }
+      fallbackPicked.add(Number(chosen.id));
+    }
+    used.add(Number(chosen.id));
+    return chosen;
+  }
+
+  const deptApprover = await resolveStep(await resolveDepartmentApprover(db, deptId), { departmentStep: true });
   steps.push({
     step_order: 1,
     approver_id: deptApprover.id,
@@ -93,7 +166,7 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db }) {
   });
 
   if (amount > APPROVAL_TIER2_CENTS) {
-    const procurement = await resolveProcurement(db);
+    const procurement = await resolveStep(await resolveProcurement(db));
     steps.push({
       step_order: steps.length + 1,
       approver_id: procurement.id,
@@ -102,7 +175,7 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db }) {
   }
 
   if (amount > APPROVAL_TIER3_CENTS) {
-    const executive = await resolveExecutive(db);
+    const executive = await resolveStep(await resolveExecutive(db));
     steps.push({
       step_order: steps.length + 1,
       approver_id: executive.id,
@@ -114,8 +187,8 @@ export async function buildApprovalSteps({ totalAmount, departmentId, db }) {
 }
 
 /** Insert planned steps: step 1 pending, later steps waiting. */
-export async function insertApprovalChain(db, prId, totalAmount, departmentId) {
-  const steps = await buildApprovalSteps({ totalAmount, departmentId, db });
+export async function insertApprovalChain(db, prId, totalAmount, departmentId, { excludeUserIds = [] } = {}) {
+  const steps = await buildApprovalSteps({ totalAmount, departmentId, db, excludeUserIds });
   const insert = db.prepare(`
     INSERT INTO approval_requests (requisition_id, approver_id, step_order, status)
     VALUES (?, ?, ?, ?)

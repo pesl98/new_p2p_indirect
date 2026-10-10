@@ -1,4 +1,5 @@
 import { describe, test } from 'node:test';
+import { currentFiscalYear } from './fiscalYear.js';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -6,9 +7,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { openDatabase } from './db.js';
 import {
-  BOOTSTRAP_ORG_HELP,
+  bootstrapOrgHelp,
   DEFAULT_BUDGET_CENTS,
-  DEFAULT_FISCAL_YEAR,
   DEFAULT_ORG_DEPARTMENTS,
   parseBootstrapOrgArgs,
   runBootstrapOrgCli
@@ -107,7 +107,7 @@ describe('bootstrap-org CLI', () => {
        ORDER BY d.code`
     ).all();
     assert.equal(budgets.length, 5);
-    assert.ok(budgets.every((b) => Number(b.fiscal_year) === DEFAULT_FISCAL_YEAR));
+    assert.ok(budgets.every((b) => Number(b.fiscal_year) === currentFiscalYear()));
     assert.ok(budgets.every((b) => Number(b.total_budget) === DEFAULT_BUDGET_CENTS));
     assert.ok(budgets.every((b) => Number(b.committed_amount) === 0));
     assert.ok(budgets.every((b) => Number(b.actual_spent) === 0));
@@ -193,7 +193,7 @@ describe('bootstrap-org CLI', () => {
     assert.equal(mkt.name, 'Marketing & Brand');
     const budget = await db.prepare(
       `SELECT total_budget, committed_amount, actual_spent FROM budgets
-       WHERE department_id = (SELECT id FROM departments WHERE code = 'MKT') AND fiscal_year = 2026`
+       WHERE department_id = (SELECT id FROM departments WHERE code = 'MKT') AND fiscal_year = ${currentFiscalYear()}`
     ).get();
     assert.equal(Number(budget.total_budget), 15_000_000);
     assert.equal(Number(budget.committed_amount), 178_210);
@@ -263,7 +263,7 @@ describe('bootstrap-org CLI', () => {
       stderr: captureStreams().stderr
     });
     assert.equal(code, 0);
-    assert.equal(stdout.text, BOOTSTRAP_ORG_HELP);
+    assert.equal(stdout.text, bootstrapOrgHelp());
     assert.match(stdout.text, /never wipes/i);
     assert.match(stdout.text, /npm run seed/);
     assert.match(stdout.text, /--force-budget/);

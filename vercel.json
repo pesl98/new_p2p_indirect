@@ -3,7 +3,8 @@
   "framework": null,
   "functions": {
     "api/index.js": {
-      "includeFiles": "server/src/schema.sql"
+      "includeFiles": "server/src/schema.sql",
+      "maxDuration": 30
     },
     "api/invoice-proposal-upload.js": {
       "includeFiles": "server/src/schema.sql",

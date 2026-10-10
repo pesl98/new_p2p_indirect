@@ -463,7 +463,7 @@ export async function createRenewalRequisition(db, contractId, {
       );
     }
 
-    await insertApprovalChain(db, prId, acv, contract.department_id);
+    await insertApprovalChain(db, prId, acv, contract.department_id, { excludeUserIds: [requester_id] });
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)

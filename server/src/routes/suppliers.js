@@ -1,4 +1,5 @@
 import express from 'express';
+import { PROCUREMENT_ROLES, requireRole } from '../requestActor.js';
 import {
   MasterDataError,
   isUniqueConstraint,
@@ -77,7 +78,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create supplier — code is unique; status defaults to active.
-router.post('/', async (req, res) => {
+router.post('/', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const { name, code, contact_person, email, phone, address, payment_terms, status } = req.body;
@@ -169,7 +170,7 @@ async function applySupplierPatch(db, id, body) {
 }
 
 // Update fields and/or status. Code is immutable. Soft-deactivate only.
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const id = parsePositiveId(req.params.id);
@@ -180,7 +181,7 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const id = parsePositiveId(req.params.id);

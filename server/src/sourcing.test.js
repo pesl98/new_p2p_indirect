@@ -991,7 +991,7 @@ describe('sourcing HTTP', () => {
     }));
   });
 
-  test('a published event can be cancelled and a closed event cannot', async () => {
+  test('a published event can be cancelled, and so can a closed one (after the deadline), but not an awarded one', async () => {
     const { db, app } = await boot();
     const now = '2026-10-08T12:00:00.000Z';
     await db.prepare(`
@@ -1018,7 +1018,22 @@ describe('sourcing HTTP', () => {
         ) VALUES ('RFQ-2026-051', 'Closed', 1, 3, 'closed', 'EUR', '2026-01-01T00:00:00.000Z', ?, ?, ?)
       `).run(now, now, now);
       const closed = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = 'RFQ-2026-051'`).get();
-      const denied = await json(await fetch(`${base}/api/sourcing/events/${closed.id}/cancel`, {
+      const late = await json(await fetch(`${base}/api/sourcing/events/${closed.id}/cancel`, {
+        method: 'POST',
+        headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Aanvraag vervalt na sluiting' })
+      }));
+      assert.equal(late.status, 200, JSON.stringify(late.body));
+      assert.equal(late.body.status, 'cancelled');
+      assert.equal(late.body.cancelled_before_deadline, 0, 'prices stay visible to the owner after a late cancel');
+
+      await db.prepare(`
+        INSERT INTO sourcing_events (
+          event_number, title, department_id, owner_user_id, status, currency, deadline_at, closed_at, awarded_at, created_at, updated_at
+        ) VALUES ('RFQ-2026-052', 'Awarded', 1, 3, 'awarded', 'EUR', '2026-01-01T00:00:00.000Z', ?, ?, ?, ?)
+      `).run(now, now, now, now);
+      const awarded = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = 'RFQ-2026-052'`).get();
+      const denied = await json(await fetch(`${base}/api/sourcing/events/${awarded.id}/cancel`, {
         method: 'POST',
         headers: { ...authHeaders(3), 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Te laat' })

@@ -274,7 +274,7 @@ router.post('/', async (req, res) => {
       });
 
       if (submitImmediately) {
-        await insertApprovalChain(db, prId, calculatedTotal, department_id);
+        await insertApprovalChain(db, prId, calculatedTotal, department_id, { excludeUserIds: [requester_id] });
         await db.prepare(`
           INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
           VALUES ('requisition', ?, 'SUBMITTED', ?, 'Submitted for multi-tier approval routing')
@@ -311,7 +311,7 @@ router.post('/:id/submit', async (req, res) => {
 
     const assignment = await db.transaction(async () => {
       await db.prepare(`UPDATE purchase_requisitions SET status = 'pending_approval', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
-      await insertApprovalChain(db, id, pr.total_amount, pr.department_id);
+      await insertApprovalChain(db, id, pr.total_amount, pr.department_id, { excludeUserIds: [pr.requester_id] });
       await db.prepare(`
         INSERT INTO audit_logs (entity_type, entity_id, action, actor_name, details)
         VALUES ('requisition', ?, 'SUBMITTED', ?, 'Submitted for approval routing')

@@ -73,7 +73,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | | in review |
-| 8c | | Comparison, scoring, award requisition, SoD, and POs | | Sprint 8c — Comparison, scoring, award, and POs | | planned |
+| 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | | in review |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
 
 ## Sprint 1 — Full authorization rewrite
@@ -481,27 +481,57 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ## Sprint 8c — Comparison, scoring, award, and POs
 
-**Date:**
+**Date:** 2026-10-10
 
 **Goal:** After the deadline, buyers compare bids, score them, and propose a full or split award. The award goes through the existing approval chain with segregation of duties and becomes purchase orders through the existing convert.
 
-**PR:**
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/59 (#59). It carries the security hardening and role-gate work from the same branch.
 
 **Merge SHA:**
 
-**Status:** planned.
+**Status:** in review.
 
 ### Done when
 
-- The matrix marks the lowest price per line and the lowest complete total. Scores match the formula in the sourcing plan.
-- A non-lowest award without a reason gets 400. A split award converts to one PO per supplier at the awarded prices.
-- Above €1.000 the owner is never an approver of their own award. Below that, the existing self-approval finding still reports it.
-- Final approval commits the award total and releases the source PR's commitment in the same transaction. A rejection leaves no POs.
-- Creating the PO is a separate "Bestelling(en) aanmaken" step after approval. POs are issued as they are today.
+- The matrix marks the lowest price per line and the lowest complete total. Incomplete and withdrawn bids are handled. Scores are deterministic and match the formula in the sourcing plan (§8.1). `sourcingScoring.js` is pure and has a table of cases.
+- A non-lowest award, or one with an expired bid validity, without a reason of at least 10 characters gets 400 `award_reason_required`. The database CHECK rejects a direct insert too.
+- A split award produces one award requisition. "Bestelling(en) aanmaken" yields one PO per awarded supplier at the awarded prices, each PO carrying `award_id` (unique per award and supplier), with the RFQ number in the PO notes. "Done" means every awarded supplier has exactly one PO. A repeat call is an idempotent 200.
+- The owner, the proposer, and any evaluator who declared a conflict are excluded when the chain is built. A step that resolves to an excluded user goes to the next user with the same role (a department head who is not role `approver` falls back to the department's approvers), then escalates (approver, procurement, finance, admin). When nobody is left the proposal fails closed with 422 `sod_no_alternate_approver` and leaves no rows. None of them can decide the award: not directly, not as the delegate or the delegator of a step, not through a delegation they created, and not as an admin. All of those are 403 `sod_award_self_approval`.
+- Final approval releases the source PR's commitment and commits the award total in the same transaction, so the department is charged the awarded amount and not estimate plus award. A budget failure rolls the release back. A rejection leaves the event `evaluated`, the source PR locked, and no POs.
+- The compliance report builds the expected chain with the same exclusions, so award PRs raise no false `wrong_approver`. New findings: `sourcing_award_self_approval`, `sourcing_award_not_lowest` (info), `sourcing_bid_after_deadline`.
+- Statement counts at the caps (50 lines, 20 suppliers, split award, total above € 10.000), counted as a Turso interactive transaction costs: every prepared statement, one `SELECT last_insert_rowid()` per INSERT, and BEGIN and COMMIT (`sourcingAwardBudget.test.js`). Propose 19 (was about 230), evaluate 8, approval 11, 11 and 23, PO chunks of two suppliers 23 and a final completion 10. The final approval of an award whose RFQ came from a source requisition is 23 at every size (it was 32), and the test holds it to 24 (2 lines × 2 suppliers and 50 × 20). Every transaction is at most 25; the award is at most 23. Not measured on a Turso preview yet; the plan asks for that after the preview database split.
 
 ### Decisions
 
-- **Not started.** Peter's 2026-10-08 decisions that bind this sprint: manual "Bestelling(en) aanmaken" after award approval, no draft PO state, SoD threshold €1.000, minimum 3 quotes above €10.000 is a warning only.
+- **Scope.** [SOURCING-PLAN.md](SOURCING-PLAN.md) §8 Sprint 8c, with the 2026-10-08 (Peter) decisions: manual "Bestelling(en) aanmaken" after award approval, no draft PO state, SoD threshold € 1.000, a minimum of 3 quotes above € 10.000 stays a warning only.
+- **Modules.** `sourcingScoring.js` (pure), `sourcingEvaluationService.js` (comparison, COI, scores, "Beoordeling afronden", owner reassignment), `sourcingAwardService.js` (proposal, read, PO creation, approver snapshot), `sourcingApprovalHooks.js` (called from `decideApprovalStep` inside its transaction). `buildApprovalSteps` and `insertApprovalChain` take `excludeUserIds`.
+- **Routes.** On `/api/sourcing/events/:id`: `POST coi`, `POST scores`, `POST evaluate`, `POST owner` (admin), `GET award`, `POST awards`, `POST purchase-orders`. `GET comparison` now returns the matrix and scores when prices are visible. `GET /api/approvals/award-snapshot/:requisitionId` serves the frozen snapshot to the approval chain and to procurement, finance, and admin. Finance stays read-only except for `coi` and `scores`.
+- **Evaluation.** COI can be declared while the RFQ is `published` or `closed`. The owner declares too; the owner gets an evaluator row for that purpose. "Beoordeling afronden" needs at least one submitted bid. A pending COI or a bid without any score blocks it unless the owner gives an override reason of at least 10 characters, which is recorded on `SOURCING_EVENT_EVALUATED`.
+- **Award.** The proposal runs in one `immediateTransaction`. The unique index on open awards backs the precheck, so of two concurrent proposals one gets 409 `award_already_open`. Every RFQ line must be awarded. A full award goes to one supplier that quoted every line; a split award needs at least two suppliers. Every awarded supplier must be active. The snapshot (matrix, scores, lowest markers, chosen lines) is stored once and never recomputed.
+- **Review round 1 (NACK at fd38c34).**
+  - **B1.** The award stores the RFQ owner at proposal time (`sourcing_awards.owner_user_id`, also in the snapshot) next to `proposed_by_user_id`. The chain excludes both. The guard in `decideApprovalStep` looks at the deciding user, the step's assigned approver, both sides of a delegation, and whoever created that delegation. The compliance report builds the expected chain with the same list and flags a proposer on a step.
+  - **B2.** `convertRequisitionToPurchaseOrders` (and so `POST /api/purchase-orders/from-requisition`, with or without `supplier_mappings`) refuses an award requisition for every role with 409 `award_requisition_via_sourcing`. Only `POST /api/sourcing/events/:id/purchase-orders` converts it, from the awarded suppliers and prices. `purchase_orders.award_id` is new, with unique `(award_id, supplier_id)`.
+  - **B4.** The proposal resolves the approval chain before the write transaction and writes the requisition lines, approval steps, and award lines as multi-row INSERTs (three history rows in one statement). The PO conversion works in chunks of two suppliers, each its own idempotent transaction (`INSERT … WHERE NOT EXISTS` plus the unique index), for about 10 seconds per request, and returns `{ done, remaining }`. The screen calls again while `done` is false. The requisition is marked `converted_to_po` only when `remaining` is empty.
+  - **B5.** An RFQ can be cancelled from `closed` and `evaluated` as well. In the cancel transaction (`BEGIN IMMEDIATE`) the UPDATE refuses an RFQ with an approved award, and a pending award is rejected together with its requisition and its open approval steps. After that nobody can approve it, and the source requisition is no longer locked. The invitee notice is the same text as 8b and carries no link or token. `sourcing_event.cancelled` is enqueued for every cancel that is not from draft.
+  - **Prices.** `GET /events/:id/award` and the approver snapshot use the comparison screen's rule plus the approval chain: admin, finance, the owner (at proposal time or now), clean evaluators, and approvers in the chain see prices. A declared conflict always hides them, and so does being a colleague buyer who is none of those. Hidden means no amounts, no supplier names on lines, and a snapshot with only the weights.
+  - **Locks.** Final approval and every PO chunk run under `BEGIN IMMEDIATE` with `withBusyRetry` (`busyRetry.js`, 3 attempts, 100–300 ms). A lock that stays busy is 503 `busy` with `Retry-After`; `SQLITE_BUSY_SNAPSHOT` is 409 `busy_snapshot`. A second decision on a decided step is 409 `approval_already_decided`.
+  - **Fiscal year.** `currentFiscalYear()` is called where the year is used; no module keeps it in a constant (a test scans for that). `bootstrapOrgHelp()` replaces the frozen help constant.
+  - **Department head's own requisition.** Chains for new and submitted requisitions and for contract renewals are built without the requester. A step that was already assigned to the requester is re-routed to the next eligible approver when someone tries to decide it (outcome `rerouted`, audited `APPROVAL_REROUTED`) instead of a 403. Awards keep the 403.
+  - **Sign-in limit.** The limiter keys on address plus a hash of the e-mail (10 tries per 15 minutes), with a generous cap per address (300). With `TRUST_PROXY` off every visitor shares the proxy's address, so the address alone is no longer the lock; `X-Forwarded-For` is never read. The table is bounded.
+  - **Smaller.** The renew and register buttons on the contracts screen are hidden for roles the server refuses. `reassignOwner` tests for an open award inside its transaction and in its UPDATE.
+- **Review round 2 (re-review at 100a169).**
+  - **Final approval with a source requisition: 32 → 23 statements.** `loadAwardByRequisition` reads the award, its event, the source requisition, the conflicted evaluators, and the deciding user's role in one query. Releasing the source commitment is one UPDATE. Its history row is part of the award's own audit INSERT (the `AWARDED` and `SOURCING_SOURCE_REQUISITION_SUPERSEDED` rows are one statement), and the release is recorded in the single `SOURCING_AWARD_APPROVED` compliance row (`source_requisition_superseded: { source_requisition_id, pr_number, released_cents }`) instead of a second compliance row. The audit row for the source requisition is unchanged.
+  - **Fallback routing.** `buildApprovalSteps` remembers who is on the chain. A fallback never picks someone who already has a step, and a later step does not pick a user that an earlier fallback chose (award chain `[6, 6, 4]` is now `[6, 4, 5]`; a requisition `[3, 3, 4]` is `[3, 6, 4]`). If nobody else is left the old behaviour stays; an excluded user is always replaced, and with nobody at all the step fails closed. With no exclusions the chain is exactly what it was.
+  - **Owner change in the gap.** The proposal re-reads the owner, department, and row version in the guard query of its own transaction and answers 409 `event_state_changed` if any moved, so a chain built for the old owner cannot be stored.
+  - **Parallel PO callers.** `replayed` is true only when nothing new was written and the list is complete. A caller whose chunk a parallel caller already wrote gets `done: false, replayed: false` with the list so far. PO numbers are `MAX + 1` read inside the chunk's `BEGIN IMMEDIATE`, so a skipped supplier takes no number; a test checks the numbers are 1..n with no gaps.
+  - **`api/index.js` `maxDuration` is 30 s** in `vercel.json` (the chunk budget is about 10 s, and a chunk can start just before it ends). A test ties the two.
+  - **`/comparison`.** A declared conflict hides prices from finance and admin as well (`actorMaySeeBidPrices`), the same rule as `/award`. The bid-file download uses the same function.
+- **Deviations from the plan, on purpose.**
+  - The owner is excluded from the chain for every award, not only above the threshold. Since the 2026-10-10 hardening a requester cannot decide their own requisition at all, and the award PR's requester is the owner, so a chain that resolved to the owner would deadlock. `SOURCING_AWARD_SOD_THRESHOLD_CENTS` (default € 1.000) therefore only scopes the detective finding `sourcing_award_self_approval`.
+  - `createRequisition` was not extracted from `routes/requisitions.js`. The award service inserts its requisition directly with the same columns and audit rows. The extraction is a later refactor that does not change behaviour.
+  - The convert role gate (procurement or admin) applies to every PR from the hardening work; for award requisitions the old convert is now refused altogether (B2).
+  - Evaluators who are not procurement, admin, or finance cannot reach the sourcing screens, as in 8a. Evaluator COI and scoring work for those three roles only.
+- **Not in this sprint.** The per-user "evaluator sees only their event" access for requesters and approvers, auto-convert on final approval, and losing-bidder notices stay open (see §10 of the plan). The webhook `sourcing_event.awarded` is enqueued in the approval transaction and carries the award total and per-supplier totals in cents.
 
 ## Sprint 8d — Hardening, email, integrations, demo seed, and docs
 

@@ -1,4 +1,5 @@
 import express from 'express';
+import { PROCUREMENT_ROLES, requireRole } from '../requestActor.js';
 import { asCents } from '../money.js';
 import { normalizeLineType, resolveServiceBasis } from '../lineType.js';
 import {
@@ -90,7 +91,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const {
@@ -224,7 +225,7 @@ async function applyCatalogPatch(db, id, body) {
   return loadCatalogDetail(db, id);
 }
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const id = parsePositiveId(req.params.id);
@@ -235,7 +236,7 @@ router.patch('/:id', async (req, res) => {
   }
 });
 
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requireRole(...PROCUREMENT_ROLES), async (req, res) => {
   try {
     const db = req.db;
     const id = parsePositiveId(req.params.id);

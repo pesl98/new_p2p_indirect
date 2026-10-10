@@ -814,8 +814,26 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
-    }).then((r) => proposalJson(r, t('errors.sourcingSave')))
+    }).then((r) => proposalJson(r, t('errors.sourcingSave'))),
+  declareSourcingCoi: (id, data) => sourcingPost(id, 'coi', data),
+  recordSourcingScores: (id, data) => sourcingPost(id, 'scores', data),
+  completeSourcingEvaluation: (id, data) => sourcingPost(id, 'evaluate', data),
+  reassignSourcingOwner: (id, data) => sourcingPost(id, 'owner', data),
+  proposeSourcingAward: (id, data) => sourcingPost(id, 'awards', data),
+  createSourcingPurchaseOrders: (id) => sourcingPost(id, 'purchase-orders', {}),
+  getSourcingAward: (id) =>
+    apiFetch(`${API_BASE}/sourcing/events/${id}/award`).then((r) => proposalJson(r, t('errors.sourcing'))),
+  getAwardSnapshot: (requisitionId) =>
+    apiFetch(`${API_BASE}/approvals/award-snapshot/${requisitionId}`).then((r) => proposalJson(r, t('errors.sourcing')))
 };
+
+function sourcingPost(id, path, data) {
+  return apiFetch(`${API_BASE}/sourcing/events/${id}/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data || {})
+  }).then((r) => proposalJson(r, t('errors.sourcingSave')));
+}
 
 async function proposalJson(response, fallbackMessage) {
   let data = null;
@@ -824,6 +842,10 @@ async function proposalJson(response, fallbackMessage) {
   } catch {
     throw new Error(fallbackMessage);
   }
-  if (!response.ok) throw new Error(data.code || data.error || fallbackMessage);
+  if (!response.ok) {
+    const failure = new Error(data.code || data.error || fallbackMessage);
+    if (Array.isArray(data.blockers)) failure.blockers = data.blockers;
+    throw failure;
+  }
   return data;
 }

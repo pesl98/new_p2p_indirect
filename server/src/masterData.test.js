@@ -7,7 +7,7 @@ import { loadDbConfig } from './dbConfig.js';
 import { withCookie } from './testSession.js';
 
 function authed(url, options) {
-  return fetch(url, withCookie(1, options));
+  return fetch(url, withCookie(3, options));
 }
 
 function withServer(app, fn) {
@@ -290,5 +290,21 @@ describe('catalog master data', () => {
     const db = await createTestDb();
     const cols = db.prepare(`PRAGMA table_info(catalog_items)`).all();
     assert.ok(cols.some((col) => col.name === 'status'));
+  });
+});
+
+describe('master data role gate', () => {
+  test('requester cannot create suppliers or catalog items; procurement can', async () => {
+    const db = await createTestDb();
+    const app = createApp({ db, config: loadDbConfig({}) });
+    await withServer(app, async (base) => {
+      const post = (userId, path, payload) => fetch(`${base}/api/${path}`, withCookie(userId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }));
+      assert.equal((await post(1, 'suppliers', { name: 'X', code: 'SUP-X' })).status, 403);
+      assert.equal((await post(3, 'suppliers', { name: 'X', code: 'SUP-X' })).status, 201);
+    });
   });
 });

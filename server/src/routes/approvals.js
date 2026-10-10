@@ -1,5 +1,6 @@
 import express from 'express';
 import { decideApprovalStep, listApprovalInbox } from '../approvalsService.js';
+import { awardSnapshotForRequisition } from '../sourcingAwardService.js';
 import { assertSessionId, sessionActor, withSessionActor } from '../requestActor.js';
 
 const router = express.Router();
@@ -17,6 +18,16 @@ router.get('/', async (req, res) => {
     res.json(approvals);
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+// Frozen RFQ comparison snapshot for an award requisition.
+router.get('/award-snapshot/:requisitionId', async (req, res) => {
+  try {
+    const actor = sessionActor(req);
+    res.json(await awardSnapshotForRequisition(req.db, actor, Number(req.params.requisitionId)));
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message, code: error.code });
   }
 });
 
@@ -42,8 +53,11 @@ router.post('/:id/decide', async (req, res) => {
 
     res.json({ message: `Requisition ${body.decision} successfully`, ...result });
   } catch (error) {
-    console.error('Error deciding approval:', error);
-    res.status(error.statusCode || 500).json({ error: error.message });
+    if (!error.statusCode || error.statusCode >= 500) console.error('Error deciding approval:', error);
+    const body = { error: error.message };
+    if (error.code) body.code = error.code;
+    if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
+    res.status(error.statusCode || 500).json(body);
   }
 });
 

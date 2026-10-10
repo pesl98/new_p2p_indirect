@@ -24,6 +24,7 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
   const [decisionComments, setDecisionComments] = useState('');
   const [processing, setProcessing] = useState(false);
   const [allowContractUse, setAllowContractUse] = useState('');
+  const [snapshots, setSnapshots] = useState({});
 
   const loadApprovals = async () => {
     if (!currentUser?.id) {
@@ -159,6 +160,46 @@ export default function ApprovalsView({ currentUser, onNavigate, onDataChanged }
                         </span>
                       )}
                     </div>
+
+                    {item.rfq_number && (
+                      <div className="text-xs">
+                        <span className="inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-sky-100 text-sky-800">
+                          {t('sourcing.approval.rfqBadge', { number: item.rfq_number })}
+                        </span>
+                        <button
+                          type="button"
+                          className="ml-2 underline text-sky-800"
+                          onClick={async () => {
+                            if (snapshots[item.requisition_id]) {
+                              setSnapshots((prev) => ({ ...prev, [item.requisition_id]: null }));
+                              return;
+                            }
+                            try {
+                              const snap = await api.getAwardSnapshot(item.requisition_id);
+                              setSnapshots((prev) => ({ ...prev, [item.requisition_id]: snap }));
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                        >
+                          {snapshots[item.requisition_id] ? t('sourcing.approval.hideSnapshot') : t('sourcing.approval.viewSnapshot')}
+                        </button>
+                        {snapshots[item.requisition_id] && (
+                          <ul className="mt-2 list-disc ml-5 text-slate-700">
+                            {snapshots[item.requisition_id].snapshot.award.lines.map((line) => (
+                              <li key={line.event_line_id}>
+                                {line.supplier_name} · {formatMoney(line.unit_price_cents)} = {formatMoney(line.line_total_cents)}{' '}
+                                {line.is_line_lowest ? `(${t('sourcing.eval.lowest')})` : ''}
+                              </li>
+                            ))}
+                            <li>
+                              {snapshots[item.requisition_id].is_lowest ? t('sourcing.award.isLowest') : t('sourcing.award.notLowest')}
+                              {snapshots[item.requisition_id].reason ? `: ${snapshots[item.requisition_id].reason}` : ''}
+                            </li>
+                          </ul>
+                        )}
+                      </div>
+                    )}
 
                     <div className="text-xs text-slate-800">
                       <strong className="text-slate-900">{item.requester_name}</strong> {t('purchasing.approval.requestedOnBehalf')}{' '}

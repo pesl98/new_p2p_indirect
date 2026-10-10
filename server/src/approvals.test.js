@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from './db.js';
+import { currentFiscalYear } from './fiscalYear.js';
 import { APPROVAL_TIER2_CENTS, insertApprovalChain } from './approvalPolicy.js';
 import { ApprovalDecisionError, decideApprovalStep } from './approvalsService.js';
 
@@ -15,7 +16,7 @@ async function createTestDb() {
       (3, 'Carol Zhang', 'carol@example.com', 'procurement', 1, 'Head of Strategic Sourcing'),
       (4, 'David Miller', 'david@example.com', 'finance', 1, 'Controller');
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-    VALUES (1, 2026, 15000000, 1000, 0);
+    VALUES (1, ${currentFiscalYear()}, 15000000, 1000, 0);
   `);
   return db;
 }
@@ -254,6 +255,18 @@ describe('sequential approval decisions', () => {
     await insertApprovalChain(db, prId, amount, 1);
     const [step1] = chainRows(db, prId);
 
+    await assert.rejects(
+      decideApprovalStep(db, {
+        approvalId: step1.id,
+        decision: 'approved',
+        approver_id: step1.approver_id,
+        approver_name: 'Bob Martinez',
+        override_budget: true
+      }),
+      (e) => e.statusCode === 403 && /finance or admin/.test(e.message)
+    );
+
+    db.prepare(`UPDATE users SET role = 'finance' WHERE id = ?`).run(step1.approver_id);
     const result = await decideApprovalStep(db, {
       approvalId: step1.id,
       decision: 'approved',
@@ -266,5 +279,56 @@ describe('sequential approval decisions', () => {
       SELECT action FROM audit_logs WHERE entity_type = 'requisition' AND entity_id = ? AND action = 'BUDGET_OVERRIDE'
     `).get(prId);
     assert.ok(log);
+  });
+
+  test('a step assigned to the requester is re-routed to the next approver, not a dead end', async () => {
+    const db = await createTestDb();
+    // Dave Head is a second approver in the same department; Bob is mapped head and raises the PR.
+    db.exec(`INSERT INTO users (id, name, email, role, department_id, title) VALUES (5, 'Dana Head', 'dana@example.com', 'approver', 1, 'Deputy')`);
+    db.exec(`UPDATE departments SET approver_user_id = 2 WHERE id = 1`);
+    const prId = await insertPr(db, 50_000);
+    await insertApprovalChain(db, prId, 50_000, 1);
+    const [step1] = chainRows(db, prId);
+    assert.equal(step1.approver_id, 2);
+    db.prepare(`UPDATE purchase_requisitions SET requester_id = 2 WHERE id = ?`).run(prId);
+
+    const result = await decideApprovalStep(db, {
+      approvalId: step1.id, decision: 'approved', approver_id: 2, approver_name: 'Bob Martinez'
+    });
+    assert.equal(result.outcome, 'rerouted');
+    assert.equal(result.rerouted_to.id, 5);
+    assert.equal(chainRows(db, prId)[0].approver_id, 5);
+    assert.equal(chainRows(db, prId)[0].status, 'pending', 'nothing was decided');
+    const audit = db.prepare(`SELECT details FROM audit_logs WHERE action = 'APPROVAL_REROUTED'`).get();
+    assert.match(audit.details, /Dana Head/);
+
+    // The requester still cannot decide it, and the new approver can.
+    await assert.rejects(
+      decideApprovalStep(db, { approvalId: step1.id, decision: 'approved', approver_id: 2, approver_name: 'Bob Martinez' }),
+      (e) => e.statusCode === 403
+    );
+    const decided = await decideApprovalStep(db, { approvalId: step1.id, decision: 'approved', approver_id: 5, approver_name: 'Dana Head' });
+    assert.equal(decided.outcome, 'approved');
+  });
+
+  test('the chain for a department head\'s own requisition is built without them', async () => {
+    const db = await createTestDb();
+    db.exec(`INSERT INTO users (id, name, email, role, department_id, title) VALUES (5, 'Dana Head', 'dana@example.com', 'approver', 1, 'Deputy')`);
+    db.exec(`UPDATE departments SET approver_user_id = 2 WHERE id = 1`);
+    const prId = await insertPr(db, APPROVAL_TIER2_CENTS + 500);
+    await insertApprovalChain(db, prId, APPROVAL_TIER2_CENTS + 500, 1, { excludeUserIds: [2] });
+    assert.deepEqual(chainRows(db, prId).map((row) => row.approver_id), [5, 3]);
+  });
+
+  test('requester cannot decide their own requisition as a delegate either', async () => {
+    const db = await createTestDb();
+    const prId = await insertPr(db, 50_000);
+    await insertApprovalChain(db, prId, 50_000, 1);
+    const [step1] = chainRows(db, prId);
+    db.prepare(`INSERT INTO approval_delegations (delegator_user_id, delegate_user_id, active, reason) VALUES (?, 1, 1, 'OOO')`).run(step1.approver_id);
+    await assert.rejects(
+      decideApprovalStep(db, { approvalId: step1.id, decision: 'approved', approver_id: 1, approver_name: 'Alice Chen' }),
+      (e) => e.statusCode === 403 && /own requisition/.test(e.message)
+    );
   });
 });

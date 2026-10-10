@@ -1034,9 +1034,27 @@ function buildTimeline({ requisition, approvals, purchaseOrders, contractEvents 
   return sortTimeline(events);
 }
 
-function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrders, contractEvents = [] }) {
+async function loadTrailSourcing(db, requisitionId) {
+  const award = await db.prepare(`
+    SELECT e.event_number FROM sourcing_awards a JOIN sourcing_events e ON e.id = a.event_id
+    WHERE a.award_requisition_id = ?
+  `).get(requisitionId);
+  const source = await db.prepare(`
+    SELECT e.event_number, e.status FROM sourcing_events e
+    WHERE e.source_requisition_id = ? AND e.status != 'cancelled'
+  `).get(requisitionId);
+  if (!award && !source) return null;
+  return {
+    award_rfq_number: award?.event_number || null,
+    source_rfq_number: source?.event_number || null,
+    source_rfq_status: source?.status || null
+  };
+}
+
+function buildTrailPayload({ startingPoint, requisition, approvals, purchaseOrders, contractEvents = [], sourcing = null }) {
   return {
     starting_point: startingPoint,
+    sourcing,
     requisition: mapRequisition(requisition),
     approvals,
     purchase_orders: purchaseOrders,
@@ -1233,7 +1251,8 @@ export async function getDocumentTrail(db, query = {}) {
       requisition,
       approvals,
       purchaseOrders,
-      contractEvents
+      contractEvents,
+      sourcing: await loadTrailSourcing(db, requisition.id)
     });
   }
 
