@@ -73,7 +73,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | | in review |
-| 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | | in review |
+| 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
 
 ## Sprint 1 — Full authorization rewrite
@@ -485,11 +485,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** After the deadline, buyers compare bids, score them, and propose a full or split award. The award goes through the existing approval chain with segregation of duties and becomes purchase orders through the existing convert.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/59 (#59). It carries the security hardening and role-gate work from the same branch.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/59 (#59), merged. It carried the security hardening and role-gate work from the same branch. The earlier draft PR #58 was closed as superseded.
 
-**Merge SHA:**
+**Merge SHA:** `2d50c015f3f581843c78e98b292e05515e3dd428` (squash-merged).
 
-**Status:** in review.
+**Status:** merged.
 
 ### Done when
 
