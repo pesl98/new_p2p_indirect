@@ -156,3 +156,15 @@ export function parseDeadline(value, timeZone = 'Europe/Amsterdam') {
   if (Number.isNaN(finalDate.getTime())) return undefined;
   return finalDate.toISOString();
 }
+
+/**
+ * APP_BASE_URL builds supplier links and is the allowed browser origin. Without a scheme the
+ * links are broken and CORS never matches, so say so once at startup.
+ */
+export function warnIfBadAppBaseUrl(env = process.env, log = console) {
+  const value = String(env.APP_BASE_URL || '').trim();
+  if (!value) return false;
+  if (/^https?:\/\/[^/\s]+/i.test(value)) return false;
+  log.warn?.('APP_BASE_URL has no http:// or https:// scheme; supplier links and CORS will not work. Example: https://inkoop.example.nl');
+  return true;
+}

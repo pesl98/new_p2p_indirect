@@ -5,6 +5,7 @@ import { createApp } from './app.js';
 import { createMemoryDatabase } from './db.js';
 import { loadDbConfig } from './dbConfig.js';
 import { withCookie } from './testSession.js';
+import { watchPipeline } from './sourcingAwardFixtures.js';
 
 const SECRET = '0123456789abcdef0123456789abcdef';
 
@@ -181,6 +182,134 @@ describe('sourcing machine API', () => {
       assert.deepEqual(award.body, { award: null });
       const bad = await json(await fetch(`${base}/api/integrations/sourcing/events?status=nope`, { headers: auth(key) }));
       assert.equal(bad.status, 400);
+    }));
+  });
+
+  async function manySuppliers(db, count) {
+    for (let n = 1; n <= count; n += 1) {
+      const id = 100 + n;
+      await db.prepare(`INSERT INTO suppliers (id, name, code, contact_person, email, status) VALUES (?, ?, ?, 'X', ?, 'active')`)
+        .run(id, `Sup ${id}`, `S${id}`, `s${id}@sup.test`);
+      await db.prepare(`
+        INSERT INTO integration_entity_links (entity_type, external_id, entity_id, created_at, updated_at)
+        VALUES ('supplier', ?, ?, '2026-01-01', '2026-01-01')
+      `).run(`ERP-S${id}`, id);
+    }
+  }
+  const bigDraft = (externalId, lines, suppliers, offset = 0) => ({
+    external_id: externalId,
+    title: 'Groot',
+    deadline_at: '2026-10-30T14:00:00.000Z',
+    lines: Array.from({ length: lines }, (_, i) => ({ description: `Regel ${i + 1}`, category: 'Office Supplies', quantity: 1 })),
+    invitations: Array.from({ length: suppliers }, (_, i) => ({ supplier_external_id: `ERP-S${101 + offset + i}` }))
+  });
+
+  test('create and add-invitees stay within the Turso statement budget at the caps', async () => {
+    const db = await world();
+    await manySuppliers(db, 40);
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date('2026-10-08T12:00:00Z') });
+    await withEnv(() => withServer(app, async (base) => {
+      const key = await issueKey(base, ['sourcing:write', 'sourcing:read']);
+      const watch = watchPipeline(db);
+      try {
+        const small = await json(await fetch(`${base}/api/integrations/sourcing/events`, {
+          method: 'POST', headers: auth(key, { 'Idempotency-Key': 'a' }),
+          body: JSON.stringify(bigDraft('SMALL', 2, 2))
+        }));
+        assert.equal(small.status, 201, JSON.stringify(small.body));
+        const big = await json(await fetch(`${base}/api/integrations/sourcing/events`, {
+          method: 'POST', headers: auth(key, { 'Idempotency-Key': 'b' }),
+          body: JSON.stringify(bigDraft('BIG', 50, 20))
+        }));
+        assert.equal(big.status, 201, JSON.stringify(big.body));
+        assert.equal(big.body.lines.length, 50);
+        assert.equal(big.body.invitations.length, 20);
+        const empty = await json(await fetch(`${base}/api/integrations/sourcing/events`, {
+          method: 'POST', headers: auth(key), body: JSON.stringify({ ...bigDraft('EMPTY', 1, 0) })
+        }));
+        assert.equal(empty.status, 201);
+        const added = await json(await fetch(`${base}/api/integrations/sourcing/events/${empty.body.event_number}/invitations`, {
+          method: 'POST', headers: auth(key, { 'Idempotency-Key': 'c' }),
+          body: JSON.stringify({ invitations: Array.from({ length: 20 }, (_, i) => ({ supplier_external_id: `ERP-S${121 + i}` })) })
+        }));
+        assert.equal(added.status, 200, JSON.stringify(added.body));
+        assert.equal(added.body.invitations.length, 20);
+        const pipelines = watch.results.map((row) => row.pipeline);
+        assert.ok(pipelines.length >= 3);
+        assert.ok(Math.max(...pipelines) <= 25, `pipelines: ${pipelines.join(',')}`);
+      } finally {
+        watch.restore();
+      }
+      // Replays return the stored full response.
+      const replay = await json(await fetch(`${base}/api/integrations/sourcing/events`, {
+        method: 'POST', headers: auth(key, { 'Idempotency-Key': 'b' }), body: JSON.stringify(bigDraft('BIG', 50, 20))
+      }));
+      assert.equal(replay.headers.get('idempotent-replayed'), 'true');
+      assert.equal(replay.body.lines.length, 50);
+      const reused = await json(await fetch(`${base}/api/integrations/sourcing/events`, {
+        method: 'POST', headers: auth(key, { 'Idempotency-Key': 'b' }), body: JSON.stringify(bigDraft('OTHER', 1, 1))
+      }));
+      assert.equal(reused.status, 409);
+    }));
+  });
+
+  test('parallel creates all succeed with distinct RFQ numbers; the same external id creates one', async () => {
+    const db = await world();
+    await manySuppliers(db, 5);
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date('2026-10-08T12:00:00Z') });
+    await withEnv(() => withServer(app, async (base) => {
+      const key = await issueKey(base, ['sourcing:write']);
+      const post = (externalId) => fetch(`${base}/api/integrations/sourcing/events`, {
+        method: 'POST', headers: auth(key), body: JSON.stringify(bigDraft(externalId, 2, 2))
+      }).then(json);
+      const results = await Promise.all(['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].map(post));
+      assert.deepEqual(results.map((r) => r.status), [201, 201, 201, 201, 201, 201], JSON.stringify(results.map((r) => r.body)));
+      assert.equal(new Set(results.map((r) => r.body.event_number)).size, 6);
+      const same = await Promise.all([1, 2, 3, 4].map(() => post('SAME')));
+      assert.ok(same.every((r) => r.status === 201 || r.status === 200), JSON.stringify(same.map((r) => r.status)));
+      assert.equal(new Set(same.map((r) => r.body.event_number)).size, 1);
+      const count = await db.prepare(`SELECT COUNT(*) AS n FROM sourcing_events`).get();
+      assert.equal(Number(count.n), 7);
+    }));
+  });
+
+  test('external ids are scoped per key; the audit records the key; award reads show approved awards only', async () => {
+    const db = await world();
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date('2026-10-08T12:00:00Z') });
+    await withEnv(() => withServer(app, async (base) => {
+      const one = await issueKey(base, ['sourcing:write', 'sourcing:read']);
+      const two = await issueKey(base, ['sourcing:write']);
+      const a = await json(await fetch(`${base}/api/integrations/sourcing/events`, { method: 'POST', headers: auth(one), body: JSON.stringify(DRAFT) }));
+      const b = await json(await fetch(`${base}/api/integrations/sourcing/events`, { method: 'POST', headers: auth(two), body: JSON.stringify(DRAFT) }));
+      assert.equal(a.status, 201);
+      assert.equal(b.status, 201);
+      assert.notEqual(a.body.event_number, b.body.event_number);
+      const audit = await db.prepare(`SELECT details FROM compliance_audit_events WHERE action = 'SOURCING_EVENT_CREATED' ORDER BY id`).all();
+      assert.ok(audit.every((row) => /"api_key_id":\d+/.test(row.details)));
+      // A pending award (with prices) is not shown to a key.
+      const ev = await db.prepare(`SELECT id FROM sourcing_events WHERE event_number = ?`).get(a.body.event_number);
+      await db.prepare(`
+        INSERT INTO sourcing_awards (event_id, award_type, status, total_cents, is_lowest, comparison_snapshot_json, proposed_by_user_id, proposed_at)
+        VALUES (?, 'full', 'pending_approval', 1000, 1, '{}', 3, '2026-10-08')
+      `).run(ev.id);
+      const award = await json(await fetch(`${base}/api/integrations/sourcing/events/${a.body.event_number}/award`, { headers: auth(one) }));
+      assert.deepEqual(award.body, { award: null });
+    }));
+  });
+
+  test('a read key stops working when its creator is demoted or deactivated', async () => {
+    const db = await world();
+    const app = createApp({ db, config: loadDbConfig({}), now: () => new Date('2026-10-08T12:00:00Z') });
+    await withEnv(() => withServer(app, async (base) => {
+      const readKey = await issueKey(base, ['sourcing:read']);
+      const ok = await fetch(`${base}/api/integrations/sourcing/events`, { headers: auth(readKey) });
+      assert.equal(ok.status, 200);
+      await db.prepare(`UPDATE users SET role = 'requester' WHERE id = 5`).run();
+      const demoted = await fetch(`${base}/api/integrations/sourcing/events`, { headers: auth(readKey) });
+      assert.equal(demoted.status, 403);
+      await db.prepare(`UPDATE users SET role = 'admin', status = 'inactive' WHERE id = 5`).run();
+      const inactive = await fetch(`${base}/api/integrations/sourcing/events`, { headers: auth(readKey) });
+      assert.equal(inactive.status, 403);
     }));
   });
 });

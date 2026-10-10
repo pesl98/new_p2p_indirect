@@ -62,6 +62,21 @@ export function corsOptions(env = process.env, log = console) {
   };
 }
 
+/**
+ * `cors` options chosen per request. A request whose Origin is this very host is same-origin: it
+ * needs no CORS headers and is not worth a log line. Anything else is judged by the allowlist.
+ */
+export function corsDelegate(env = process.env, log = console) {
+  const options = corsOptions(env, log);
+  return (req, cb) => {
+    const origin = req.headers?.origin;
+    let host = '';
+    try { host = origin ? new URL(origin).host : ''; } catch { /* invalid origin */ }
+    if (host && host === req.headers?.host) return cb(null, { origin: false });
+    return cb(null, options);
+  };
+}
+
 /** Reject cross-site state-changing requests (CSRF defence in depth). */
 export function originCheck(env = process.env) {
   const allowed = allowedOrigins(env);

@@ -38,7 +38,21 @@ describe('award outcome', () => {
     for (const supplier of [2, 3, 4]) {
       const view = await loadPortalView(db, await portalCtx(db, ctx, supplier), NOW);
       assert.equal(view.outcome, null);
+      assert.equal(view.event.status, 'closed', 'awarded is internal until the outcome is shared');
     }
+    await publishOutcome(db, CAROL, ctx.eventId, { now: NOW });
+    const shared = await loadPortalView(db, await portalCtx(db, ctx, 2), NOW);
+    assert.equal(shared.event.status, 'awarded');
+  });
+
+  test('an evaluated RFQ reads as closed in the portal', async () => {
+    const db = await seedWorld();
+    const ctx = await seedEvent(db);
+    await evaluate(db, ctx);
+    const status = (await db.prepare(`SELECT status FROM sourcing_events WHERE id = ?`).get(ctx.eventId)).status;
+    assert.equal(status, 'evaluated');
+    const view = await loadPortalView(db, await portalCtx(db, ctx, 2), NOW);
+    assert.equal(view.event.status, 'closed');
   });
 
   test('winner sees own lines and prices; others only "not awarded"; replay mails nobody twice', async () => {

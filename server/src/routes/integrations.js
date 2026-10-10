@@ -13,6 +13,7 @@ import { requireSourcingEnabled } from '../sourcingConfig.js';
 import {
   addSourcingInvitations,
   createSourcingDraft,
+  keyOwner,
   listSourcingEvents,
   readSourcingAward,
   readSourcingEvent
@@ -248,8 +249,24 @@ router.get('/exports/payment-runs', requireMachine('export:read'), async (req, r
   }
 });
 
-const sourcingRead = [requireMachine('sourcing:read'), requireSourcingEnabled];
-const sourcingWrite = [requireMachine('sourcing:write'), requireSourcingEnabled];
+// Read and write keys both stop working when the key's creator is no longer an active buyer or admin.
+async function requireKeyOwner(req, res, next) {
+  try {
+    await keyOwner(req.db, req.integrationKey);
+    return next();
+  } catch (error) {
+    return sendError(res, error);
+  }
+}
+
+const sourcingRead = [requireMachine('sourcing:read'), requireSourcingEnabled, requireKeyOwner];
+const sourcingWrite = [requireMachine('sourcing:write'), requireSourcingEnabled, requireKeyOwner];
+
+async function sendCreated(req, res, work) {
+  const result = await work();
+  if (result.replayed) res.set('Idempotent-Replayed', 'true');
+  res.status(result.status).json(result.body);
+}
 
 router.get('/sourcing/events', ...sourcingRead, async (req, res) => {
   try {
@@ -261,8 +278,9 @@ router.get('/sourcing/events', ...sourcingRead, async (req, res) => {
 
 router.post('/sourcing/events', ...sourcingWrite, async (req, res) => {
   try {
-    await sendIdempotent(req, res, () => createSourcingDraft(req.db, req.integrationKey, req.body, {
-      currency: req.currency
+    await sendCreated(req, res, () => createSourcingDraft(req.db, req.integrationKey, req.body, {
+      currency: req.currency,
+      idempotencyKey: req.headers['idempotency-key']
     }));
   } catch (error) {
     sendError(res, error);
@@ -287,7 +305,9 @@ router.get('/sourcing/events/:number/award', ...sourcingRead, async (req, res) =
 
 router.post('/sourcing/events/:number/invitations', ...sourcingWrite, async (req, res) => {
   try {
-    await sendIdempotent(req, res, () => addSourcingInvitations(req.db, req.integrationKey, req.params.number, req.body));
+    await sendCreated(req, res, () => addSourcingInvitations(req.db, req.integrationKey, req.params.number, req.body, {
+      idempotencyKey: req.headers['idempotency-key']
+    }));
   } catch (error) {
     sendError(res, error);
   }

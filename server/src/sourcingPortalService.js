@@ -81,16 +81,17 @@ async function writeSupplierCompliance(db, ctx, action, details, now) {
  */
 export async function sendPortalReceipt(db, ctx, receipt, options = {}) {
   if (!receipt || receipt.replayed || receipt.late) return null;
-  const event = await db.prepare(`SELECT event_number, title FROM sourcing_events WHERE id = ?`).get(ctx.event_id);
-  const invitation = await db.prepare(`SELECT id, contact_email FROM sourcing_invitations WHERE id = ?`).get(ctx.invitation_id);
-  if (!event || !invitation?.contact_email) return null;
-  const content = bidReceiptMessage(event, receipt);
-  return runMailAfterCommit(() => sendSourcingMails(db, ctx.event_id, [{
-    invitation_id: invitation.id,
-    kind: 'bid_receipt',
-    to: invitation.contact_email,
-    ...content
-  }], options), options);
+  return runMailAfterCommit(async () => {
+    const event = await db.prepare(`SELECT event_number, title FROM sourcing_events WHERE id = ?`).get(ctx.event_id);
+    const invitation = await db.prepare(`SELECT id, contact_email FROM sourcing_invitations WHERE id = ?`).get(ctx.invitation_id);
+    if (!event || !invitation?.contact_email) return null;
+    return sendSourcingMails(db, ctx.event_id, [{
+      invitation_id: invitation.id,
+      kind: 'bid_receipt',
+      to: invitation.contact_email,
+      ...bidReceiptMessage(event, receipt)
+    }], options);
+  }, options);
 }
 
 export async function resolvePortalToken(db, token, req, now = new Date()) {
@@ -244,7 +245,7 @@ export async function loadPortalView(db, ctx, now = new Date()) {
       title: event.title,
       description: event.description,
       deadline_at: event.deadline_at,
-      status: event.status,
+      status: portalStatus(event),
       currency: event.currency,
       qa_enabled: Number(event.qa_enabled) === 1,
       qa_deadline_at: event.qa_deadline_at,
@@ -270,6 +271,16 @@ export async function loadPortalView(db, ctx, now = new Date()) {
  * their own awarded lines and prices; anyone else sees only that the RFQ was awarded elsewhere,
  * never another supplier's name, price, or rank.
  */
+/**
+ * What a supplier may learn from the status. Evaluation and award are internal until the buyer
+ * shares the outcome, so until then they read as plain "closed".
+ */
+function portalStatus(event) {
+  if (event.status === 'evaluated') return 'closed';
+  if (event.status === 'awarded' && !event.outcome_published_at) return 'closed';
+  return event.status;
+}
+
 async function ownOutcome(db, ctx, event) {
   if (event.status !== 'awarded' || !event.outcome_published_at) return null;
   const rows = await db.prepare(`

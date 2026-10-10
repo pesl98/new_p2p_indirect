@@ -165,13 +165,23 @@ export function publicOutboxRow(row) {
   };
 }
 
-async function claimAttempt(db, row, now) {
+/** How long a claimed row stays invisible to other dispatchers, beyond the send timeout. */
+const LEASE_MARGIN_MS = 30_000;
+const DEFAULT_SEND_TIMEOUT_MS = 10_000;
+
+/**
+ * Claim a row with a lease. Exactly one concurrent dispatcher gets changes = 1: the compare
+ * on attempt_count and the move of next_attempt_at into the future are one UPDATE. A dispatcher
+ * that dies mid-send leaves a row that becomes due again when the lease runs out.
+ */
+async function claimAttempt(db, row, now, leaseMs) {
   const attempt = Number(row.attempt_count) + 1;
+  const leaseUntil = new Date(now.getTime() + leaseMs).toISOString();
   const result = await db.prepare(`
     UPDATE webhook_outbox
-    SET attempt_count = ?, last_attempt_at = ?
-    WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?
-  `).run(attempt, now.toISOString(), row.id, now.toISOString());
+    SET attempt_count = attempt_count + 1, last_attempt_at = ?, next_attempt_at = ?
+    WHERE id = ? AND status = 'pending' AND attempt_count = ? AND next_attempt_at <= ?
+  `).run(now.toISOString(), leaseUntil, row.id, Number(row.attempt_count), now.toISOString());
   return Number(result.changes) === 1 ? attempt : 0;
 }
 
@@ -201,7 +211,7 @@ async function markRetry(db, id, attempt, errorMessage, now) {
   return 'pending';
 }
 
-async function postWebhook(row, config, fetchImpl, now) {
+async function postWebhook(row, config, fetchImpl, now, timeoutMs = DEFAULT_SEND_TIMEOUT_MS) {
   assertDeliverableWebhookUrl(config.webhookTargetUrl);
   const bodyObject = envelopeFor(row);
   const rawBody = JSON.stringify(bodyObject);
@@ -218,7 +228,7 @@ async function postWebhook(row, config, fetchImpl, now) {
       'User-Agent': 'ProcureFlow-Webhooks/1'
     },
     body: rawBody,
-    signal: AbortSignal.timeout(10_000)
+    signal: AbortSignal.timeout(Math.max(1, timeoutMs))
   });
   const status = Number(response.status);
   if (response.ok || (status >= 200 && status < 300)) {
@@ -238,6 +248,10 @@ export async function dispatchWebhookOutbox(db, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const limit = Number(options.limit) > 0 ? Number(options.limit) : 25;
   const fetchImpl = options.fetchImpl || fetch;
+  const sendTimeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_SEND_TIMEOUT_MS;
+  // A wall-clock budget: stop starting sends when it is spent, and never let one send outlive it.
+  const budgetMs = Number(options.budgetMs) > 0 ? Number(options.budgetMs) : null;
+  const startedAt = Date.now();
   if (!config.webhookTargetUrl || !config.webhookSigningSecret) {
     return { delivered: 0, failed: 0, dead: 0, skipped: 'not_configured' };
   }
@@ -262,10 +276,16 @@ export async function dispatchWebhookOutbox(db, options = {}) {
 
   const summary = { delivered: 0, failed: 0, dead: 0, skipped: null };
   for (const row of rows || []) {
-    const attempt = await claimAttempt(db, row, now);
+    const remaining = budgetMs == null ? sendTimeoutMs : budgetMs - (Date.now() - startedAt);
+    if (remaining < 250) {
+      summary.skipped = 'time_budget';
+      break;
+    }
+    const timeoutMs = Math.min(sendTimeoutMs, remaining);
+    const attempt = await claimAttempt(db, row, now, timeoutMs + LEASE_MARGIN_MS);
     if (!attempt) continue;
     try {
-      const result = await postWebhook(row, config, fetchImpl, now);
+      const result = await postWebhook(row, config, fetchImpl, now, timeoutMs);
       if (result.ok) {
         await markDelivered(db, row.id, now);
         summary.delivered += 1;

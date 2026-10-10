@@ -1223,10 +1223,13 @@ BEGIN SELECT RAISE(ABORT, 'sourcing bid after deadline'); END;
 
 
 -- External id for an RFQ draft created by a machine client (idempotent create).
+-- Scoped per API key, so two integrations can reuse the same id.
 CREATE TABLE IF NOT EXISTS integration_sourcing_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  api_key_id INTEGER NOT NULL,
   event_id INTEGER NOT NULL UNIQUE,
-  external_id TEXT NOT NULL UNIQUE,
+  external_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  UNIQUE (api_key_id, external_id),
   FOREIGN KEY (event_id) REFERENCES sourcing_events(id)
 );

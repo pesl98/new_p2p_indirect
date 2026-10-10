@@ -487,24 +487,26 @@ export async function publishOutcome(db, actor, id, options = {}) {
     const again = await loadEventRow(db, id);
     return { replayed: true, published_at: again?.outcome_published_at || null, notified: 0 };
   }
-  const bidders = await db.prepare(`
-    SELECT i.id, i.supplier_id, i.contact_email,
-           EXISTS (
-             SELECT 1 FROM sourcing_award_lines al
-             JOIN sourcing_awards a ON a.id = al.award_id AND a.status = 'approved'
-             WHERE a.event_id = i.event_id AND al.supplier_id = i.supplier_id
-           ) AS awarded
-    FROM sourcing_invitations i
-    JOIN sourcing_bids b ON b.invitation_id = i.id
-    WHERE i.event_id = ? AND i.revoked_at IS NULL
-    ORDER BY i.id ASC
-  `).all(event.id);
-  const messages = bidders.map((row) => ({
-    invitation_id: row.id,
-    kind: 'award_outcome',
-    to: row.contact_email,
-    ...awardOutcomeMessage(event, Number(row.awarded) === 1)
-  }));
-  await runMailAfterCommit(() => sendSourcingMails(db, event.id, messages, { ...options, now: nowDate }), options);
-  return { replayed: false, published_at: now, notified: messages.length };
+  const sent = await runMailAfterCommit(async () => {
+    const bidders = await db.prepare(`
+      SELECT i.id, i.supplier_id, i.contact_email,
+             EXISTS (
+               SELECT 1 FROM sourcing_award_lines al
+               JOIN sourcing_awards a ON a.id = al.award_id AND a.status = 'approved'
+               WHERE a.event_id = i.event_id AND al.supplier_id = i.supplier_id
+             ) AS awarded
+      FROM sourcing_invitations i
+      JOIN sourcing_bids b ON b.invitation_id = i.id
+      WHERE i.event_id = ? AND i.revoked_at IS NULL
+      ORDER BY i.id ASC
+    `).all(event.id);
+    const messages = bidders.map((row) => ({
+      invitation_id: row.id,
+      kind: 'award_outcome',
+      to: row.contact_email,
+      ...awardOutcomeMessage(event, Number(row.awarded) === 1)
+    }));
+    return sendSourcingMails(db, event.id, messages, { ...options, now: nowDate });
+  }, options);
+  return { replayed: false, published_at: now, notified: Array.isArray(sent) ? sent.length : null };
 }

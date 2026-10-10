@@ -1541,7 +1541,23 @@ export async function insertDemoData(rootDb) {
   await writer.flush();
 }
 
+/**
+ * The seed drops every application table. Refuse to run it where a production database may be
+ * attached, unless the operator says --force.
+ */
+export function seedRefusal(env = process.env, argv = process.argv) {
+  const production = env.NODE_ENV === 'production' || env.VERCEL_ENV === 'production';
+  if (!production || argv.includes('--force')) return null;
+  return 'Refusing to seed: NODE_ENV or VERCEL_ENV is production, and the seed drops every table. '
+    + 'Pass --force only if you are sure this is not a customer database.';
+}
+
 async function destructiveSeed() {
+  const refusal = seedRefusal();
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
   console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
   console.warn('Do not run this against a live customer database.');
   console.warn('Real tenant: npm run db:migrate && npm run bootstrap-org && npm run bootstrap-admin && npm run smoke');

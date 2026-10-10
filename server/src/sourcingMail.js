@@ -35,10 +35,20 @@ export function shouldAwaitMail(options = {}) {
 }
 
 /** Run mail work after the response on Vercel, inline when nothing is sent over the network. */
-export function runMailAfterCommit(work, options = {}) {
-  if (shouldAwaitMail(options)) return work();
-  scheduleBackground(work, options);
-  return Promise.resolve(null);
+export async function runMailAfterCommit(work, options = {}) {
+  // The business write is already committed, so nothing in here (reading recipients, building
+  // messages, sending) may turn into an error for the caller.
+  const guarded = async () => {
+    try {
+      return await work();
+    } catch (error) {
+      console.error('mail: not sent', error?.code || error?.name || 'mail_error');
+      return null;
+    }
+  };
+  if (shouldAwaitMail(options)) return guarded();
+  scheduleBackground(guarded, options);
+  return null;
 }
 
 export async function recordMail(db, eventId, rows, now = new Date()) {
@@ -58,8 +68,9 @@ export async function recordMail(db, eventId, rows, now = new Date()) {
  * never exceptions. `messages`: { invitation_id, kind, to, subject, text }.
  */
 export async function sendSourcingMails(db, eventId, messages, options = {}) {
-  const results = [];
-  for (const message of messages) {
+  // All messages go out in parallel, and each delivery record is written as soon as its own
+  // send settles, so a function that is cut off mid-batch still has a log of what happened.
+  return Promise.all(messages.map(async (message) => {
     let result;
     try {
       result = await sendMail({
@@ -72,20 +83,20 @@ export async function sendSourcingMails(db, eventId, messages, options = {}) {
       console.error('mail: send failed', error?.code || error?.name || 'mail_error');
       result = { status: 'failed', provider: 'unknown' };
     }
-    results.push({
+    const row = {
       invitation_id: message.invitation_id ?? null,
       kind: message.kind,
       status: mailStatusOf(result),
       provider: result?.provider || 'none'
-    });
-  }
-  try {
-    await recordMail(db, eventId, results, options.now);
-  } catch (error) {
-    // The mail went out (or failed) either way; a missing log row must not surface as an error.
-    console.error('mail: delivery record failed', error?.code || error?.name || 'record_error');
-  }
-  return results;
+    };
+    try {
+      await recordMail(db, eventId, [row], options.now);
+    } catch (error) {
+      // The mail went out (or failed) either way; a missing log row must not surface as an error.
+      console.error('mail: delivery record failed', error?.code || error?.name || 'record_error');
+    }
+    return row;
+  }));
 }
 
 /** Admin overview for the Integraties screen. No addresses, no text. */

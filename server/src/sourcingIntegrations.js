@@ -9,7 +9,9 @@
 
 import { IntegrationError } from './apiKeys.js';
 import { loadMachineBids } from './sourcingBidReadModel.js';
-import { createEvent, getEvent, updateEvent } from './sourcingService.js';
+import { insertIdempotency, prepareIdempotency, updateIdempotencyBody } from './integrationConnectors.js';
+import { isUniqueConstraint } from './masterData.js';
+import { addDraftInvitations, createEvent, getEvent, readInvitations } from './sourcingService.js';
 
 const EVENT_STATUSES = ['draft', 'published', 'closed', 'evaluated', 'awarded', 'cancelled'];
 
@@ -17,14 +19,18 @@ function fail(message, status = 400, code = 'integration_error') {
   throw new IntegrationError(message, status, code);
 }
 
-async function keyOwner(db, apiKey) {
+/**
+ * The person a key acts for: its creator, who must still be an active buyer or admin. Reads and
+ * writes both check this, so demoting or deactivating the creator switches the key off.
+ */
+export async function keyOwner(db, apiKey) {
   const user = await db.prepare(`
     SELECT id, name, role, department_id, status FROM users WHERE id = ?
   `).get(apiKey.created_by_user_id);
   if (!user || user.status !== 'active' || (user.role !== 'procurement' && user.role !== 'admin')) {
-    fail('The API key owner cannot create RFQs.', 403, 'key_owner_not_buyer');
+    fail('The API key owner is no longer allowed to use sourcing.', 403, 'key_owner_not_buyer');
   }
-  return user;
+  return { ...user, name: `${user.name} (API key #${apiKey.id})`, api_key_id: apiKey.id };
 }
 
 async function loadByNumber(db, number) {
@@ -107,7 +113,8 @@ export async function readSourcingEvent(db, number, now = new Date()) {
 export async function readSourcingAward(db, number) {
   const id = await loadByNumber(db, number);
   const award = await db.prepare(`
-    SELECT id, status, proposed_at FROM sourcing_awards WHERE event_id = ? ORDER BY id DESC LIMIT 1
+    SELECT id, status, proposed_at FROM sourcing_awards
+    WHERE event_id = ? AND status = 'approved' ORDER BY id DESC LIMIT 1
   `).get(id);
   if (!award) return { award: null };
   const lines = await db.prepare(`
@@ -134,57 +141,115 @@ async function supplierIdForExternal(db, externalId) {
   return row.entity_id;
 }
 
+/** Map supplier external ids to local ids with one query. */
+async function supplierIdsForExternal(db, items) {
+  const wanted = (Array.isArray(items) ? items : []).map((item) => String(item?.supplier_external_id ?? ''));
+  if (wanted.length > 20) fail('An RFQ can invite at most 20 suppliers.', 400, 'too_many_invitations');
+  if (!wanted.length) return [];
+  const rows = await db.prepare(`
+    SELECT external_id, entity_id FROM integration_entity_links
+    WHERE entity_type = 'supplier' AND external_id IN (${wanted.map(() => '?').join(', ')})
+  `).all(...wanted);
+  const byExternal = new Map(rows.map((row) => [row.external_id, Number(row.entity_id)]));
+  return wanted.map((externalId) => {
+    if (!byExternal.has(externalId)) fail('Supplier external id is unknown.', 400, 'supplier_not_found');
+    return { supplier_id: byExternal.get(externalId) };
+  });
+}
+
 function cleanExternalId(value) {
   const text = String(value ?? '').trim();
   if (!text || text.length > 200) fail('external_id is required (max 200 characters).', 400, 'external_id_required');
   return text;
 }
 
-export async function createSourcingDraft(db, apiKey, body, { currency } = {}) {
-  const input = body && typeof body === 'object' ? body : {};
-  const externalId = cleanExternalId(input.external_id);
-  const existing = await db.prepare(`
+function conflictOf(error, table) {
+  return isUniqueConstraint(error) && new RegExp(table, 'i').test(String(error?.message || ''));
+}
+
+async function existingDraft(db, apiKey, externalId) {
+  return db.prepare(`
     SELECT e.event_number FROM integration_sourcing_links l
-    JOIN sourcing_events e ON e.id = l.event_id WHERE l.external_id = ?
-  `).get(externalId);
-  if (existing) return { status: 200, body: await readSourcingEvent(db, existing.event_number) };
+    JOIN sourcing_events e ON e.id = l.event_id
+    WHERE l.api_key_id = ? AND l.external_id = ?
+  `).get(apiKey.id, externalId);
+}
+
+/**
+ * Create a draft RFQ for a machine client. Everything that can be read is read before the
+ * transaction. The RFQ, its link row and the idempotency row are written in the RFQ creation's own
+ * BEGIN IMMEDIATE transaction (with its busy and number retry). The full response is built after
+ * commit and stored for replays.
+ */
+export async function createSourcingDraft(db, apiKey, body, { currency, idempotencyKey = null } = {}) {
+  const input = body && typeof body === 'object' ? body : {};
+  const idem = await prepareIdempotency(db, apiKey, idempotencyKey, input);
+  if (idem.replay) return { ...idem.replay, replayed: true };
+  const externalId = cleanExternalId(input.external_id);
+  const known = await existingDraft(db, apiKey, externalId);
+  if (known) return { status: 200, body: await readSourcingEvent(db, known.event_number) };
   for (const forbidden of ['status', 'published_at', 'evaluators', 'source_requisition_id']) {
     if (input[forbidden] != null) fail(`${forbidden} cannot be set through the API.`, 400, 'field_not_allowed');
   }
   const owner = await keyOwner(db, apiKey);
-  const invitations = [];
-  for (const item of Array.isArray(input.invitations) ? input.invitations : []) {
-    invitations.push({ supplier_id: await supplierIdForExternal(db, item?.supplier_external_id) });
+  const invitations = await supplierIdsForExternal(db, input.invitations);
+  let eventNumber;
+  try {
+    await createEvent(
+      db,
+      owner,
+      { ...input, kind: 'rfq', invitations, evaluators: undefined, external_id: undefined },
+      {
+        currency,
+        idOnly: true,
+        afterInsert: async (eventId, number) => {
+          eventNumber = number;
+          await db.prepare(`
+            INSERT INTO integration_sourcing_links (api_key_id, event_id, external_id, created_at)
+            VALUES (?, ?, ?, ?)
+          `).run(apiKey.id, eventId, externalId, new Date().toISOString());
+          await insertIdempotency(db, apiKey, idem, 201, { event_number: number, external_id: externalId, status: 'draft' });
+        }
+      }
+    );
+  } catch (error) {
+    // A parallel request with the same external id or Idempotency-Key won the race.
+    if (conflictOf(error, 'integration_sourcing_links')) {
+      const winner = await existingDraft(db, apiKey, externalId);
+      if (winner) return { status: 200, body: await readSourcingEvent(db, winner.event_number) };
+    }
+    if (conflictOf(error, 'integration_idempotency')) {
+      const again = await prepareIdempotency(db, apiKey, idempotencyKey, input);
+      if (again.replay) return { ...again.replay, replayed: true };
+    }
+    throw error;
   }
-  const created = await createEvent(
-    db,
-    owner,
-    { ...input, kind: 'rfq', invitations, evaluators: undefined, external_id: undefined },
-    { currency }
-  );
-  await db.prepare(`
-    INSERT INTO integration_sourcing_links (event_id, external_id, created_at) VALUES (?, ?, ?)
-  `).run(created.id, externalId, new Date().toISOString());
-  return { status: 201, body: await readSourcingEvent(db, created.event_number) };
+  const view = await readSourcingEvent(db, eventNumber);
+  await updateIdempotencyBody(db, apiKey, idem, view);
+  return { status: 201, body: view };
 }
 
-export async function addSourcingInvitations(db, apiKey, number, body) {
+export async function addSourcingInvitations(db, apiKey, number, body, { idempotencyKey = null } = {}) {
+  const input = body && typeof body === 'object' ? { ...body, event_number: String(number) } : { event_number: String(number) };
+  const idem = await prepareIdempotency(db, apiKey, idempotencyKey, input);
+  if (idem.replay) return { ...idem.replay, replayed: true };
   const id = await loadByNumber(db, number);
   const owner = await keyOwner(db, apiKey);
-  const event = await getEvent(db, id);
-  if (event.status !== 'draft') fail('Invitees can only be added to a draft RFQ.', 409, 'event_not_draft');
   const wanted = Array.isArray(body?.invitations) ? body.invitations : [];
   if (!wanted.length) fail('invitations is required.', 400, 'invitations_required');
-  const rows = event.invitations.map((item) => ({
-    supplier_id: item.supplier_id,
-    contact_name: item.contact_name,
-    contact_email: item.contact_email
-  }));
-  for (const item of wanted) {
-    const supplierId = await supplierIdForExternal(db, item?.supplier_external_id);
-    if (!rows.some((row) => Number(row.supplier_id) === Number(supplierId))) rows.push({ supplier_id: supplierId });
+  const rows = await readInvitations(db, await supplierIdsForExternal(db, wanted));
+  try {
+    await addDraftInvitations(db, owner, id, rows, {
+      afterWrite: (eventNumber) => insertIdempotency(db, apiKey, idem, 200, { event_number: eventNumber, status: 'draft' })
+    });
+  } catch (error) {
+    if (conflictOf(error, 'integration_idempotency')) {
+      const again = await prepareIdempotency(db, apiKey, idempotencyKey, input);
+      if (again.replay) return { ...again.replay, replayed: true };
+    }
+    throw error;
   }
-  // Updating as the key owner keeps the normal owner rules; an admin can edit any draft.
-  await updateEvent(db, owner, id, { row_version: event.row_version, invitations: rows });
-  return { status: 200, body: await readSourcingEvent(db, number) };
+  const view = await readSourcingEvent(db, number);
+  await updateIdempotencyBody(db, apiKey, idem, view);
+  return { status: 200, body: view };
 }

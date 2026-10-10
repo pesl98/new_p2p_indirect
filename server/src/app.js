@@ -39,8 +39,9 @@ import { mountConfigErrorApp, sendConfigError } from './configError.js';
 import { loadCurrencyConfig } from './currencyConfig.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
 import { requireApiSession } from './requestActor.js';
+import { warnIfBadAppBaseUrl } from './sourcingConfig.js';
 import tickRouter from './routes/tick.js';
-import { corsOptions, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
+import { corsDelegate, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,6 +106,7 @@ export function createApp(options = {}) {
   const authConfig = options.authConfig || loadAuthConfig();
   const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   const runtimeEnv = options.env || process.env;
+  warnIfBadAppBaseUrl(runtimeEnv);
   try {
     warnIfInsecureSessionSecret(authConfig, runtimeEnv);
   } catch (error) {
@@ -143,7 +145,7 @@ export function createApp(options = {}) {
   app.use(attachSession);
   // Portal is bearer-only and must not inherit credentialed CORS.
   app.use('/api/portal', options.portalRateLimit || rateLimit({ max: 300 }), portalRouter);
-  app.use(cors(corsOptions(runtimeEnv)));
+  app.use(cors(corsDelegate(runtimeEnv)));
   app.use('/api', originCheck(runtimeEnv));
   app.use(requireApiSession);
 
