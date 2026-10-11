@@ -256,6 +256,43 @@ describe('compliance report logic', () => {
     assert.deepEqual(codesFor('PR-V2-BAD'), ['wrong_approver']);
   });
 
+  test('a chain built by #59 (requester excluded, no policy_version) is not a false wrong_approver', async () => {
+    const db = await baseDb();
+    const { buildApprovalSteps } = await import('./approvalPolicy.js');
+    // Requisitions by a department head (Bob), a procurement user (Carol) and a finance user (David),
+    // above 10.000 so the chain has three steps. Chains are built the way 2d50c01 built them:
+    // requester excluded, and no policy_version written.
+    let id = 0;
+    for (const requester of [2, 3, 4]) {
+      id += 1;
+      await db.exec(`
+        INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, priority)
+        VALUES (${id}, 'PR-59-${id}', ${requester}, 1, 'approved', 2000000, 'Low')
+      `);
+      const steps = await buildApprovalSteps({ totalAmount: 2000000, departmentId: 1, db, excludeUserIds: [requester] });
+      for (const step of steps) {
+        await db.prepare(`
+          INSERT INTO approval_requests (requisition_id, approver_id, step_order, status) VALUES (?, ?, ?, 'approved')
+        `).run(id, step.approver_id, step.step_order);
+      }
+    }
+    // A chain built before #59 (requester not excluded) is still accepted.
+    await db.exec(`
+      INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, priority)
+      VALUES (4, 'PR-OLD-4', 2, 1, 'approved', 5000, 'Low');
+      INSERT INTO approval_requests (requisition_id, approver_id, step_order, status) VALUES (4, 2, 1, 'approved');
+    `);
+    // A NULL-version step that matches neither rule is still flagged.
+    await db.exec(`
+      INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, priority)
+      VALUES (5, 'PR-BAD-5', 1, 1, 'approved', 5000, 'Low');
+      INSERT INTO approval_requests (requisition_id, approver_id, step_order, status) VALUES (5, 5, 1, 'approved');
+    `);
+    const report = await queryApprovalCompliance(db);
+    const wrong = report.findings.filter((row) => row.code === 'wrong_approver').map((row) => row.document_number);
+    assert.deepEqual(wrong, ['PR-BAD-5'], JSON.stringify(report.findings));
+  });
+
   test('new chains record the policy version', async () => {
     const db = await baseDb();
     await db.exec(`

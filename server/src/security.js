@@ -37,6 +37,13 @@ export function allowedOrigins(env = process.env) {
   const allowed = new Set(parseOriginAllowlist(env));
   const base = env.APP_BASE_URL ? originOf(env.APP_BASE_URL) : null;
   if (base) allowed.add(base);
+  // The Vite dev server runs on another port; with APP_BASE_URL set the allowlist is no longer empty.
+  if (env.NODE_ENV === 'development') {
+    for (const port of [3000, 5173]) {
+      allowed.add(`http://localhost:${port}`);
+      allowed.add(`http://127.0.0.1:${port}`);
+    }
+  }
   return allowed;
 }
 

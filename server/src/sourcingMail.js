@@ -22,6 +22,24 @@ export const MAIL_KINDS = Object.freeze([
   'award_outcome'
 ]);
 
+/** At most this many messages are in flight at once, so one RFQ cannot open a flood of SMTP connections. */
+export const MAIL_CONCURRENCY = 3;
+
+/** Run `fn` over `items` with at most `limit` running at once; results keep the input order. */
+export async function mapWithLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 export function mailStatusOf(result) {
   return result?.status === 'sent' ? 'sent' : result?.status === 'failed' ? 'failed' : 'skipped';
 }
@@ -70,7 +88,7 @@ export async function recordMail(db, eventId, rows, now = new Date()) {
 export async function sendSourcingMails(db, eventId, messages, options = {}) {
   // All messages go out in parallel, and each delivery record is written as soon as its own
   // send settles, so a function that is cut off mid-batch still has a log of what happened.
-  return Promise.all(messages.map(async (message) => {
+  return mapWithLimit(messages, MAIL_CONCURRENCY, async (message) => {
     let result;
     try {
       result = await sendMail({
@@ -96,7 +114,7 @@ export async function sendSourcingMails(db, eventId, messages, options = {}) {
       console.error('mail: delivery record failed', error?.code || error?.name || 'record_error');
     }
     return row;
-  }));
+  });
 }
 
 /** Admin overview for the Integraties screen. No addresses, no text. */

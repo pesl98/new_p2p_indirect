@@ -74,7 +74,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
-| 8d | 2026-10-10 | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | in review |
+| 8d | 2026-10-10 | Hardening: email, integrations, tick, demo seed, docs | [#71](https://github.com/pesl98/new_p2p_indirect/pull/71) | Sprint 8d — Hardening, email, integrations, demo seed, and docs | `fcf7b9bab801a735823092c631123497921cf388` | merged |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -539,11 +539,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Sourcing is ready for one customer. Invites go out by email, with copy-link as the fallback. Integrations, an optional tick, the demo seed, and the docs land here.
 
-**PR:**
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/71 (#71)
 
-**Merge SHA:**
+**Merge SHA:** `fcf7b9bab801a735823092c631123497921cf388` (squash-merged).
 
-**Status:** in review.
+**Status:** merged.
 
 ### Done when
 
@@ -571,5 +571,10 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **S1** The API award read returns approved awards only. **S2** The portal reads `evaluated` and an unshared `awarded` as `closed`. **S3** Read keys check the creator (active procurement or admin) like write keys. **S4** `npm run seed` refuses `NODE_ENV=production` or `VERCEL_ENV=production` without `--force`.
 - **S5 Tick.** About 20 s in total: at most 20 closes in about 8 s, each in a busy retry, one failing RFQ is reported in `close_errors` and does not stop the rest, then deliveries until the budget is spent, each send timing out inside what is left (5 s cap).
 - **Nits.** Background mail is sent in parallel and each result is logged as it settles (invitations also update `delivery_status` per row). `runMailAfterCommit` swallows and logs any failure while preparing mail after a commit, so a recipient read can no longer turn a committed write into an error. Key actions are audited with the key id (`API key #n` in the actor name, `api_key_id` in the compliance details). `external_id` is unique per API key (`integration_sourcing_links (api_key_id, external_id)`; this table was added in the unmerged 8d commit, so it was changed in place). A schemeless `APP_BASE_URL` warns at startup. Same-origin requests are not logged as denied CORS origins (`corsDelegate`).
-- **Follow-ups from the #59 review.** (a) `approval_requests.policy_version` (NULL = version 1, 2 = requesters, award owner and proposer excluded) is written by `insertApprovalChain` and the award chain insert. The compliance report builds the expected chain by the chain's own version, and no longer adds `wrong_approver` to a step already flagged `self_approval`. (b) The legacy convert-to-PO route uses `BEGIN IMMEDIATE` with busy retry (409 `busy_snapshot`, 503 with `Retry-After`), and re-checks that the requisition is still approved inside the transaction. (c) Re-routing a step around the requester first avoids everyone already on the chain, and falls back to avoiding only the requester when nobody else is left. (d) Fixtures derive the fiscal year and document-number years from the clock. The whole suite also passes with the clock set to January 2027 (checked with a Date shim; 750 tests).
+- **Follow-ups from the #59 review.** (a) `approval_requests.policy_version` (2 = requesters, award owner and proposer excluded; NULL = unversioned, which is either a pre-#59 chain or a chain built by #59, 2d50c01, that already excluded the requester) is written by `insertApprovalChain` and the award chain insert. The compliance report judges a version 2 chain by today's rule, accepts either the old or the new rule for a NULL chain (flagging it only when it matches neither), and no longer adds `wrong_approver` to a step already flagged `self_approval`. (b) The legacy convert-to-PO route uses `BEGIN IMMEDIATE` with busy retry (409 `busy_snapshot`, 503 with `Retry-After`), and re-checks that the requisition is still approved inside the transaction. (c) Re-routing a step around the requester first avoids everyone already on the chain, and falls back to avoiding only the requester when nobody else is left. (d) Fixtures derive the fiscal year and document-number years from the clock. The whole suite also passes with the clock set to January 2027 (checked with a Date shim; 750 tests).
+
+### Follow-up to #71
+
+- **Compliance false positives.** NULL `policy_version` was read as "built before requesters were excluded", but chains built by #59 (2d50c01) already excluded the requester and carry no version, so they got a high-severity `wrong_approver` (repro: requisitions by a department head, a procurement user and a finance user). For NULL, a step is now flagged only when the stored approver matches neither the old rule nor the new rule. Test: chains built with 2d50c01's rule.
+- **Smaller.** The outbox lease is computed from the time of each claim, not the batch start. The seed also refuses when `TURSO_DATABASE_URL` or `TURSO_AUTH_TOKEN` is set, unless `--force`. At most 3 SMTP sends run at once. Demo seed chains get `policy_version = 2`. With `NODE_ENV=development` the Vite dev origins (ports 3000 and 5173) are allowed next to `APP_BASE_URL`. `external_id` is unique per API key, so a rotated key re-creates its drafts.
 

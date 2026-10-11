@@ -12,7 +12,7 @@ import { LineTypeError, normalizeLineType, resolveServiceBasis } from './lineTyp
 import { isUniqueConstraint } from './masterData.js';
 import { lineTotalCents, requireIntegerCents } from './money.js';
 import { loadMailConfig, mailIsConfigured, sendMail } from './mail/index.js';
-import { qaAnswerMessage, recordMail, runMailAfterCommit, sendSourcingMails } from './sourcingMail.js';
+import { MAIL_CONCURRENCY, mapWithLimit, qaAnswerMessage, recordMail, runMailAfterCommit, sendSourcingMails } from './sourcingMail.js';
 import {
   MAX_EVENT_FILES,
   MAX_EVENT_FILE_BYTES,
@@ -1565,7 +1565,7 @@ async function deliverInvitationMail(db, event, minted, options) {
   // Sent in parallel. Each result is recorded the moment its own send settles, so a function that
   // is cut off mid-batch still leaves a true log and true per-invitation delivery states.
   const provider = loadMailConfig(options.env).provider;
-  await Promise.all(minted.map(async (row) => {
+  await mapWithLimit(minted, MAIL_CONCURRENCY, async (row) => {
     let result;
     try {
       result = await sendMail({
@@ -1597,7 +1597,7 @@ async function deliverInvitationMail(db, event, minted, options) {
     } catch (error) {
       console.error('mail: delivery record failed', error?.code || error?.name || 'record_error');
     }
-  }));
+  });
 }
 
 export async function extendDeadline(db, actor, id, input = {}, options = {}) {

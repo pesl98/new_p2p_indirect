@@ -192,6 +192,9 @@ describe('seed guard, APP_BASE_URL and same-origin logging', () => {
     assert.match(seedRefusal({ NODE_ENV: 'production' }, ['node', 'seed.js']), /Refusing/);
     assert.match(seedRefusal({ VERCEL_ENV: 'production' }, ['node', 'seed.js']), /Refusing/);
     assert.equal(seedRefusal({ NODE_ENV: 'production' }, ['node', 'seed.js', '--force']), null);
+    assert.match(seedRefusal({ TURSO_DATABASE_URL: 'libsql://x.turso.io' }, ['node', 'seed.js']), /TURSO/);
+    assert.match(seedRefusal({ TURSO_AUTH_TOKEN: 'tok' }, ['node', 'seed.js']), /TURSO/);
+    assert.equal(seedRefusal({ TURSO_DATABASE_URL: 'libsql://x.turso.io' }, ['node', 'seed.js', '--force']), null);
     assert.equal(seedRefusal({ NODE_ENV: 'development' }, ['node', 'seed.js']), null);
     assert.equal(seedRefusal({ VERCEL_ENV: 'preview' }, ['node', 'seed.js']), null);
   });
@@ -219,5 +222,52 @@ describe('seed guard, APP_BASE_URL and same-origin logging', () => {
     assert.equal(await ask('https://evil.example', 'procure.example'), false);
     assert.equal(await ask('https://evil.example', 'procure.example'), false);
     assert.equal(lines.length, 1, 'a foreign origin is logged once');
+  });
+});
+
+describe('dev CORS, mail concurrency and outbox leases', () => {
+  test('NODE_ENV=development allows the Vite dev origin even with APP_BASE_URL set', async () => {
+    const options = corsOptions({ NODE_ENV: 'development', APP_BASE_URL: 'https://procure.example' }, { warn() {} });
+    const decide = (origin) => new Promise((resolve) => options.origin(origin, (_e, ok) => resolve(ok)));
+    assert.equal(await decide('http://localhost:3000'), true);
+    assert.equal(await decide('http://localhost:5173'), true);
+    assert.equal(await decide('https://evil.example'), false);
+    const prod = corsOptions({ NODE_ENV: 'production', APP_BASE_URL: 'https://procure.example' }, { warn() {} });
+    assert.equal(await new Promise((resolve) => prod.origin('http://localhost:3000', (_e, ok) => resolve(ok))), false);
+  });
+
+  test('mapWithLimit never runs more than the limit at once and keeps order', async () => {
+    const { mapWithLimit, MAIL_CONCURRENCY } = await import('./sourcingMail.js');
+    assert.equal(MAIL_CONCURRENCY, 3);
+    let active = 0;
+    let peak = 0;
+    const out = await mapWithLimit([1, 2, 3, 4, 5, 6, 7, 8], MAIL_CONCURRENCY, async (n) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 20));
+      active -= 1;
+      return n * 2;
+    });
+    assert.deepEqual(out, [2, 4, 6, 8, 10, 12, 14, 16]);
+    assert.equal(peak, 3);
+  });
+
+  test('a lease starts when the row is claimed, not when the batch started', async () => {
+    const { dispatchWebhookOutbox, enqueueWebhook } = await import('./webhookOutbox.js');
+    const db = await dueWorld();
+    const now = new Date('2026-10-08T12:00:00Z');
+    await enqueueWebhook(db, { eventType: 'x.one', entityType: 'e', entityId: 1, data: {}, now });
+    await enqueueWebhook(db, { eventType: 'x.two', entityType: 'e', entityId: 2, data: {}, now });
+    await dispatchWebhookOutbox(db, {
+      now,
+      config: { webhookTargetUrl: 'https://erp.example/hook', webhookSigningSecret: 'secret', ready: true },
+      fetchImpl: async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return { ok: true, status: 200 };
+      }
+    });
+    const rows = await db.prepare(`SELECT next_attempt_at FROM webhook_outbox ORDER BY id`).all();
+    const gap = Date.parse(rows[1].next_attempt_at) - Date.parse(rows[0].next_attempt_at);
+    assert.ok(gap >= 250, `the second lease was computed from the batch start (gap ${gap} ms)`);
   });
 });

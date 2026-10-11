@@ -3,6 +3,7 @@ import { currentFiscalYear } from './fiscalYear.js';
 
 import { applySchema, getDb } from './db.js';
 import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
+import { APPROVAL_POLICY_VERSION } from './approvalPolicy.js';
 import { seedSourcingDemo } from './sourcingDemoSeed.js';
 import { measuredAmountCents } from './measuredQty.js';
 import { formatMoney } from './money.js';
@@ -335,8 +336,8 @@ export async function insertDemoData(rootDb) {
 
   // 7. Approval Requests
   const insertApproval = db.prepare(`
-    INSERT INTO approval_requests (requisition_id, approver_id, step_order, status, comments, decided_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO approval_requests (requisition_id, approver_id, step_order, status, comments, decided_at, policy_version)
+    VALUES (?, ?, ?, ?, ?, ?, ${APPROVAL_POLICY_VERSION})
   `);
   await insertApproval.run(1, 2, 1, 'approved', 'Approved. Within Q3 ergonomics allocated budget.', '2026-08-28 14:20:00');
   await insertApproval.run(1, 3, 2, 'approved', 'Sourcing confirmed Aeron chairs on standard contract.', '2026-08-28 16:05:00');
@@ -1547,9 +1548,10 @@ export async function insertDemoData(rootDb) {
  */
 export function seedRefusal(env = process.env, argv = process.argv) {
   const production = env.NODE_ENV === 'production' || env.VERCEL_ENV === 'production';
-  if (!production || argv.includes('--force')) return null;
-  return 'Refusing to seed: NODE_ENV or VERCEL_ENV is production, and the seed drops every table. '
-    + 'Pass --force only if you are sure this is not a customer database.';
+  const remote = Boolean(String(env.TURSO_DATABASE_URL || '').trim() || String(env.TURSO_AUTH_TOKEN || '').trim());
+  if ((!production && !remote) || argv.includes('--force')) return null;
+  return `Refusing to seed: ${production ? 'NODE_ENV or VERCEL_ENV is production' : 'TURSO_DATABASE_URL or TURSO_AUTH_TOKEN is set'}, `
+    + 'and the seed drops every table. Pass --force only if you are sure this is not a customer database.';
 }
 
 async function destructiveSeed() {

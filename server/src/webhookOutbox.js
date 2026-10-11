@@ -282,20 +282,24 @@ export async function dispatchWebhookOutbox(db, options = {}) {
       break;
     }
     const timeoutMs = Math.min(sendTimeoutMs, remaining);
-    const attempt = await claimAttempt(db, row, now, timeoutMs + LEASE_MARGIN_MS);
+    // The lease starts when the row is claimed, not when the batch started: a slow earlier send
+    // must not leave later rows with leases that are already (nearly) over.
+    const claimedAt = new Date(now.getTime() + (Date.now() - startedAt));
+    const attempt = await claimAttempt(db, row, claimedAt, timeoutMs + LEASE_MARGIN_MS);
     if (!attempt) continue;
     try {
-      const result = await postWebhook(row, config, fetchImpl, now, timeoutMs);
+      const result = await postWebhook(row, config, fetchImpl, claimedAt, timeoutMs);
+      const settledAt = new Date(now.getTime() + (Date.now() - startedAt));
       if (result.ok) {
-        await markDelivered(db, row.id, now);
+        await markDelivered(db, row.id, settledAt);
         summary.delivered += 1;
       } else {
-        const state = await markRetry(db, row.id, attempt, result.error || 'delivery failed', now);
+        const state = await markRetry(db, row.id, attempt, result.error || 'delivery failed', settledAt);
         if (state === 'dead') summary.dead += 1;
         else summary.failed += 1;
       }
     } catch (error) {
-      const state = await markRetry(db, row.id, attempt, String(error.message || error).slice(0, 300), now);
+      const state = await markRetry(db, row.id, attempt, String(error.message || error).slice(0, 300), new Date(now.getTime() + (Date.now() - startedAt)));
       if (state === 'dead') summary.dead += 1;
       else summary.failed += 1;
     }

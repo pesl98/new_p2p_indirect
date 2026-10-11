@@ -320,23 +320,36 @@ export async function queryApprovalCompliance(db) {
   for (const pr of requisitions || []) {
     let steps;
     const awardInfo = await awardExclusionsForRequisition(db, pr.id);
-    // Judge a chain by the rule it was built under. A chain from before policy version 2 (NULL)
-    // was never routed around its requester, so today's exclusions would call it wrong.
+    // Judge a chain by the rule it was built under. policy_version 2 chains follow today's rule.
+    // A NULL version is ambiguous: chains built before #59 routed to the requester, but chains built
+    // by #59 (2d50c01) already excluded the requester and carry no version. For NULL, a step is
+    // wrong only if it matches neither the old rule nor the new one.
     const versionRow = await db.prepare(`
       SELECT MIN(COALESCE(policy_version, 1)) AS version FROM approval_requests
       WHERE requisition_id = ? AND status != 'skipped'
     `).get(pr.id);
     const chainVersion = Number(versionRow?.version || 1);
+    let legacy = null;
     try {
       steps = await buildApprovalSteps({
         totalAmount: pr.total_amount,
         departmentId: pr.department_id,
         db,
-        // Version 2: requesters are never routed their own requisition; awards also exclude owner/proposer.
-        excludeUserIds: chainVersion >= APPROVAL_POLICY_VERSION
-          ? [pr.requester_id, ...(awardInfo?.excludeUserIds || [])]
-          : []
+        // Requesters are never routed their own requisition; awards also exclude owner/proposer.
+        excludeUserIds: [pr.requester_id, ...(awardInfo?.excludeUserIds || [])]
       });
+      if (chainVersion < APPROVAL_POLICY_VERSION) {
+        try {
+          legacy = new Map((await buildApprovalSteps({
+            totalAmount: pr.total_amount,
+            departmentId: pr.department_id,
+            db,
+            excludeUserIds: []
+          })).map((step) => [Number(step.step_order), Number(step.approver_id)]));
+        } catch {
+          legacy = null;
+        }
+      }
     } catch (error) {
       add(finding('policy_unresolved', {
         severity: 'warning',
@@ -367,7 +380,9 @@ export async function queryApprovalCompliance(db) {
           actor_name: row.approver_name,
           message: `${pr.pr_number} has step ${row.step_order}, which current policy does not require for this amount.`
         }));
-      } else if (policyApprover !== Number(row.approver_id) && Number(row.approver_id) !== Number(pr.requester_id)) {
+      } else if (policyApprover !== Number(row.approver_id)
+        && legacy?.get(Number(row.step_order)) !== Number(row.approver_id)
+        && Number(row.approver_id) !== Number(pr.requester_id)) {
         // A step held by the requester is already a self_approval finding; a second finding for the
         // same step would only repeat it.
         add(finding('wrong_approver', {

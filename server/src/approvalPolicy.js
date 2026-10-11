@@ -12,9 +12,10 @@ export class ApprovalPolicyError extends Error {
 }
 
 /**
- * Routing rule version stored on every approval_requests row. 1 (stored as NULL): the chain was
- * built before requesters were kept off their own requisitions. 2: requesters, and for RFQ awards
- * the owner, proposer and conflicted evaluators, are excluded when the chain is built.
+ * Routing rule version stored on every approval_requests row. 2: requesters, and for RFQ awards
+ * the owner, proposer and conflicted evaluators, are excluded when the chain is built. NULL means
+ * unversioned, and is ambiguous: chains from before #59 routed to the requester, chains built by
+ * #59 (2d50c01) already excluded the requester. The compliance report accepts either rule for NULL.
  */
 export const APPROVAL_POLICY_VERSION = 2;
 
