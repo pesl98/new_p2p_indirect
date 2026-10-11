@@ -43,6 +43,6 @@
     "better-sqlite3": "^11.8.1"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^10.0.5"
   }
 }
