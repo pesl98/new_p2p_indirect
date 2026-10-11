@@ -178,10 +178,12 @@ describe('compliance report logic', () => {
         id, pr_number, requester_id, department_id, status, total_amount, priority
       ) VALUES
         (1, 'PR-SOD-1', 1, 1, 'approved', 5000, 'Low'),
-        (2, 'PR-CLEAN-1', 1, 1, 'approved', 5000, 'Low');
-      INSERT INTO approval_requests (id, requisition_id, approver_id, step_order, status) VALUES
-        (1, 1, 1, 1, 'approved'),
-        (2, 2, 2, 1, 'approved');
+        (2, 'PR-CLEAN-1', 1, 1, 'approved', 5000, 'Low'),
+        (3, 'PR-WRONG-1', 1, 1, 'approved', 5000, 'Low');
+      INSERT INTO approval_requests (id, requisition_id, approver_id, step_order, status, policy_version) VALUES
+        (1, 1, 1, 1, 'approved', 2),
+        (2, 2, 2, 1, 'approved', 2),
+        (3, 3, 5, 1, 'approved', 2);
       INSERT INTO purchase_orders (
         id, po_number, requisition_id, supplier_id, created_by, status, total_amount, issue_date
       ) VALUES
@@ -219,12 +221,52 @@ describe('compliance report logic', () => {
     ]) {
       assert.ok(codes.has(code), `missing ${code}: ${JSON.stringify(report.findings)}`);
     }
+    const sodRows = report.findings.filter((row) => row.document_number === 'PR-SOD-1').map((row) => row.code);
+    assert.ok(sodRows.includes('self_approval'));
+    assert.ok(!sodRows.includes('wrong_approver'), 'a step already flagged as self approval is not flagged twice');
+    assert.ok(report.findings.some((row) => row.code === 'wrong_approver' && row.document_number === 'PR-WRONG-1'));
     const cleanHits = report.findings.filter((row) =>
       String(row.document_number || '').includes('CLEAN') || String(row.message).includes('PR-CLEAN')
       || String(row.message).includes('PO-CLEAN') || String(row.message).includes('INV-CLEAN')
       || String(row.message).includes('GRN-CLEAN')
     );
     assert.equal(cleanHits.length, 0, JSON.stringify(cleanHits));
+  });
+
+  test('a chain is judged by the policy version it was built under', async () => {
+    const db = await baseDb();
+    // Bob heads the department and raised the requisition himself. Version 1 routed it to him;
+    // version 2 routes around him (to a role=approver in the department, then up the ladder).
+    await db.exec(`
+      INSERT INTO purchase_requisitions (
+        id, pr_number, requester_id, department_id, status, total_amount, priority
+      ) VALUES
+        (1, 'PR-LEGACY', 2, 1, 'approved', 5000, 'Low'),
+        (2, 'PR-V2-OK', 2, 1, 'approved', 5000, 'Low'),
+        (3, 'PR-V2-BAD', 2, 1, 'approved', 5000, 'Low');
+      INSERT INTO approval_requests (id, requisition_id, approver_id, step_order, status, policy_version) VALUES
+        (1, 1, 2, 1, 'approved', NULL),
+        (2, 2, 3, 1, 'approved', 2),
+        (3, 3, 4, 1, 'approved', 2);
+    `);
+    const report = await queryApprovalCompliance(db);
+    const codesFor = (doc) => report.findings.filter((row) => row.document_number === doc).map((row) => row.code);
+    assert.deepEqual(codesFor('PR-LEGACY'), ['self_approval'], 'legacy chain: no wrong_approver on top of self approval');
+    assert.deepEqual(codesFor('PR-V2-OK'), []);
+    assert.deepEqual(codesFor('PR-V2-BAD'), ['wrong_approver']);
+  });
+
+  test('new chains record the policy version', async () => {
+    const db = await baseDb();
+    await db.exec(`
+      INSERT INTO purchase_requisitions (id, pr_number, requester_id, department_id, status, total_amount, priority)
+      VALUES (1, 'PR-NEW', 1, 1, 'pending_approval', 5000, 'Low')
+    `);
+    const { insertApprovalChain, APPROVAL_POLICY_VERSION } = await import('./approvalPolicy.js');
+    await insertApprovalChain(db, 1, 5000, 1);
+    const rows = await db.prepare(`SELECT policy_version FROM approval_requests WHERE requisition_id = 1`).all();
+    assert.ok(rows.length >= 1);
+    assert.ok(rows.every((row) => Number(row.policy_version) === APPROVAL_POLICY_VERSION));
   });
 
   test('payment support flags paid invoices missing approval, receipt, or requisition approval', async () => {

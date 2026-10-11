@@ -310,6 +310,10 @@ The manual’s own summary of coverage: the customer commands; Sprint 1 session 
 
 ---
 
+### Sprint 8d — sourcing hardening (in review)
+
+Mail after commit for Q&A answers, bid receipts and award outcomes (copy link stays the default), a buyer-controlled outcome page in the supplier portal, `sourcing:read` / `sourcing:write` API keys with sealing, an optional `CRON_SECRET` tick, a CORS allowlist, demo RFQs in `npm run seed`, and the go-live checklist in the deploy manual. See [SPRINT-LOG.md](SPRINT-LOG.md) for decisions.
+
 ## 4. Design principles in force
 
 From [SPRINT-LOG.md](SPRINT-LOG.md), “Design principles (from Storycodes)”. Different domain. The concepts are reused. Storycodes itself, and out-of-home features, are not ported.

@@ -12,6 +12,7 @@ import { LineTypeError, normalizeLineType, resolveServiceBasis } from './lineTyp
 import { isUniqueConstraint } from './masterData.js';
 import { lineTotalCents, requireIntegerCents } from './money.js';
 import { loadMailConfig, mailIsConfigured, sendMail } from './mail/index.js';
+import { qaAnswerMessage, recordMail, runMailAfterCommit, sendSourcingMails } from './sourcingMail.js';
 import {
   MAX_EVENT_FILES,
   MAX_EVENT_FILE_BYTES,
@@ -201,7 +202,7 @@ export async function writeCompliance(db, actor, action, entityType, entityId, d
     action,
     entity_type: entityType,
     entity_id: entityId,
-    details: JSON.stringify(details)
+    details: JSON.stringify(actor?.api_key_id ? { ...details, api_key_id: actor.api_key_id } : details)
   });
 }
 
@@ -411,14 +412,14 @@ async function assertCatalogLines(db, lines) {
   }
 }
 
-async function readInvitations(db, raw) {
+export async function readInvitations(db, raw) {
   if (raw == null) return undefined;
   if (!Array.isArray(raw)) fail('Invitations must be a list.', 400, 'supplier_not_found');
   if (raw.length > MAX_INVITATIONS) {
     fail(`An RFQ can invite at most ${MAX_INVITATIONS} suppliers.`, 400, 'too_many_invitations');
   }
   const seen = new Set();
-  const rows = [];
+  const ids = [];
   for (const item of raw) {
     const supplierId = Number(item?.supplier_id);
     if (!Number.isInteger(supplierId) || supplierId <= 0) {
@@ -426,9 +427,19 @@ async function readInvitations(db, raw) {
     }
     if (seen.has(supplierId)) fail('Each supplier can be invited once.', 400, 'duplicate_invitation');
     seen.add(supplierId);
-    const supplier = await db.prepare(`
-      SELECT id, code, email, contact_person, status FROM suppliers WHERE id = ?
-    `).get(supplierId);
+    ids.push(supplierId);
+  }
+  // One query for all suppliers (at most 20), before any transaction starts.
+  const suppliers = ids.length
+    ? await db.prepare(`
+        SELECT id, code, email, contact_person, status FROM suppliers
+        WHERE id IN (${ids.map(() => '?').join(', ')})
+      `).all(...ids)
+    : [];
+  const byId = new Map(suppliers.map((row) => [Number(row.id), row]));
+  const rows = [];
+  for (const item of raw) {
+    const supplier = byId.get(Number(item.supplier_id));
     if (!supplier) fail('Supplier was not found.', 400, 'supplier_not_found');
     if (supplier.status !== 'active') {
       fail('Only an active supplier can be invited.', 400, 'supplier_not_active');
@@ -436,7 +447,7 @@ async function readInvitations(db, raw) {
     const email = normalizeEmail(item.contact_email || supplier.email);
     if (!email) fail('Each invitation needs a contact email.', 400, 'contact_email_required');
     rows.push({
-      supplier_id: supplierId,
+      supplier_id: Number(supplier.id),
       supplier_code: supplier.code,
       contact_name: optionalText(item.contact_name, 200) || optionalText(supplier.contact_person, 200),
       contact_email: email
@@ -648,7 +659,7 @@ function eventIdFromInsert(result, fallbackId) {
   return id;
 }
 
-async function insertEvent(db, actor, fields, lines, invitations, evaluators, source) {
+async function insertEvent(db, actor, fields, lines, invitations, evaluators, source, afterInsert = null) {
   const now = utcIso();
   const currency = fields.currency;
   if (!currency) fail('Currency is not configured.', 500, 'sourcing_error');
@@ -713,6 +724,8 @@ async function insertEvent(db, actor, fields, lines, invitations, evaluators, so
         await writeCompliance(db, actor, 'SOURCING_EVENT_CREATED', 'sourcing_event', eventId, {
           ...saveDetails(source, fields.source_requisition_id, lines || [], invitations || [])
         });
+        // Rows that must commit or roll back with the RFQ (the integration link and idempotency row).
+        if (afterInsert) await afterInsert(eventId, eventNumber);
         return eventId;
       })();
     } catch (error) {
@@ -736,7 +749,7 @@ async function insertEvent(db, actor, fields, lines, invitations, evaluators, so
   fail('Could not allocate an RFQ number.', 409, 'event_number_conflict');
 }
 
-export async function createEvent(db, actor, input, { currency } = {}) {
+export async function createEvent(db, actor, input, { currency, afterInsert = null, idOnly = false } = {}) {
   assertWriter(actor);
   rejectStatusSpoof(input, 'draft');
   if (input.kind != null && input.kind !== '' && input.kind !== 'rfq') {
@@ -765,8 +778,8 @@ export async function createEvent(db, actor, input, { currency } = {}) {
     qa_enabled: schedule.qa_enabled || 0,
     qa_deadline_at: schedule.qa_deadline_at || null,
     weights
-  }, lines, invitations, evaluators, 'scratch');
-  return getEvent(db, eventId);
+  }, lines, invitations, evaluators, 'scratch', afterInsert);
+  return idOnly ? eventId : getEvent(db, eventId);
 }
 
 export async function createEventFromRequisition(db, actor, requisitionId, input = {}, { currency } = {}) {
@@ -807,6 +820,43 @@ export async function createEventFromRequisition(db, actor, requisitionId, input
     weights
   }, lines, invitations, evaluators, 'requisition');
   return getEvent(db, eventId);
+}
+
+/**
+ * Add invitees to a draft in one short transaction (for machine clients). Suppliers are resolved
+ * by the caller before this runs. Already invited suppliers are skipped. `afterWrite` runs inside
+ * the transaction. Returns the number added.
+ */
+export async function addDraftInvitations(db, actor, id, rows, { afterWrite = null } = {}) {
+  const now = utcIso();
+  return withBusyRetry(() => db.immediateTransaction(async () => {
+    const existing = await loadEventRow(db, id);
+    if (!existing) fail('RFQ was not found.', 404, 'event_not_found');
+    assertOwner(actor, existing);
+    assertDraft(existing);
+    const current = await db.prepare(`SELECT supplier_id FROM sourcing_invitations WHERE event_id = ?`).all(existing.id);
+    const have = new Set(current.map((row) => Number(row.supplier_id)));
+    const fresh = rows.filter((row) => !have.has(Number(row.supplier_id)));
+    if (have.size + fresh.length > MAX_INVITATIONS) {
+      fail(`An RFQ can invite at most ${MAX_INVITATIONS} suppliers.`, 400, 'too_many_invitations');
+    }
+    if (fresh.length) {
+      await insertInvitations(db, existing.id, actor, fresh, now);
+      const bumped = await db.prepare(`
+        UPDATE sourcing_events SET row_version = row_version + 1, updated_at = ?
+        WHERE id = ? AND status = 'draft'
+      `).run(now, existing.id);
+      if (!bumped.changes) fail('The RFQ changed while it was being saved.', 409, 'event_state_changed');
+      await writeAudit(db, 'sourcing_event', existing.id, 'UPDATED', actor.name,
+        `RFQ ${existing.event_number} draft updated (${fresh.length} invitations added)`);
+      await writeCompliance(db, actor, 'SOURCING_EVENT_UPDATED', 'sourcing_event', existing.id, {
+        added_invitations: fresh.length,
+        invites_sha256: inviteDigest(fresh)
+      });
+    }
+    if (afterWrite) await afterWrite(existing.event_number);
+    return fresh.length;
+  })());
 }
 
 export async function updateEvent(db, actor, id, input, options = {}) {
@@ -1048,7 +1098,7 @@ export async function getEvent(db, id, now = new Date()) {
       e.id, e.event_number, e.kind, e.title, e.description, e.category, e.department_id,
       e.owner_user_id, e.source_requisition_id, e.status, e.currency, e.deadline_at,
       e.qa_enabled, e.qa_deadline_at, e.weight_price, e.weight_lead_time, e.weight_quality,
-      e.target_total_cents, e.published_at, e.closed_at, e.evaluated_at, e.awarded_at,
+      e.target_total_cents, e.outcome_published_at, e.published_at, e.closed_at, e.evaluated_at, e.awarded_at,
       e.cancelled_at, e.cancel_reason, e.cancelled_before_deadline, e.row_version,
       e.created_at, e.updated_at,
       u.name AS owner_name,
@@ -1254,7 +1304,10 @@ export async function removeEventFile(db, actor, eventId, fileId) {
   return { id: Number(fileId), removed_at: now };
 }
 
-export async function closeDueEvents(db, now = new Date(), { limit = 20, eventId = null } = {}) {
+export async function closeDueEvents(db, now = new Date(), {
+  limit = 20, eventId = null, kick = true, budgetMs = null, errors = null
+} = {}) {
+  const startedAt = Date.now();
   const clock = now instanceof Date ? now : new Date(now);
   const instant = utcIso(clock);
   // A named RFQ is closed even when older events fill the batch of 20.
@@ -1272,7 +1325,24 @@ export async function closeDueEvents(db, now = new Date(), { limit = 20, eventId
       `).all(Number(eventId), instant);
   const closed = [];
   for (const row of due || []) {
-    const changed = await db.immediateTransaction(async () => {
+    if (budgetMs != null && Date.now() - startedAt > budgetMs) break;
+    // `errors` turns on per-RFQ isolation (the tick): one failure is recorded, the rest still close.
+    let changed;
+    try {
+      changed = await closeOne(db, row, instant, clock);
+    } catch (error) {
+      if (!errors) throw error;
+      errors.push({ event_number: row.event_number, code: error?.code || 'error' });
+      continue;
+    }
+    if (changed) closed.push(row.id);
+  }
+  if (closed.length && kick) kickWebhookDispatch(db);
+  return closed;
+}
+
+function closeOne(db, row, instant, clock) {
+  return withBusyRetry(() => db.immediateTransaction(async () => {
       const result = await db.prepare(`
         UPDATE sourcing_events
         SET status = 'closed', closed_at = ?, row_version = row_version + 1, updated_at = ?
@@ -1298,11 +1368,7 @@ export async function closeDueEvents(db, now = new Date(), { limit = 20, eventId
         now: clock
       });
       return 1;
-    })();
-    if (changed) closed.push(row.id);
-  }
-  if (closed.length) kickWebhookDispatch(db);
-  return closed;
+    })());
 }
 
 export function requireRowVersion(input, existing) {
@@ -1359,6 +1425,13 @@ async function notifyInvitees(db, event, message, options = {}) {
     });
   }
   if (deliveries.length) {
+    const kind = message.tag === 'sourcing_cancelled' ? 'cancelled' : 'deadline_extended';
+    await recordMail(db, event.id, deliveries.map((row) => ({
+      invitation_id: row.invitation_id,
+      kind,
+      status: row.delivery_status === 'sent' ? 'sent' : row.delivery_status === 'failed' ? 'failed' : 'skipped',
+      provider: loadMailConfig(options.env).provider
+    })));
     const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
     const marks = deliveries.map(() => '?').join(', ');
     await db.prepare(`
@@ -1477,11 +1550,8 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   kickWebhookDispatch(db);
   // Links are in the response whether or not SMTP finishes. A hung relay
   // must not hold the request, because the plaintext token is not stored.
-  const mailSettled = deliverInvitationMail(db, existing, minted, options);
-  if (shouldAwaitMail(options)) await mailSettled;
-  else mailSettled.catch((error) => {
-    console.error('mail: background send failed', error?.code || error?.name || 'smtp_error');
-  });
+  // After the commit; on Vercel the send is kept alive with waitUntil.
+  await runMailAfterCommit(() => deliverInvitationMail(db, existing, minted, options), options);
   const view = await getEvent(db, existing.id, nowDate);
   const links = new Map(minted.map((row) => [row.id, row.portal_url]));
   view.invitations = view.invitations.map((row) => (
@@ -1491,45 +1561,43 @@ export async function publishEvent(db, actor, id, input = {}, options = {}) {
   return view;
 }
 
-function shouldAwaitMail(options) {
-  if (options.awaitMail === true) return true;
-  if (options.awaitMail === false) return false;
-  if (typeof options.mailTransport === 'function') return false;
-  return !mailIsConfigured(loadMailConfig(options.env));
-}
-
 async function deliverInvitationMail(db, event, minted, options) {
-  const deliveries = [];
-  for (const row of minted) {
-    const result = await sendMail({
-      to: row.contact_email,
-      subject: `Uitnodiging offerteaanvraag ${event.event_number}`,
-      text: [
-        `U bent uitgenodigd voor offerteaanvraag ${event.event_number}: ${event.title}.`,
-        'Open alleen deze link:',
-        row.portal_url,
-        `Sluitingstijd: ${event.deadline_at}.`,
-        'De link is persoonlijk. Stuur hem niet door.'
-      ].join('\n'),
-      tag: 'sourcing_invitation'
-    }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
-    deliveries.push({
-      id: row.id,
-      delivery_status: result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'copied'
-    });
-  }
-  if (!deliveries.length) return;
-  const statusCase = deliveries.map(() => 'WHEN ? THEN ?').join(' ');
-  const marks = deliveries.map(() => '?').join(', ');
-  await db.prepare(`
-    UPDATE sourcing_invitations
-    SET delivery_status = CASE id ${statusCase} END
-    WHERE event_id = ? AND id IN (${marks})
-  `).run(
-    ...deliveries.flatMap((row) => [row.id, row.delivery_status]),
-    event.id,
-    ...deliveries.map((row) => row.id)
-  );
+  // Sent in parallel. Each result is recorded the moment its own send settles, so a function that
+  // is cut off mid-batch still leaves a true log and true per-invitation delivery states.
+  const provider = loadMailConfig(options.env).provider;
+  await Promise.all(minted.map(async (row) => {
+    let result;
+    try {
+      result = await sendMail({
+        to: row.contact_email,
+        subject: `Uitnodiging offerteaanvraag ${event.event_number}`,
+        text: [
+          `U bent uitgenodigd voor offerteaanvraag ${event.event_number}: ${event.title}.`,
+          'Open alleen deze link:',
+          row.portal_url,
+          `Sluitingstijd: ${event.deadline_at}.`,
+          'De link is persoonlijk. Stuur hem niet door.'
+        ].join('\n'),
+        tag: 'sourcing_invitation'
+      }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
+    } catch (error) {
+      console.error('mail: send failed', error?.code || error?.name || 'mail_error');
+      result = { status: 'failed' };
+    }
+    const deliveryStatus = result.status === 'sent' ? 'sent' : result.status === 'failed' ? 'failed' : 'copied';
+    try {
+      await recordMail(db, event.id, [{
+        invitation_id: row.id,
+        kind: 'invitation',
+        status: deliveryStatus === 'copied' ? 'skipped' : deliveryStatus,
+        provider
+      }]);
+      await db.prepare(`UPDATE sourcing_invitations SET delivery_status = ? WHERE event_id = ? AND id = ?`)
+        .run(deliveryStatus, event.id, row.id);
+    } catch (error) {
+      console.error('mail: delivery record failed', error?.code || error?.name || 'record_error');
+    }
+  }));
 }
 
 export async function extendDeadline(db, actor, id, input = {}, options = {}) {
@@ -1635,6 +1703,12 @@ export async function rotateInvitationLink(db, actor, eventId, invitationId, opt
   }, { transport: options.mailTransport, env: options.env, timeoutMs: options.mailTimeoutMs });
   const delivery = sent.status === 'sent' ? 'sent' : sent.status === 'failed' ? 'failed' : 'copied';
   await db.prepare(`UPDATE sourcing_invitations SET delivery_status = ? WHERE id = ?`).run(delivery, invitation.id);
+  await recordMail(db, existing.id, [{
+    invitation_id: invitation.id,
+    kind: 'link_rotated',
+    status: delivery === 'copied' ? 'skipped' : delivery,
+    provider: loadMailConfig(options.env).provider
+  }]);
   return {
     invitation_id: invitation.id,
     token_prefix: token.token_prefix,
@@ -1693,6 +1767,27 @@ export async function answerQuestion(db, actor, eventId, questionId, input = {},
     question_id: Number(questionId),
     visibility
   });
+  // After the commit: the asker gets a private answer; a shared answer goes to every live invitee.
+  // Reading the recipients is part of the mail work, so a failure there is not an error here.
+  await runMailAfterCommit(async () => {
+    const asked = await db.prepare(`SELECT question, invitation_id FROM sourcing_questions WHERE id = ?`).get(questionId);
+    const recipients = visibility === 'all'
+      ? await db.prepare(`
+          SELECT id, contact_email FROM sourcing_invitations
+          WHERE event_id = ? AND revoked_at IS NULL AND declined_at IS NULL
+        `).all(existing.id)
+      : await db.prepare(`
+          SELECT id, contact_email FROM sourcing_invitations
+          WHERE id = ? AND event_id = ? AND revoked_at IS NULL
+        `).all(asked?.invitation_id ?? 0, existing.id);
+    const content = qaAnswerMessage(existing, asked?.question || '', answer);
+    return sendSourcingMails(db, existing.id, recipients.map((row) => ({
+      invitation_id: row.id,
+      kind: 'qa_answer',
+      to: row.contact_email,
+      ...content
+    })), { ...options, now: nowDate });
+  }, options);
   return { id: Number(questionId), answer, visibility, answered_at: now };
 }
 

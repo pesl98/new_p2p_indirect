@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@node-saml/node-saml": "^5.1.0",
+    "@vercel/functions": "^3.9.11",
     "ai": "^7.0.133",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

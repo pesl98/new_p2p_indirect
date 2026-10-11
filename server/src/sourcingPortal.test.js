@@ -848,9 +848,12 @@ describe('sourcing portal', () => {
       'sourcingBidReadModel.js',
       'sourcingPortalService.js',
       'provision.js',
+      // The demo seed only drops the tables and writes demo rows.
+      'seed.js',
       // Sprint 8c detective check reads submitted_at only, never prices.
       'complianceReports.js',
-      'sourcingAwardFixtures.js'
+      'sourcingAwardFixtures.js',
+      'sourcingDemoSeed.js'
     ]);
     const hits = [];
     const walkJs = (dir) => {

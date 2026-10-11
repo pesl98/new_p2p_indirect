@@ -15,6 +15,7 @@ import {
   readPortalFile,
   removePortalFile,
   resolvePortalToken,
+  sendPortalReceipt,
   submitPortalBid,
   withdrawPortalBid
 } from '../sourcingPortalService.js';
@@ -70,6 +71,8 @@ router.get('/', async (req, res) => {
 router.post('/bids', async (req, res) => {
   try {
     const result = await submitPortalBid(req.db, req.portal, req.body || {}, req.portalNow);
+    // The receipt goes out after the commit; a failure is recorded and never changes the answer.
+    await sendPortalReceipt(req.db, req.portal, result, { now: req.portalNow, ...req.mailOptions });
     res.status(result.replayed ? 200 : 201).json(result);
   } catch (error) {
     sendError(res, error);

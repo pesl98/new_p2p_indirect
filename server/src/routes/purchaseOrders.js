@@ -161,6 +161,7 @@ router.post('/from-requisition', requireRole(...PROCUREMENT_ROLES), async (req, 
     if (status >= 500) console.error('Error generating PO:', error);
     const body = { error: error.message };
     if (error.code) body.code = error.code;
+    if (error.retryAfterSeconds) res.set('Retry-After', String(error.retryAfterSeconds));
     res.status(status).json(body);
   }
 });

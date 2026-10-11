@@ -9,7 +9,7 @@
  * and is hash-chained. SSO evidence stays in the Sprint 2 tables.
  */
 
-import { buildApprovalSteps } from './approvalPolicy.js';
+import { APPROVAL_POLICY_VERSION, buildApprovalSteps } from './approvalPolicy.js';
 import { awardExclusionsForRequisition, awardSodThresholdCents, restrictedAwardUsers } from './sourcingApprovalHooks.js';
 import { deploymentCurrency } from './currencyConfig.js';
 import {
@@ -320,13 +320,22 @@ export async function queryApprovalCompliance(db) {
   for (const pr of requisitions || []) {
     let steps;
     const awardInfo = await awardExclusionsForRequisition(db, pr.id);
+    // Judge a chain by the rule it was built under. A chain from before policy version 2 (NULL)
+    // was never routed around its requester, so today's exclusions would call it wrong.
+    const versionRow = await db.prepare(`
+      SELECT MIN(COALESCE(policy_version, 1)) AS version FROM approval_requests
+      WHERE requisition_id = ? AND status != 'skipped'
+    `).get(pr.id);
+    const chainVersion = Number(versionRow?.version || 1);
     try {
       steps = await buildApprovalSteps({
         totalAmount: pr.total_amount,
         departmentId: pr.department_id,
         db,
-        // Requesters are never routed their own requisition; awards also exclude owner/proposer.
-        excludeUserIds: [pr.requester_id, ...(awardInfo?.excludeUserIds || [])]
+        // Version 2: requesters are never routed their own requisition; awards also exclude owner/proposer.
+        excludeUserIds: chainVersion >= APPROVAL_POLICY_VERSION
+          ? [pr.requester_id, ...(awardInfo?.excludeUserIds || [])]
+          : []
       });
     } catch (error) {
       add(finding('policy_unresolved', {
@@ -358,7 +367,9 @@ export async function queryApprovalCompliance(db) {
           actor_name: row.approver_name,
           message: `${pr.pr_number} has step ${row.step_order}, which current policy does not require for this amount.`
         }));
-      } else if (policyApprover !== Number(row.approver_id)) {
+      } else if (policyApprover !== Number(row.approver_id) && Number(row.approver_id) !== Number(pr.requester_id)) {
+        // A step held by the requester is already a self_approval finding; a second finding for the
+        // same step would only repeat it.
         add(finding('wrong_approver', {
           entity_type: 'approval_request',
           entity_id: row.id,

@@ -677,6 +677,12 @@ async function migrateAwardColumns(database) {
       await maybe(database.exec(AWARD_PURCHASE_ORDER_INDEX_SQL));
     }
   }
+  if (tables.includes('sourcing_events') && !(await tableHasColumn(database, 'sourcing_events', 'outcome_published_at'))) {
+    await maybe(database.exec(`ALTER TABLE sourcing_events ADD COLUMN outcome_published_at TEXT`));
+  }
+  if (tables.includes('approval_requests') && !(await tableHasColumn(database, 'approval_requests', 'policy_version'))) {
+    await maybe(database.exec(`ALTER TABLE approval_requests ADD COLUMN policy_version INTEGER`));
+  }
   if (tables.includes('sourcing_awards') && !(await tableHasColumn(database, 'sourcing_awards', 'owner_user_id'))) {
     await maybe(database.exec(`ALTER TABLE sourcing_awards ADD COLUMN owner_user_id INTEGER`));
   }
@@ -687,6 +693,11 @@ export async function applySchema(database) {
   await maybe(database.exec(schema));
   await migrateAwardColumns(database);
   await migrateApprovalRequestsWaitingStatus(database);
+  // The rebuild above copies a fixed column list, so make sure policy_version survives it.
+  if (await tableHasColumn(database, 'approval_requests', 'id')
+    && !(await tableHasColumn(database, 'approval_requests', 'policy_version'))) {
+    await maybe(database.exec(`ALTER TABLE approval_requests ADD COLUMN policy_version INTEGER`));
+  }
   await migrateInvoiceNumberUniqueness(database);
   await migrateLineTypesAndServiceEntrySheets(database);
   await migrateServiceBasis(database);

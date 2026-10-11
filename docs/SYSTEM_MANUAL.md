@@ -792,9 +792,25 @@ Procurement and admin author an RFQ from scratch or from an approved requisition
 
 `GET /api/sourcing/me` returns `{ enabled, canSee, canWrite, attention_count, role }`. No cookie is **401**. The flag off is **503** `sourcing_disabled` for a signed-in caller. Requester and approver are **403**.
 
-**Not in this release**
+**Mail (Sprint 8d)**
 
-Scoring, award, and purchase orders from an award. Mail for a question answer, a bid receipt, or an award. An integration key cannot read or write RFQs yet.
+Default is copy link. With `MAIL_PROVIDER=smtp` the system also mails invitations, rotated links, deadline changes, cancellations, answers to supplier questions, bid receipts, and award outcomes. Mail is sent after the write commits. A failure is recorded and never undoes the business action. Q&A and receipt mail carry no amounts or links. A private answer goes to the asker; a shared answer goes to every invited supplier who has not declined.
+
+**Award outcome (Sprint 8d)**
+
+After the award is approved the buyer presses **Uitkomst delen** (`POST /api/sourcing/events/:id/outcome`, once; a second press is a replay). Each bidder is mailed, and the portal then shows the outcome: the winner sees their own awarded lines and prices, every other bidder only "niet gegund". Nothing is visible before the buyer shares it, and no supplier ever sees another supplier's name, price, or rank.
+
+**Integration keys (Sprint 8d)**
+
+Scopes `sourcing:read` and `sourcing:write` (Integraties screen). Routes under `/api/integrations/sourcing/events`: `GET` list (`status`, `updated_since`), `GET /:number` (bids only after the deadline), `GET /:number/award`, `POST` create a draft, `POST /:number/invitations`. No publish, award, or cancel exists for a key.
+
+**Tick and CORS (Sprint 8d)**
+
+`GET`/`POST /api/sourcing/tick` with `Authorization: Bearer $CRON_SECRET` closes due RFQs and drains the webhook outbox; it is off (401) without the secret. Cross-origin browser access is limited to `APP_BASE_URL` and `CORS_ORIGINS`.
+
+**Demo data**
+
+`npm run seed` (demo only, destructive) adds `RFQ-2026-001` (published, two sealed bids, three invitations), `RFQ-2026-002` (closed, three bids, David Miller declared a conflict) and `RFQ-2026-003` (awarded as a split and converted to POs). The seed prints supplier portal links for RFQ-2026-001 to the console; only hashes are stored. Outside production it uses a fixed demo `PORTAL_TOKEN_SECRET` unless one is set. Customer tenants are never seeded.
 
 ---
 

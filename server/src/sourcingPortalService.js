@@ -7,6 +7,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendComplianceEvent, utcTimestamp } from './complianceAudit.js';
 import { lineTotalCents } from './money.js';
+import { bidReceiptMessage, runMailAfterCommit, sendSourcingMails } from './sourcingMail.js';
 import { enqueueWebhook, externalIdFor, kickWebhookDispatch, WEBHOOK_EVENTS } from './webhookOutbox.js';
 import {
   MAX_EVENT_FILES,
@@ -72,6 +73,25 @@ async function writeSupplierCompliance(db, ctx, action, details, now) {
     details: JSON.stringify({ invitation_id: ctx.invitation_id, ...details }),
     created_at: utcTimestamp(now)
   });
+}
+
+/**
+ * Receipt for a submitted or revised bid, sent after the commit. It names the revision, the
+ * time and a short reference, no amounts and no link. A failure is recorded, never raised.
+ */
+export async function sendPortalReceipt(db, ctx, receipt, options = {}) {
+  if (!receipt || receipt.replayed || receipt.late) return null;
+  return runMailAfterCommit(async () => {
+    const event = await db.prepare(`SELECT event_number, title FROM sourcing_events WHERE id = ?`).get(ctx.event_id);
+    const invitation = await db.prepare(`SELECT id, contact_email FROM sourcing_invitations WHERE id = ?`).get(ctx.invitation_id);
+    if (!event || !invitation?.contact_email) return null;
+    return sendSourcingMails(db, ctx.event_id, [{
+      invitation_id: invitation.id,
+      kind: 'bid_receipt',
+      to: invitation.contact_email,
+      ...bidReceiptMessage(event, receipt)
+    }], options);
+  }, options);
 }
 
 export async function resolvePortalToken(db, token, req, now = new Date()) {
@@ -197,7 +217,7 @@ export async function loadPortalView(db, ctx, now = new Date()) {
   await markOpened(db, ctx, now);
   const event = await db.prepare(`
     SELECT event_number, title, description, deadline_at, status, currency,
-           qa_enabled, qa_deadline_at, cancelled_at, cancel_reason
+           qa_enabled, qa_deadline_at, cancelled_at, cancel_reason, outcome_published_at
     FROM sourcing_events WHERE id = ?
   `).get(ctx.event_id);
   const lines = await db.prepare(`
@@ -216,6 +236,7 @@ export async function loadPortalView(db, ctx, now = new Date()) {
   `).get(ctx.invitation_id);
   const bid = await ownBid(db, ctx.invitation_id);
   const questions = await listOwnQuestions(db, ctx);
+  const outcome = await ownOutcome(db, ctx, event);
   return {
     server_now: now.toISOString(),
     customer_name: String(process.env.APP_NAME || 'ProcureFlow'),
@@ -224,7 +245,7 @@ export async function loadPortalView(db, ctx, now = new Date()) {
       title: event.title,
       description: event.description,
       deadline_at: event.deadline_at,
-      status: event.status,
+      status: portalStatus(event),
       currency: event.currency,
       qa_enabled: Number(event.qa_enabled) === 1,
       qa_deadline_at: event.qa_deadline_at,
@@ -240,7 +261,48 @@ export async function loadPortalView(db, ctx, now = new Date()) {
       decline_reason: invitation.decline_reason
     },
     bid,
-    questions
+    questions,
+    outcome
+  };
+}
+
+/**
+ * The award outcome page. Nothing is shown until the buyer shares the outcome. A winner sees
+ * their own awarded lines and prices; anyone else sees only that the RFQ was awarded elsewhere,
+ * never another supplier's name, price, or rank.
+ */
+/**
+ * What a supplier may learn from the status. Evaluation and award are internal until the buyer
+ * shares the outcome, so until then they read as plain "closed".
+ */
+function portalStatus(event) {
+  if (event.status === 'evaluated') return 'closed';
+  if (event.status === 'awarded' && !event.outcome_published_at) return 'closed';
+  return event.status;
+}
+
+async function ownOutcome(db, ctx, event) {
+  if (event.status !== 'awarded' || !event.outcome_published_at) return null;
+  const rows = await db.prepare(`
+    SELECT l.line_no, l.description, al.quantity, al.unit_price_cents, al.line_total_cents
+    FROM sourcing_awards a
+    JOIN sourcing_award_lines al ON al.award_id = a.id
+    JOIN sourcing_event_lines l ON l.id = al.event_line_id
+    WHERE a.event_id = ? AND a.status = 'approved' AND al.supplier_id = ?
+    ORDER BY l.line_no ASC
+  `).all(ctx.event_id, ctx.supplier_id);
+  const hadBid = await db.prepare(`SELECT 1 AS ok FROM sourcing_bids WHERE invitation_id = ?`).get(ctx.invitation_id);
+  if (!rows.length && !hadBid) return null;
+  return {
+    published_at: event.outcome_published_at,
+    awarded: rows.length > 0,
+    lines: rows.map((row) => ({
+      line_no: Number(row.line_no),
+      description: row.description,
+      quantity: Number(row.quantity),
+      unit_price_cents: Number(row.unit_price_cents),
+      line_total_cents: Number(row.line_total_cents)
+    }))
   };
 }
 

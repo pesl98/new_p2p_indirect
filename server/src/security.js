@@ -28,24 +28,58 @@ export function securityHeaders(req, res, next) {
   next();
 }
 
-/** Options for the `cors` package. Same-origin only unless allowlisted. */
-export function corsOptions(env = process.env) {
+function originOf(value) {
+  try { return new URL(String(value)).origin; } catch { return null; }
+}
+
+/** Allowed browser origins: CORS_ORIGINS plus the origin of APP_BASE_URL. */
+export function allowedOrigins(env = process.env) {
   const allowed = new Set(parseOriginAllowlist(env));
+  const base = env.APP_BASE_URL ? originOf(env.APP_BASE_URL) : null;
+  if (base) allowed.add(base);
+  return allowed;
+}
+
+/**
+ * Options for the `cors` package. A cross-origin browser gets credentialed CORS
+ * only from an allowlisted origin. Same-origin needs no CORS headers at all.
+ */
+export function corsOptions(env = process.env, log = console) {
+  const allowed = allowedOrigins(env);
   const dev = !isProduction(env);
+  const warned = new Set();
   return {
     credentials: true,
     origin(origin, cb) {
       if (!origin) return cb(null, false);
-      // Dev only: the Vite dev server runs on another port.
       if (allowed.has(origin) || (dev && allowed.size === 0)) return cb(null, true);
+      if (!warned.has(origin) && warned.size < 100) {
+        warned.add(origin);
+        log.warn?.(`cors: origin not allowed: ${String(origin).slice(0, 200)}`);
+      }
       return cb(null, false);
     }
   };
 }
 
+/**
+ * `cors` options chosen per request. A request whose Origin is this very host is same-origin: it
+ * needs no CORS headers and is not worth a log line. Anything else is judged by the allowlist.
+ */
+export function corsDelegate(env = process.env, log = console) {
+  const options = corsOptions(env, log);
+  return (req, cb) => {
+    const origin = req.headers?.origin;
+    let host = '';
+    try { host = origin ? new URL(origin).host : ''; } catch { /* invalid origin */ }
+    if (host && host === req.headers?.host) return cb(null, { origin: false });
+    return cb(null, options);
+  };
+}
+
 /** Reject cross-site state-changing requests (CSRF defence in depth). */
 export function originCheck(env = process.env) {
-  const allowed = new Set(parseOriginAllowlist(env));
+  const allowed = allowedOrigins(env);
   return (req, res, next) => {
     if (SAFE_METHODS.has(req.method)) return next();
     const origin = req.get('origin');

@@ -173,7 +173,7 @@ describe('bootstrap-org CLI', () => {
     await db.prepare(
       `UPDATE budgets SET total_budget = ?, committed_amount = ?, actual_spent = ?
        WHERE department_id = (SELECT id FROM departments WHERE code = ?) AND fiscal_year = ?`
-    ).run(15_000_000, 178_210, 24_350, 'MKT', 2026);
+    ).run(15_000_000, 178_210, 24_350, 'MKT', currentFiscalYear());
     await db.prepare(`INSERT INTO departments (code, name) VALUES (?, ?)`).run('OPS', 'Operations');
 
     const { stdout, stderr } = captureStreams();

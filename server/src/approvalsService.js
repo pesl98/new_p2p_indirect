@@ -145,13 +145,29 @@ function delegationAuditNote(delegation) {
  */
 /** Re-resolve one pending step without the requester and write the new approver on the row. */
 async function rerouteAroundRequester(db, pr, approval) {
-  const steps = await buildApprovalSteps({
-    totalAmount: pr.total_amount,
-    departmentId: pr.department_id,
-    db,
-    excludeUserIds: [pr.requester_id]
-  });
-  const planned = steps.find((step) => Number(step.step_order) === Number(approval.step_order));
+  const planFor = async (excludeUserIds) => {
+    const steps = await buildApprovalSteps({
+      totalAmount: pr.total_amount,
+      departmentId: pr.department_id,
+      db,
+      excludeUserIds
+    });
+    return steps.find((step) => Number(step.step_order) === Number(approval.step_order));
+  };
+  // Prefer someone who is not already on this chain, so one person does not hold two steps.
+  // If nobody else is left, fall back to avoiding only the requester.
+  const others = (await db.prepare(`
+    SELECT approver_id FROM approval_requests
+    WHERE requisition_id = ? AND id != ? AND status != 'skipped'
+  `).all(pr.id, approval.id)).map((row) => Number(row.approver_id));
+  let planned = null;
+  try {
+    planned = await planFor([pr.requester_id, ...others]);
+    if (planned && others.includes(Number(planned.approver_id))) planned = null;
+  } catch (error) {
+    if (error?.code !== 'sod_no_alternate_approver') throw error;
+  }
+  if (!planned) planned = await planFor([pr.requester_id]);
   if (!planned || Number(planned.approver_id) === Number(pr.requester_id)) {
     throw new ApprovalDecisionError('No other approver is available for this step.', 422, 'sod_no_alternate_approver');
   }

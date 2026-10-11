@@ -13,7 +13,9 @@ export const API_KEY_SCOPES = Object.freeze([
   'vendors:write',
   'catalog:write',
   'export:read',
-  'invoices:write'
+  'invoices:write',
+  'sourcing:read',
+  'sourcing:write'
 ]);
 
 export const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
@@ -288,6 +290,7 @@ export async function authenticateIntegrationKey(req, scope, now = new Date()) {
   }
   return {
     ...publicApiKey({ ...row, last_used_at: now.toISOString(), scopes: JSON.stringify(scopes) }),
+    created_by_user_id: Number(row.created_by_user_id),
     scopes
   };
 }

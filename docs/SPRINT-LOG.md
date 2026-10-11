@@ -72,9 +72,9 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 7b | 2026-10-08 | PDF invoice upload, OCR proposals, and a finance inbox that posts through the Sprint 7a service | [#54](https://github.com/pesl98/new_p2p_indirect/pull/54) | Sprint 7b — PDF invoice upload, OCR proposals, finance inbox | `cdefb448106f0c5a52d583e9abe69f02facc8802` | merged |
 | 8.0 | 2026-10-08 | Turso transaction isolation, Preview/Prod database split (code), and the leftover `invoice_proposals.pdf_bytes` check | [#55](https://github.com/pesl98/new_p2p_indirect/pull/55) | Sprint 8.0 — Transaction isolation and preview database | `ca4eb1372ffee56215726b30d4a53a2acb020603` | merged |
 | 8a | 2026-10-08 | Buyer RFQ drafts: schema, lines, PDFs, invitees, weights, evaluators | [#56](https://github.com/pesl98/new_p2p_indirect/pull/56) | Sprint 8a — Data model and buyer RFQ authoring | `b2d2b01e18109946d489d4a5080a999775671da4` | merged |
-| 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | | in review |
-| 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | | in review |
-| 8d | | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | planned |
+| 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
+| 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
+| 8d | 2026-10-10 | Hardening: email, integrations, tick, demo seed, docs | | Sprint 8d — Hardening, email, integrations, demo seed, and docs | | in review |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -446,11 +446,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Publishing creates one magic link per invitation. Suppliers submit and revise bids until the deadline in a separate portal. The server keeps prices sealed.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/57 (#57, draft). Base is `main` at `b2d2b01e18109946d489d4a5080a999775671da4`. Do not merge until the Architect reviews and Peter OKs.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/57 (#57). Base was `main` at `b2d2b01e18109946d489d4a5080a999775671da4`.
 
-**Merge SHA:**
+**Merge SHA:** `f55f7177cf5514236f3be6454711296193a8d036` (squash-merged).
 
-**Status:** in review. Draft PR #57. The Architect's first review is addressed on this branch. Do not merge until the Architect reviews again and Peter OKs.
+**Status:** merged.
 
 ### Done when
 
@@ -485,11 +485,11 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** After the deadline, buyers compare bids, score them, and propose a full or split award. The award goes through the existing approval chain with segregation of duties and becomes purchase orders through the existing convert.
 
-**PR:** https://github.com/pesl98/new_p2p_indirect/pull/59 (#59). It carries the security hardening and role-gate work from the same branch.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/59 (#59), merged. It carried the security hardening and role-gate work from the same branch. The earlier draft PR #58 was closed as superseded.
 
-**Merge SHA:**
+**Merge SHA:** `2d50c015f3f581843c78e98b292e05515e3dd428` (squash-merged).
 
-**Status:** in review.
+**Status:** merged.
 
 ### Done when
 
@@ -535,7 +535,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ## Sprint 8d — Hardening, email, integrations, demo seed, and docs
 
-**Date:**
+**Date:** 2026-10-10
 
 **Goal:** Sourcing is ready for one customer. Invites go out by email, with copy-link as the fallback. Integrations, an optional tick, the demo seed, and the docs land here.
 
@@ -543,7 +543,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Merge SHA:**
 
-**Status:** planned.
+**Status:** in review.
 
 ### Done when
 
@@ -554,4 +554,22 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 ### Decisions
 
-- **Not started.** Peter's 2026-10-08 decisions that bind this sprint: email is `none` (copy link) by default plus optional `smtp`, no HTTP mail provider yet. Public tenders stay out of scope. Losing-bidder notices stay open (default: the buyer decides). Retention and the pricing tier stay open. CORS allowlisting and the webhook cron are this sprint, not 8.0.
+- **Mail.** `sourcingMail.js` is the only sender for RFQ mail. `runMailAfterCommit` runs the send after the business transaction. On Vercel it is kept alive with `waitUntil`; with provider `none` or in tests it is awaited. Failures are written to `sourcing_mail_log` (kind, status, provider; no text, address or link) and logged by code only. New mail: Q&A answer (private to the asker, shared to non-declined invitees), bid receipt (no amounts, none on a replay or a late bid), award outcome (no amounts, no links).
+- **Outcome.** `POST /api/sourcing/events/:id/outcome` is owner or admin, only on an `awarded` event, idempotent by a conditional update. It audits, writes a compliance event, and mails every bidder. The portal `outcome` is null until it is shared; a winner sees own lines and prices, others only `awarded: false`. This resolves the open losing-bidder question as "the buyer decides when to share".
+- **Integrations.** Scopes `sourcing:read` and `sourcing:write`. Sealing applies to keys through `loadMachineBids` in the bid read model (the only module that names bid tables). A draft is created for the key's owner (procurement or admin) and is idempotent on `external_id` through `integration_sourcing_links` (a new table; the entity-links table is not rebuilt) plus `Idempotency-Key`. No publish, award, or cancel for a key. Responses carry no contact emails, links, or tokens.
+- **Tick.** `/api/sourcing/tick` is exempt from the session and needs `CRON_SECRET` (constant-time compare). It closes up to 50 due RFQs and drains the outbox. Not scheduled by default.
+- **CORS.** The allowlist is `CORS_ORIGINS` plus the origin of `APP_BASE_URL`. Denied origins are logged once each. Development with an empty allowlist stays open.
+- **Demo seed.** `sourcingDemoSeed.js` is called from `npm run seed`. RFQ 3 goes through the real services (evaluate, propose, approve, convert). Bids are written while the RFQ is still open, then it is closed, because a database trigger refuses a bid after the deadline.
+- **Docs.** Deploy manual env table and a go-live checklist (8.11), system manual, onboarding walkthrough.
+- **Not verified here.** 4 MiB uploads and deadline-rush concurrency need a Vercel preview.
+- **Peter's earlier decisions** that bind this sprint: Peter's 2026-10-08 decisions that bind this sprint: email is `none` (copy link) by default plus optional `smtp`, no HTTP mail provider yet. Public tenders stay out of scope. Losing-bidder notices stay open (default: the buyer decides). Retention and the pricing tier stay open. CORS allowlisting and the webhook cron are this sprint, not 8.0.
+
+### Review round 1 (NACK at 763d066)
+
+- **B1 duplicate webhooks.** The outbox claim is now a lease: one `UPDATE … SET attempt_count = attempt_count + 1, next_attempt_at = now + timeout + 30 s WHERE id = ? AND status = 'pending' AND attempt_count = ? AND next_attempt_at <= now`, and a row is sent only when `changes = 1`. A dispatcher that dies leaves a row that becomes due when the lease ends. `closeDueEvents` takes `kick: false`; the tick closes without a background send and drains the outbox itself, so there is one sender per tick. Test: a 400 ms receiver and three parallel ticks deliver each event exactly once (`attempt_count = 1`).
+- **B2 API create and invite.** The machine create no longer wraps `createEvent` in `runIdempotent`'s outer transaction (that nested deferred transaction caused the 48/84/89-statement pipelines and the `event_number_conflict` under parallel creates). Suppliers are resolved with one query before the transaction (`readInvitations` is batched for the buyer path too). The link row and the idempotency row are written inside the RFQ creation's own `BEGIN IMMEDIATE` and busy/number retry (`afterInsert` hook). The full response is built after commit and stored for replays (`updateIdempotencyBody`). Add-invitees is `addDraftInvitations`, one short immediate transaction. Measured at the caps: create 50 lines × 20 invitees 18, add 20 invitees 14 (limit 25 including BEGIN/COMMIT). Tests: statement budgets at the caps, six parallel creates with distinct numbers, four parallel creates with one external id make one RFQ.
+- **S1** The API award read returns approved awards only. **S2** The portal reads `evaluated` and an unshared `awarded` as `closed`. **S3** Read keys check the creator (active procurement or admin) like write keys. **S4** `npm run seed` refuses `NODE_ENV=production` or `VERCEL_ENV=production` without `--force`.
+- **S5 Tick.** About 20 s in total: at most 20 closes in about 8 s, each in a busy retry, one failing RFQ is reported in `close_errors` and does not stop the rest, then deliveries until the budget is spent, each send timing out inside what is left (5 s cap).
+- **Nits.** Background mail is sent in parallel and each result is logged as it settles (invitations also update `delivery_status` per row). `runMailAfterCommit` swallows and logs any failure while preparing mail after a commit, so a recipient read can no longer turn a committed write into an error. Key actions are audited with the key id (`API key #n` in the actor name, `api_key_id` in the compliance details). `external_id` is unique per API key (`integration_sourcing_links (api_key_id, external_id)`; this table was added in the unmerged 8d commit, so it was changed in place). A schemeless `APP_BASE_URL` warns at startup. Same-origin requests are not logged as denied CORS origins (`corsDelegate`).
+- **Follow-ups from the #59 review.** (a) `approval_requests.policy_version` (NULL = version 1, 2 = requesters, award owner and proposer excluded) is written by `insertApprovalChain` and the award chain insert. The compliance report builds the expected chain by the chain's own version, and no longer adds `wrong_approver` to a step already flagged `self_approval`. (b) The legacy convert-to-PO route uses `BEGIN IMMEDIATE` with busy retry (409 `busy_snapshot`, 503 with `Retry-After`), and re-checks that the requisition is still approved inside the transaction. (c) Re-routing a step around the requester first avoids everyone already on the chain, and falls back to avoiding only the requester when nobody else is left. (d) Fixtures derive the fiscal year and document-number years from the clock. The whole suite also passes with the clock set to January 2027 (checked with a Date shim; 750 tests).
+

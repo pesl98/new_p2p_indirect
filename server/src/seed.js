@@ -3,6 +3,7 @@ import { currentFiscalYear } from './fiscalYear.js';
 
 import { applySchema, getDb } from './db.js';
 import { DEMO_SEED_PASSWORD, hashPassword } from './auth.js';
+import { seedSourcingDemo } from './sourcingDemoSeed.js';
 import { measuredAmountCents } from './measuredQty.js';
 import { formatMoney } from './money.js';
 
@@ -20,6 +21,22 @@ const NITROGEN_AMOUNT = measuredAmountCents(NITROGEN_MILLI, NITROGEN_PRICE);
 export const DEMO_ADMIN_EMAIL = 'elena.rostova@company.com';
 
 const DEMO_TABLES = [
+  'integration_sourcing_links',
+  'sourcing_mail_log',
+  'sourcing_scores',
+  'sourcing_award_lines',
+  'sourcing_awards',
+  'sourcing_evaluators',
+  'sourcing_questions',
+  'sourcing_file_blobs',
+  'sourcing_files',
+  'sourcing_bid_lines',
+  'sourcing_bid_revisions',
+  'sourcing_bids',
+  'sourcing_portal_rate_windows',
+  'sourcing_invitations',
+  'sourcing_event_lines',
+  'sourcing_events',
   'invoice_proposal_upload_attempts',
   'invoice_proposal_files',
   'invoice_proposals',
@@ -1524,7 +1541,23 @@ export async function insertDemoData(rootDb) {
   await writer.flush();
 }
 
+/**
+ * The seed drops every application table. Refuse to run it where a production database may be
+ * attached, unless the operator says --force.
+ */
+export function seedRefusal(env = process.env, argv = process.argv) {
+  const production = env.NODE_ENV === 'production' || env.VERCEL_ENV === 'production';
+  if (!production || argv.includes('--force')) return null;
+  return 'Refusing to seed: NODE_ENV or VERCEL_ENV is production, and the seed drops every table. '
+    + 'Pass --force only if you are sure this is not a customer database.';
+}
+
 async function destructiveSeed() {
+  const refusal = seedRefusal();
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
   console.warn('DESTRUCTIVE: dropping all application tables and loading demo personas.');
   console.warn('Do not run this against a live customer database.');
   console.warn('Real tenant: npm run db:migrate && npm run bootstrap-org && npm run bootstrap-admin && npm run smoke');
@@ -1545,10 +1578,17 @@ async function destructiveSeed() {
   }
   await applySchema(db);
   await insertDemoData(db);
+  const demoLinks = await seedSourcingDemo(db);
 
   console.log('✅ Database seeded successfully with realistic P2P data (money stored as integer cents)!');
   console.log('   Utilities: UTA-2026-001 electricity (INV-MGU-0901 matched), UTA-2026-003 gas awaiting invoice, UTA-2026-002 water with no reading.');
   console.log('   Bulk: LN2 silo BVL-2026-001 drawn as PO-2026-018 (INV-NIG-1801). Argon tube bank BVL-2026-002 is filled and not drawn.');
+  console.log('   Sourcing: RFQ-2026-001 published (2 sealed bids), RFQ-2026-002 closed (David Miller declared a conflict), RFQ-2026-003 awarded and converted to POs.');
+  if (demoLinks.length) {
+    console.log('   Demo supplier portal links for RFQ-2026-001 (not stored; only hashes are):');
+    for (const link of demoLinks) console.log(`     ${link.supplier}: ${link.url}`);
+    console.log('   Run the server with the same PORTAL_TOKEN_SECRET (local default: see sourcingDemoSeed.js) and SOURCING_ENABLED=1.');
+  }
   console.log(`   Demo login (local only): alice.chen@company.com / ${DEMO_SEED_PASSWORD}`);
   console.log('   Same password for Bob, Carol, David, Elena, Priya, James, Sofia. Never use this in a customer DB.');
 }

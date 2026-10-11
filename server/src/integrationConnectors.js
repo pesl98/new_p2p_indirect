@@ -927,6 +927,37 @@ export async function replayIdempotentIfPresent(db, apiKey, idempotencyHeader, b
   return replayOrConflict(existing, requestHash);
 }
 
+/**
+ * For a write that stores its own idempotency row inside its transaction (the sourcing drafts).
+ * Returns { key, requestHash, replay }: `replay` is a stored response or null; a reused key with a
+ * different body throws `idempotency_conflict`.
+ */
+export async function prepareIdempotency(db, apiKey, idempotencyHeader, body) {
+  const key = normalizeIdempotencyKey(idempotencyHeader);
+  if (!key) return { key: null, requestHash: null, replay: null };
+  const requestHash = sha256(canonicalJson(body ?? null));
+  const existing = await findIdempotency(db, apiKey.id, key);
+  return { key, requestHash, replay: existing ? replayOrConflict(existing, requestHash) : null };
+}
+
+/** The idempotency row for a write, to be run inside that write's transaction. */
+export async function insertIdempotency(db, apiKey, context, status, body) {
+  if (!context.key) return;
+  await db.prepare(`
+    INSERT INTO integration_idempotency (
+      api_key_id, idempotency_key, request_hash, response_status, response_body, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(apiKey.id, context.key, context.requestHash, status, JSON.stringify(body), new Date().toISOString());
+}
+
+/** After commit: replace the stored body with the full response so a replay returns the same thing. */
+export async function updateIdempotencyBody(db, apiKey, context, body) {
+  if (!context.key) return;
+  await db.prepare(`
+    UPDATE integration_idempotency SET response_body = ? WHERE api_key_id = ? AND idempotency_key = ?
+  `).run(JSON.stringify(body), apiKey.id, context.key);
+}
+
 export async function runIdempotent(db, apiKey, idempotencyHeader, body, work) {
   const key = normalizeIdempotencyKey(idempotencyHeader);
   const requestHash = key ? sha256(canonicalJson(body ?? null)) : null;

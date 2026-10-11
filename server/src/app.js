@@ -39,7 +39,9 @@ import { mountConfigErrorApp, sendConfigError } from './configError.js';
 import { loadCurrencyConfig } from './currencyConfig.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
 import { requireApiSession } from './requestActor.js';
-import { corsOptions, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
+import { warnIfBadAppBaseUrl } from './sourcingConfig.js';
+import tickRouter from './routes/tick.js';
+import { corsDelegate, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -104,6 +106,7 @@ export function createApp(options = {}) {
   const authConfig = options.authConfig || loadAuthConfig();
   const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   const runtimeEnv = options.env || process.env;
+  warnIfBadAppBaseUrl(runtimeEnv);
   try {
     warnIfInsecureSessionSecret(authConfig, runtimeEnv);
   } catch (error) {
@@ -128,6 +131,8 @@ export function createApp(options = {}) {
       req.integrationConfig = integrationConfig;
       req.currency = currencyConfig.currency;
       req.now = typeof options.now === 'function' ? options.now : () => new Date();
+      // Tests inject a fake mail transport here; production reads MAIL_PROVIDER from the environment.
+      req.mailOptions = options.mailOptions || {};
       next();
     } catch (error) {
       if (config.onVercel || error instanceof TursoConfigError) {
@@ -140,7 +145,7 @@ export function createApp(options = {}) {
   app.use(attachSession);
   // Portal is bearer-only and must not inherit credentialed CORS.
   app.use('/api/portal', options.portalRateLimit || rateLimit({ max: 300 }), portalRouter);
-  app.use(cors(corsOptions(runtimeEnv)));
+  app.use(cors(corsDelegate(runtimeEnv)));
   app.use('/api', originCheck(runtimeEnv));
   app.use(requireApiSession);
 
@@ -181,6 +186,7 @@ export function createApp(options = {}) {
   app.use('/api/compliance', complianceRouter);
   app.use('/api/integrations', integrationsRouter);
   app.use('/api/admin/invoice-proposal-pdf-column', invoiceProposalPdfColumnRouter);
+  app.use('/api/sourcing/tick', tickRouter);
   app.use('/api/sourcing', sourcingRouter);
 
   app.get('/api/health', (req, res) => {

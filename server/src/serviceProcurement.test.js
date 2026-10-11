@@ -10,6 +10,7 @@ import { createGoodsReceipt, GoodsReceiptError } from './goodsReceiptsService.js
 import { acceptServiceEntrySheet, createServiceEntrySheet } from './serviceEntrySheetsService.js';
 import { createVendorInvoice } from './invoicesService.js';
 import { withCookie } from './testSession.js';
+import { currentFiscalYear } from './fiscalYear.js';
 
 function authed(url, options) {
   return fetch(url, withCookie(1, options));
@@ -41,7 +42,7 @@ async function createTestDb() {
       (4, 'David Miller', 'david@example.com', 'finance', 1);
     INSERT INTO suppliers (id, name, code) VALUES (1, 'Apex Advisory', 'SUP-AAD');
     INSERT INTO budgets (department_id, fiscal_year, total_budget, committed_amount, actual_spent)
-      VALUES (1, 2026, 15000000, 0, 0);
+      VALUES (1, ${currentFiscalYear()}, 15000000, 0, 0);
   `);
   return db;
 }

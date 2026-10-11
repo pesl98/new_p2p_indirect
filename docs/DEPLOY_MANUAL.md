@@ -163,6 +163,14 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `MAIL_PROVIDER` | `none` (default, buyer copies the link) or `smtp`. | Optional. | Same environment as sourcing, if mail is wanted. | No. | Anything else is treated as not configured and the send is skipped. |
 | `MAIL_FROM` | From address for invitation, deadline, and cancellation mail. | Required only when `MAIL_PROVIDER=smtp`. | With the SMTP URL. | No. | A mailbox the customer's relay will send as. |
 | `MAIL_SMTP_URL` | Customer SMTP relay, `smtp://` (STARTTLS) or `smtps://`. | Required only when `MAIL_PROVIDER=smtp`. | With `MAIL_FROM`. | No. | Include credentials in the URL. They are not written by the CLIs. |
+| `APP_BASE_URL` | Public origin of this deployment, no path (`https://inkoop.acme.nl`). Builds supplier portal links and is the origin CORS allows. | Required with `SOURCING_ENABLED`. | Production, and Preview if it runs RFQs. | No. | Your custom domain or the `*.vercel.app` URL. |
+| `APP_NAME` | Customer name shown at the top of the supplier portal. Default `ProcureFlow`. | Optional. | Same as sourcing. | No. | A short name. |
+| `MAIL_REPLY_TO` | Reply-To header on RFQ mail. | Optional. | With the SMTP settings. | No. | A mailbox the buyers read. |
+| `CRON_SECRET` | Bearer secret for `GET`/`POST /api/sourcing/tick`. The tick is off while this is unset (401). | Optional. Only if a cron should close RFQs at the deadline and drain the webhook outbox. | Production. | Yes. | 32-byte hex, same generator as `SESSION_SECRET`. Vercel cron sends it as `Authorization: Bearer …`. |
+| `CORS_ORIGINS` | Extra browser origins (comma separated) that may call the buyer API with cookies. `APP_BASE_URL` is always allowed. Same-origin needs nothing. | Optional. | Production and Preview. | No. | `https://admin.acme.nl,https://app.acme.nl` |
+| `SOURCING_AWARD_SOD_THRESHOLD_CENTS` | Award value in cents above which the RFQ owner, the proposer, and users with a declared conflict cannot approve the award. Default 100000 (€ 1.000), clamped to at most 1000000 (€ 10.000). | Optional. | Production. | No. | An integer number of cents. |
+| `FISCAL_YEAR` | Pins the fiscal year used for budgets. Unset means the current calendar year. It must match `budgets.fiscal_year`. | Optional. | Production and Preview. | No. | `2026` |
+| `TRUST_PROXY` | `1`, `true`, or `yes` makes Express trust the first proxy hop, so rate limits see the real client address. | Optional. Set on Vercel. | Production and Preview. | No. | `1` |
 
 ### 3.1 SSO and login flags the CLIs do not write
 
@@ -966,7 +974,18 @@ To turn RFQs on for this customer only, set `SOURCING_ENABLED=1` and `PORTAL_TOK
 
 Publishing mints one magic link per invitation. With `MAIL_PROVIDER` unset or `none`, the buyer copies each link from the publish response. It is not stored. Optional `smtp` needs `MAIL_FROM` and `MAIL_SMTP_URL`. A bad mail setting skips the send and still returns the link. A configured relay is not awaited on the publish request: the links are in the response either way, and a hung relay is cut off by the socket timeout (8 seconds unless a test overrides it). Set `TRUST_PROXY=1` only when a reverse proxy sits in front of a host that is not Vercel. Vercel sets trust itself. Without that, `X-Forwarded-For` is ignored. The supplier page is `/portal.html` (Dutch and English). Express sets the same `frame-ancestors 'none'` policy when it serves that file outside Vercel. The page does not use the buyer session. Prices stay hidden from buyers until the deadline. `APP_BASE_URL` is the prefix of the copied link.
 
-`SOURCING_PDF_MAX_BYTES` can set a smaller cap for the buyer PDFs. It cannot raise the 4 MiB ceiling. Publishing, supplier links, and bids are not in this release.
+`SOURCING_PDF_MAX_BYTES` can set a smaller cap for the buyer PDFs. It cannot raise the 4 MiB ceiling.
+
+### 8.11 Sourcing go-live checklist (Sprint 8d)
+
+1. **Databases.** Preview and Production use separate Turso databases (section 4.2.1). Do this first: a preview deploy must never write RFQs, bids, or mail records into the production database.
+2. **Migration.** Everything is additive (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN`). Run `npm run db:migrate -- --turso` before replacing Production, or let the next cold start apply it. New in 8d: `sourcing_mail_log`, `integration_sourcing_links`, `sourcing_events.outcome_published_at`, and `approval_requests.policy_version` (existing chains stay NULL = policy version 1).
+3. **Variables on Production:** `SOURCING_ENABLED=1`, `PORTAL_TOKEN_SECRET`, `APP_BASE_URL`, `TRUST_PROXY=1`. Optional: `MAIL_PROVIDER=smtp` with `MAIL_FROM` and `MAIL_SMTP_URL` (and `MAIL_REPLY_TO`), `CRON_SECRET`, `CORS_ORIGINS`, `SOURCING_AWARD_SOD_THRESHOLD_CENTS`. The full list is in section 3.
+4. **Mail.** Default is copy link: nothing is sent and the buyer copies each link at publish. With `smtp`, invitation, link-rotation, deadline, cancellation, Q&A-answer, bid-receipt and award-outcome mail is sent after the business write has committed. A failed send is recorded in `sourcing_mail_log` (kind and status only, never the text, the address, or a link) and never rolls back the write. Admins see the provider and recent failures under **Integraties**. For deliverability the customer adds SPF (and DKIM if the relay supports it) for the `MAIL_FROM` domain in DNS.
+5. **Tick (optional).** Without a cron, an RFQ closes the next time anyone reads it after the deadline. To close on time, set `CRON_SECRET` and add a cron to `vercel.json` (off by default, not shipped): `"crons": [{ "path": "/api/sourcing/tick", "schedule": "*/15 * * * *" }]`. The tick closes due RFQs and drains the webhook outbox within a 20 second budget. It is safe to run twice or in parallel: each outbox row is claimed with a lease, so a webhook is delivered once. Without the secret it answers 401.
+6. **CORS.** Only `APP_BASE_URL` and `CORS_ORIGINS` get credentialed cross-origin access. Other origins are denied and logged once by origin.
+7. **Integrations.** Keys with `sourcing:read` list and read RFQs, bids after the deadline (sealed before it), and the award. Keys with `sourcing:write` create a **draft** RFQ (idempotent on `external_id`, which is scoped per key, and on `Idempotency-Key`) and add invitees by supplier external id. A key can never publish, award, cancel, or see portal links, tokens, or contact addresses. The draft belongs to the person who created the key, who must be procurement or admin.
+8. **Manual checks on a Vercel preview** before the first live RFQ (they cannot be proven in unit tests): upload a 4 MiB PDF through the portal, and have several suppliers submit within the last minute before a deadline.
 
 ---
 
