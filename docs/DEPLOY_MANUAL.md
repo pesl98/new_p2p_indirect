@@ -725,7 +725,7 @@ npm run vercel:customer -- --slug acme --apply
 
 Store the new secret in the password manager. Do not run `turso:customer --apply` for a secret-only rotation: that command also mints a new database token. If `SESSION_SECRET` is already exported, `turso:customer` will keep it.
 
-Production and Preview for one customer may share one secret. Two customers must not.
+Production and Preview for one customer must not share `SESSION_SECRET`. A shared secret lets a Preview session cookie verify on Production as the same user id. Two customers must not share one either. The command above still writes the exported value to both environments; that split is Deploy 1 in [CUSTOMER-DEPLOY-PLAN.md](CUSTOMER-DEPLOY-PLAN.md).
 
 ### 8.2 Rotate the Turso token
 
