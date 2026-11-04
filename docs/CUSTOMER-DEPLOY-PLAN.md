@@ -2,7 +2,7 @@
 
 Scoping note for the owner. This pull request is documentation only. It does not change the app, the CLIs, or [SPRINT-LOG.md](SPRINT-LOG.md) (another pull request owns that register).
 
-Revised after the architect reviews of PR #76 (heads `349f3df` and `267644d`). The current-state section stands. Later sections hold the review’s blockers: the requisition rebuild must not sit inside `BEGIN`, and a second apply from an empty shell must be a no-op.
+Revised after the architect reviews of PR #76 (heads `349f3df`, `267644d`, and `6d53d7a`). The current-state section stands. Migration steps are a conditional Hrana batch on one stream. A pipeline cannot skip `COMMIT` after an error. A re-apply resumes the first unfinished step.
 
 The priority is a repeatable install per customer: **one Vercel project, one Turso group, one production database, and one preview database per customer**. Feature sprints wait until that path is boring.
 
@@ -117,7 +117,7 @@ Rebuilds are multi-statement scripts executed through `exec`, which does not wra
 | `invoice_exception_dispositions` CHECK gains `short_pay` / `buyer_response` | lines 157–177 | `database.exec` at line 212 |
 | `purchase_requisitions` CHECK gains `skipped` | lines 514–544, with `PRAGMA foreign_keys` off in the same script (lines 540–544) | `database.exec` at line 568 |
 
-[server/src/tursoHttp.js](../server/src/tursoHttp.js) `exec` (lines 469–476) splits the script and sends one pipeline of `execute` requests, then `close`, with no `BEGIN` and no `COMMIT`. Statements outside a transaction store send no baton (file header, lines 5–8). Each statement autocommits. If a later statement fails, the earlier ones stay. `batch` (lines 325–346) always starts that pipeline with `BEGIN`, then the statements, then `COMMIT`. The rebuilds do not use it. That is why `PRAGMA foreign_keys = OFF` in the requisition script works today: it is not inside a transaction. SQLite ignores that pragma inside `BEGIN`. Wrapping the same script in `batch()` leaves foreign keys on, and `DROP TABLE purchase_requisitions` then cascades to `requisition_items` and `approval_requests` ([server/src/schema.sql](../server/src/schema.sql) lines 121 and 137) or fails on `purchase_orders` (line 187, no `ON DELETE CASCADE`). A stock `sqlite3` rebuild inside a transaction kept 0 of 2 child rows.
+[server/src/tursoHttp.js](../server/src/tursoHttp.js) `exec` (lines 469–476) splits the script and sends one pipeline of `execute` requests, then `close`, with no `BEGIN` and no `COMMIT`. Statements outside a transaction store send no baton (file header, lines 5–8). Each statement autocommits. If a later statement fails, the earlier ones stay. `batch` (lines 325–346) always starts that pipeline with `BEGIN`, then the statements, then `COMMIT`. A Hrana pipeline runs every request even after one of them returns an error, so that `COMMIT` still runs. The rebuilds do not use it. That is why `PRAGMA foreign_keys = OFF` in the requisition script works today: it is not inside a transaction. SQLite ignores that pragma inside `BEGIN`. Wrapping the same script in `batch()` leaves foreign keys on, and `DROP TABLE purchase_requisitions` then cascades to `requisition_items` and `approval_requests` ([server/src/schema.sql](../server/src/schema.sql) lines 121 and 137) or fails on `purchase_orders` (line 187, no `ON DELETE CASCADE`). A stock `sqlite3` rebuild inside a transaction kept 0 of 2 child rows.
 
 `openDatabase` ([server/src/db.js](../server/src/db.js) lines 748–758) calls `applySchema` whenever `options.migrate` is not `false`. The request path uses the default, so every cold start runs those rebuilds. Nothing takes a lock. Two overlapping cold starts can both decide a rebuild is required.
 
@@ -161,7 +161,7 @@ Keep these. Later sprints extend them.
 - Fail-closed on a half-set Turso pair, on a wrong Vercel link, and on Preview using the production database.
 - Onboard waits until Production is Ready before smoke.
 - Empty customer data path is migrate → org skeleton → first admin. Demo seed is a separate destructive command.
-- `batch()` already exists for a single pipeline transaction. A parent-table rebuild still needs `PRAGMA foreign_keys = OFF` before `BEGIN` on that same connection. The client does not need a new transport.
+- The HTTP client already speaks Hrana. Today’s `batch()` is a pipeline of `execute` requests, not a conditional batch. Migrations need the conditional form. They do not need a new database.
 - SSO, SMTP, webhooks, and audit tables already exist in the product. The gap is wiring them into the operator path, not building them again.
 - CLI tests mock the process runner, so fleet commands can be tested without cloud credentials.
 
@@ -237,11 +237,14 @@ Install writes these keys, and Deploy 1 offboard removes every one of them from 
 
 That is 14 assignments and 9 names. The three keys offboard removes today are not this list.
 
-Session claims ship together in Deploy 1, so there is one forced logout, not one for `env` and another later for `ver`. The payload gains `env`, `tenant`, and `ver` in the same change. The process environment is `production` or `preview` when `VERCEL_ENV` is that value, and `local` otherwise (unset or `development`). `verifySessionToken` returns null unless all three hold:
+Session claims ship together in Deploy 1, so there is one forced logout, not one for `env` and another later for `ver`. The payload gains `env`, `tenant`, and `ver` in the same change. The process environment is `production` or `preview` when `VERCEL_ENV` is that value, and `local` otherwise (unset or `development`).
+
+`verifySessionToken` ([server/src/auth.js](../server/src/auth.js) lines 106–126) stays the signature, `uid`, and `exp` check, plus the two claims that do not need a database:
 
 - `env` equals that process environment. A missing `env` fails for `production`, `preview`, and `local`.
-- `tenant` equals `PROCUREFLOW_TENANT`. A missing tenant fails the same way.
-- `ver` equals that user’s `session_version` (column added in Deploy 1, default 1). A missing `ver` fails the same way.
+- `tenant` equals `PROCUREFLOW_TENANT`. On Production and Preview an unset `PROCUREFLOW_TENANT` refuses to boot (503, before a request is served). It does not default. Local, where `VERCEL_ENV` is unset or `development`, defaults `PROCUREFLOW_TENANT` to `local` so a laptop still signs in. A missing `tenant` in the token fails in all three environments.
+
+`ver` is not decided in `verifySessionToken`. The function returns it on the session object. `attachSession` (lines 181–196) loads the user and rejects the cookie when `ver` is missing or is not `users.session_version` (column added in Deploy 1, default 1). That comparison needs the row. A signature check cannot see it.
 
 A cookie signed for preview fails on production even if the secrets were copied. A cookie for slug `acme` fails on slug `beta` even if the secrets and `env` match. Deploy 4’s password reset and `admin:recover` bump `session_version` for that user only. They do not introduce a second fleet-wide logout. Say the one Deploy 1 logout in the release note.
 
@@ -251,11 +254,18 @@ Every value this table mints is written with Vercel’s sensitive flag. Confirm 
 
 “Installed” is not “the shell has the variables”. An empty shell is the normal second run.
 
-- `turso db show procureflow-<slug>` succeeds → the production database exists. Same for the preview name and the group.
-- `vercel env ls` shows the key name on that target → the key is installed. The command reads names only. It does not read values, and it does not `env pull`.
-- If the database exists and every key in the table above is already on its target, do not mint a token, do not mint a secret, do not call `vercel env add`, and do not redeploy.
-- `vercel env add --force` is how today’s CLI overwrites a key ([server/src/vercelCustomer.js](../server/src/vercelCustomer.js) line 230). The new commands omit `--force` unless the operator passed `--rotate`. `--rotate` is the only path that replaces a session secret or a database token, and it is never the default of a second apply.
-- Generated secrets (`SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`) are never read from the shell. If the key is absent, mint one and store it. If the key is present, leave it.
+Each step checks only its own precondition. A run that died after the databases and keys existed still provisions and deploys. “Keys exist” is not “the customer is finished”.
+
+- Group and databases. `turso db show` succeeds → that database exists. Create only the names that are missing. If both exist, continue.
+- Keys. `vercel env ls` shows the name on that target → the key is installed. The command reads names only. It does not read values, and it does not `env pull`. Mint and `env add` only the missing names. If every name in the table above is already listed, continue. Do not return.
+- Schema and admin. Before Deploy 3, this means the expected tables from `db:status` are present and a user with role `admin` exists. From Deploy 3 on, it means `schema_migrations` is at the code’s head and that admin exists. If either is missing, provision. If both are present, skip provision and continue.
+- Production deployment. `vercel inspect` reports a Ready Production deployment whose git SHA is the SHA this command is shipping. If it does, skip deploy. If it does not, deploy after provision has succeeded, then smoke.
+
+`vercel env add --force` is how today’s CLI overwrites a key ([server/src/vercelCustomer.js](../server/src/vercelCustomer.js) line 230). The new commands omit `--force` unless the operator passed `--rotate`. `--rotate` is the only path that replaces a session secret or a database token, and it is never implied by a resume.
+
+Generated secrets (`SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`) are never read from the shell. If the key is absent, mint one and store it. If the key is present, leave it.
+
+Provision and preview migrate, including a resume, open the database with a short-lived token: `turso db tokens create <db> --expiration <duration>`. Confirm the duration syntax against `turso db tokens create --help`. That token stays in the process. It is not written to Vercel, the secrets manager, the shell, or the registry, and the run does not call `turso db tokens invalidate` when it ends. The long-lived token already stored for the app stays where it is.
 
 The shell is still checked, so a stale export cannot point the command at another customer. The same checks run for `onboard:customer`, `turso:customer`, and `vercel:customer`. A direct `vercel:customer --slug beta` is not a way around them.
 
@@ -268,16 +278,16 @@ Order of a first apply, replacing the current deploy-then-provision order (Verce
 
 1. Group and both databases, if `turso db show` says they are missing.
 2. Mint only the keys `vercel env ls` does not already list. Write them sensitive. Do not deploy yet.
-3. Provision the production database (schema, org skeleton, first admin), then the preview database (schema only, unless `--preview-demo`).
-4. Deploy Production only after provision exits 0. Wait until Ready. Then deploy a Preview deployment and smoke that URL (§4).
+3. Provision the production database when schema or admin is missing (schema, org skeleton, first admin), using the short-lived token. Then the preview database (schema only, unless `--preview-demo`), with its own short-lived token.
+4. Deploy Production only when provision has succeeded and the Ready deployment is not already this SHA. Then deploy a Preview deployment and smoke that URL (§4).
 
-A second apply from an empty shell, and a second apply from a shell that already holds this slug’s URL, both stop at step 1 with nothing minted and no `env add`. The definition of done for Deploy 1 includes that empty-shell case.
+A second apply from an empty shell, when all four preconditions already hold, mints nothing, writes no env, does not provision, and does not deploy. The same command, when the keys exist and the admin does not, provisions and deploys and still does not mint a stored secret. The definition of done for Deploy 1 includes both.
 
 ### 3.3 One group per customer
 
 Before creating a database, read the org’s group quota (`turso group list` and the plan limits in the current Turso docs). If one new group would exceed that quota, stop. Do not put the new databases in the default group to get around the quota. Under the quota, create or reuse group `procureflow-<slug>` in the fleet location (§5 question 3). Create `procureflow-<slug>` and `procureflow-<slug>-preview` with `--group procureflow-<slug>`. Do not pass `--tursodb`. Do not create new databases in the org default group.
 
-`turso db tokens invalidate` stays out of Deploy 1. It invalidates every token in the group. Deploy 4 may call it only after inventory shows that group contains only this customer’s two databases. Operator migrate uses a short-lived database token (`turso db tokens create` with the expiry flag the CLI documents) and does not invalidate at the end of the run. Invalidating the operator token would also invalidate the token Vercel is using.
+`turso db tokens invalidate` stays out of Deploy 1. It invalidates every token in the group. Deploy 4 may call it only after inventory shows that group contains only this customer’s two databases. Operator migrate uses `turso db tokens create <db> --expiration <duration>` and does not store that token and does not invalidate at the end of the run. Invalidating the operator token would also invalidate the token Vercel is using.
 
 ### 3.4 Region
 
@@ -302,18 +312,33 @@ Operator commands append one line to an action log in the private repo: time, ac
 
 Numbered files under `server/migrations/` (`0001_name.sql`, then `0002_…`). A `schema_migrations` table records version, name, and applied-at. `db:status --json` prints the highest applied version and the versions still missing. `EXPECTED_TABLES` stays a sanity check, not the version.
 
-Rules:
+A Hrana **pipeline** runs every request in the body, including the ones after a request that returned an error. The server does not stop. A later `COMMIT` in that same pipeline still runs. Built that way, a failed `INSERT … SELECT` still runs `DROP`, `RENAME`, and `COMMIT`: the parent table is gone, child rows are left, and the transaction is committed. Today’s `batch()` is that shape. It pushes `BEGIN`, then each statement, then `COMMIT`, as `execute` requests ([server/src/tursoHttp.js](../server/src/tursoHttp.js) lines 325–346, `BEGIN` at line 329). It does not send a Hrana `batch` request, and it does not set step conditions. Migrations do not use it. `exec` (lines 469–476) is the same pipeline without `BEGIN`/`COMMIT`.
 
-- Ordinary statements in one version run inside a transaction. `exec` stays available for a single statement. A rebuild is not passed to today’s `batch()`, because that helper always sends `BEGIN` first ([server/src/tursoHttp.js](../server/src/tursoHttp.js) line 329) and `PRAGMA foreign_keys = OFF` is a no-op after `BEGIN`.
-- A rebuild that drops a parent uses one pipeline, on one connection, in this order: `PRAGMA foreign_keys = OFF`, then `BEGIN`, then the rebuild statements, then `PRAGMA foreign_key_check`, then `COMMIT` only if that check returns no rows, then `PRAGMA foreign_keys = ON`, then `close`. Any row from `foreign_key_check` is `ROLLBACK`, then foreign keys back on, then a failed migration. The `purchase_requisitions` script is the case this exists for: with foreign keys left on, `DROP TABLE` cascades through [server/src/schema.sql](../server/src/schema.sql) lines 121 and 137, and `purchase_orders` (line 187) has no cascade.
-- Required test for that rebuild: a parent row plus child rows in `requisition_items` and `approval_requests`, and a `purchase_orders` row pointing at the parent. After the pipeline, those child counts are unchanged. The same fixture wrapped so `PRAGMA foreign_keys = OFF` sits inside `BEGIN` must not be what the migration calls. Stock `sqlite3` already showed that shape keeps 0 of 2 child rows.
+The default is one Hrana **batch** request on one **stream** (one baton, one connection). Steps carry conditions, the same arrangement as `executeHranaBatch` in `@libsql/client` `packages/libsql-client/src/hrana.ts` lines 280–311:
+
+1. `PRAGMA foreign_keys=OFF` when this version drops a parent. This step is before `BEGIN`, so the pragma is not a no-op. The next step reads `PRAGMA foreign_keys` and fails unless the value is 0. The failure is a SQL error, not a value the client inspects mid-pipeline: a temp table `CHECK (n = 0)` filled from that pragma. `BEGIN` is conditioned on `ok` of that step.
+2. Each migration statement is conditioned on `ok` of the previous step.
+3. The foreign-key check is another step that fails on its own: a temp table `CHECK (n = 0)` filled from `SELECT count(*) FROM pragma_foreign_key_check`. A violation errors that step. It is not `COMMIT` decided by the client after reading rows.
+4. The `schema_migrations` insert is conditioned on `ok` of the last statement.
+5. `COMMIT` is conditioned on `ok` of that insert.
+6. `ROLLBACK` is conditioned on `not(ok(COMMIT))`.
+7. `PRAGMA foreign_keys=ON` runs after that, still on the same stream, so the connection is not left with foreign keys off.
+
+A step whose condition is false is not executed. That is why `COMMIT` and the history insert do not run after a failed statement. A pipeline cannot express this. The client only sees results after the server has already run every pipeline request.
+
+The other shape is an interactive stream: `BEGIN`, then one statement per request, then the client sends `COMMIT` or `ROLLBACK` after it has read the result. Turso bounds how long that transaction may stay open. Use it only if a conditional batch cannot carry the statement. The conditional batch is the default.
+
+`PRAGMA foreign_keys = OFF` inside `BEGIN` is still a no-op, and `DROP TABLE purchase_requisitions` then cascades through [server/src/schema.sql](../server/src/schema.sql) lines 121 and 137, or fails on `purchase_orders` (line 187, no `ON DELETE CASCADE`). The off pragma stays a batch step before `BEGIN`, on that same stream.
+
 - The request path opens the database with `migrate: false`. If `schema_migrations` is behind the code’s head, the process returns 503 `schema_behind` and does not rebuild. Cold start is not a migration runner and takes no schema lock because it writes no schema.
-- Before that boot behavior ships, a baseline command records the versions already present on each live database. It probes for the tables and columns those historical migrations created and inserts `schema_migrations` rows. It does not execute the migration SQL and it does not rebuild. A failed probe does not mark that version and stops the release. Skip this and every live customer 503s `schema_behind` the moment boot migrations stop, because their databases were built by `applySchema` and have an empty history table.
-- The upgrader is the only writer of new versions. It inserts the history row in the same transaction as that version’s statements. A second runner finds the row and does not apply the version again. The baseline is the one writer that inserts history without running the SQL, and it runs only for versions whose probes already pass.
+- Before that boot behavior ships, a baseline command records the versions already present on each live database. It does not execute the migration SQL and it does not rebuild. A failed probe does not mark that version and stops the release. Skip this and every live customer 503s `schema_behind` the moment boot migrations stop, because their databases were built by `applySchema` and have an empty history table.
+- Baseline probes for the three rebuilds read the `sql` column of `sqlite_schema` (`sqlite_master` in this codebase; [server/src/db.js](../server/src/db.js) `purchaseRequisitionsContractUseNeedsSkippedRebuild`, lines 501–506, already does that for `'skipped'`). Table presence is not enough. The stored `CHECK` must contain `'waiting'` for `approval_requests`, `'short_pay'` and `'buyer_response'` for `invoice_exception_dispositions`, and `'skipped'` for `purchase_requisitions.contract_use_status`. It also requires `users.session_version` before the version that added that column is marked applied. Old `CHECK` text means the history row is not inserted.
+- The upgrader is the only writer of new versions. The history insert is a conditional step in the same batch as the statements, so a failed version does not record itself. A second runner finds the row and does not apply the version again. The baseline is the one writer that inserts history without running the SQL, and it runs only for versions whose probes already pass.
 - Expand/contract. An expand-only version (new table, new nullable column, new index) is valid while the previous release is still serving. A contract (drop column, tighten a CHECK, rebuild that removes a column the old code still writes) ships in a later version, after the release that stopped writing the old shape is the one in production. A pull request that adds a contract in the same version as the code which still needs the old shape fails review.
-- CI runs an N−1 check. Apply every migration except the last one, run the previous release’s read path against that schema, then apply the last migration and run the new code. A contract migration is refused by that job when the previous release still selects the dropped shape. The job does not need a live Turso org: it uses the HTTP client against a stub, or SQLite, for the schema, and the pipeline test below for autocommit.
-- Required autocommit test, in the same release: a stub `POST /v2/pipeline` applies each `execute` outside an explicit transaction as its own commit. `exec` of a two-statement script whose second statement errors must leave the first statement’s row in place. A pipeline that starts with `BEGIN` and ends with `COMMIT` must leave no row when the second statement errors. That test is what stops a later change from sending a multi-statement rebuild through `exec`.
-- A pull request that adds `server/migrations/NNNN_*.sql` migrates the preview database before that preview deployment is smoked. Production is unchanged until the upgrader runs the release tag. A preview URL that 503s `schema_behind` fails the pull request. The migration runs against `procureflow-<slug>-preview` only.
+- CI runs an N−1 check. Apply every migration except the last one, run the previous release’s read path against that schema, then apply the last migration and run the new code. A contract migration is refused by that job when the previous release still selects the dropped shape. The job does not need a live Turso org: it uses the HTTP client against a stub, or SQLite, for the schema, and the pipeline-versus-batch test below.
+- Required test, in the same release. The stub models both protocols. A pipeline of `execute` requests runs every request after an error, and the fixture that does `BEGIN`, a failing `INSERT … SELECT`, `DROP`, `RENAME`, `COMMIT`, and the history insert ends with 0 parent rows, the child rows still present, the transaction committed, and a `schema_migrations` row. That is the bug. The conditional batch for the same statements skips every step after the failure, runs `ROLLBACK`, and leaves the parent and the children as they were, with no `schema_migrations` row. A parent rebuild in that batch also keeps `requisition_items`, `approval_requests`, and `purchase_orders` counts unchanged, and `PRAGMA foreign_keys` is read back as 0 before `BEGIN`. If that read is not 0, `BEGIN` is not executed.
+- A pull request that adds `server/migrations/NNNN_*.sql` migrates **this repository’s** preview database before that preview deployment is smoked. It does not migrate every customer. The job is the preview check on the pull request, or the operator when that check has no Turso credential. The token is `turso db tokens create <preview-db> --expiration <duration>`, minted for the job and discarded when the job ends. It is not stored. Production, and every other customer’s preview database, stay on the upgrader at release time. A preview URL that 503s `schema_behind` fails the pull request.
+- The version number is the primary key. The filename is `schema_migrations.name`. Two files in one tree with the same number are refused before any SQL. Two open pull requests that both introduce the same number: the preview migrate that runs second sees that number already recorded under a different name and exits non-zero without applying it. The author renumbers. Nothing rewrites an applied number.
 
 The one-off PDF-column repair stays manual. The upgrader does not run it. Deploy 3a and Deploy 3b ship as one release: baseline already applied on every live database, then the history table, the boot stop, and the upgrader together. A pull request that only turns on `schema_behind` does not merge.
 
@@ -383,7 +408,7 @@ Unit tests use a fake process runner and fixture files. The Deploy 1 done-when a
 
 - Check the Turso group quota, then create group `procureflow-<slug>` and both databases in it. Preview database included. No `--tursodb`. No default group. Stop if the quota would be exceeded.
 - Per-environment secrets from §3.1, written with the sensitive flag. Includes `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, and `WEBHOOK_SIGNING_SECRET`. No production secret, production URL, or production token on Preview.
-- `env`, `tenant`, and `ver` on the session token, one cutover. The rule in §3.1 is the only rule: missing or mismatched claims fail for `production`, `preview`, and `local`.
+- `env`, `tenant`, and `ver` on the session token, one cutover. §3.1 is the only rule: `verifySessionToken` checks `env` and `tenant`; `attachSession` checks `ver`; Production and Preview 503 when `PROCUREFLOW_TENANT` is unset; local defaults it to `local`.
 - Installed-detection from §3.2, including `turso:customer` and `vercel:customer` run on their own. Provision the database before deploy.
 - `regions` in `vercel.json` for the fleet region. Group `--location` matches it.
 - Offboard dumps with `turso db shell <db> .dump`, refuses to destroy if that dump fails, and removes every key in the §3.1 table. Token invalidate is not called.
@@ -391,18 +416,19 @@ Unit tests use a fake process runner and fixture files. The Deploy 1 done-when a
 
 **Definition of done**
 
-- A second `onboard:customer --apply` changes nothing when the shell is empty, and when the shell already holds this slug’s URL. `turso db show` and `vercel env ls` are how it decides. No new token, no new secret, no `env add`, no redeploy.
-- A live `GET /api/health` on the Preview deployment URL returns 200 and `db: "turso-http"`, and it is not a `preview_db_*` 503. A marker written only to `procureflow-<slug>-preview` is visible through that URL and absent from the production URL. A unit test of the env plan is not this check.
+- A second `onboard:customer --apply` from an empty shell changes nothing only when the database exists, every install key is listed, schema is at head and an admin exists, and Production is Ready at this SHA. No new stored token, no `env add`, no provision, no deploy. If that earlier run died after the keys were written and before provision, the same command provisions with a short-lived `--expiration` token and then deploys, and it still does not overwrite a stored secret.
+- A live smoke hits the Preview deployment URL. `GET /api/health` returning 200 and `db: "turso-http"` is required and is not the proof: that field only distinguishes Turso from SQLite ([server/src/app.js](../server/src/app.js) lines 192–201). Preview provision writes a nonce into that database only. Health grows a `probe` field that reads the nonce back. The preview URL’s `probe` equals the nonce. The production URL’s `probe` does not. The nonce is not a secret and is not the database URL. A unit test of the env plan is not this check.
 - A shell holding customer A’s `TURSO_*` or any generated secret cannot write those values into customer B’s project, whether the command is `onboard:customer`, `turso:customer`, or `vercel:customer`. The command exits non-zero before spawn.
 
 **Tests**
 
 - Dry-run lists `turso group create procureflow-acme` and `turso db create procureflow-acme-preview --group procureflow-acme`, and does not pass `--tursodb`.
 - Preview env plan has the preview pair and the preview mints, each with the sensitive flag. It does not contain the production token, the production URL, or the production `SESSION_SECRET`. `env add` argv has no `--force` unless `--rotate` was passed.
-- A fixture cookie signed with the preview secret, `env: "preview"`, `tenant: "acme"`, and `ver: 1` fails `verifySessionToken` under the production secret, under `VERCEL_ENV=production`, under `PROCUREFLOW_TENANT=beta`, and when `ver` does not match. A payload missing `env`, `tenant`, or `ver` fails for `production`, `preview`, and `local`.
+- A fixture cookie signed with the preview secret and `env: "preview"` fails `verifySessionToken` under the production secret and under `VERCEL_ENV=production`. `tenant: "acme"` fails when `PROCUREFLOW_TENANT` is `beta`. A payload missing `env` or `tenant` fails for `production`, `preview`, and `local`. `ver` is returned by `verifySessionToken` and rejected in `attachSession` when it is missing or is not the user’s `session_version`. Unset `PROCUREFLOW_TENANT` with `VERCEL_ENV=production` or `preview` fails boot with 503. Unset on a local process defaults to `local`.
 - Exported URL host `procureflow-beta` with `--slug acme` exits non-zero before spawn, for all three commands. The same for `SESSION_SECRET` or `PORTAL_TOKEN_SECRET` without `PROCUREFLOW_SECRET_SLUG=acme`.
-- Empty-shell second apply: `turso db show` and `vercel env ls` report the database and the key names, the shell has no `TURSO_*` and no `SESSION_SECRET`, and the command does not spawn `turso db tokens create`, does not mint a secret, and does not spawn `env add`.
-- Provision’s argv is recorded before deploy’s argv.
+- Empty shell, all four preconditions true: no `turso db tokens create`, no secret mint, no `env add`, no provision, no deploy.
+- Empty shell, keys listed, no admin: provision runs, deploy runs, `turso db tokens create` is spawned with `--expiration`, and that token does not appear in an `env add` or in the registry fixture. No `--force`.
+- Provision’s argv is recorded before deploy’s argv whenever provision is required. When schema and admin are already present, provision is not spawned.
 - Offboard with a failing dump does not spawn `turso db destroy`. Offboard’s `env rm` list is the §3.1 table. Offboard without `--confirm-slug` mutates nothing.
 - `vercel.json` contains `regions`. Existing [server/src/dbConfig.test.js](../server/src/dbConfig.test.js) cases stay, including the `allow` hatch.
 - The live Preview smoke above, run against the deployment URL, is part of accepting the sprint. It is not a substitute the unit tests can skip.
@@ -442,21 +468,20 @@ Unit tests use a fake process runner and fixture files. The Deploy 1 done-when a
 
 **Scope**
 
-- Baseline first, against every live production and preview database, while boot still runs `applySchema`. It inserts history rows and does not execute the old SQL. Then, in the same release, `server/migrations/`, `schema_migrations`, boot `migrate: false`, and `upgrade:customers`.
-- Rebuilds use the pre-`BEGIN` foreign-key pipeline in §3.6, not `batch()` with the pragma inside the transaction.
-- Expand/contract rule. N−1 CI job. Autocommit partial-failure test. Child-row rebuild test.
-- A pull request that adds a migration migrates preview before preview smoke.
+- Baseline first, against every live production and preview database, while boot still runs `applySchema`. It inserts history rows and does not execute the old SQL. The three rebuild probes compare `CHECK` text in `sqlite_schema`, and the session-version probe requires `users.session_version`. Then, in the same release, `server/migrations/`, `schema_migrations`, boot `migrate: false`, and `upgrade:customers`.
+- Migrations are a conditional Hrana batch on one stream, as in §3.6. They are not today’s `batch()` pipeline. `PRAGMA foreign_keys=OFF` is a step before `BEGIN`, and the following step fails unless the pragma reads back as 0.
+- Expand/contract rule. N−1 CI job. The run-everything pipeline test and the conditional-batch test. Child-row rebuild test.
+- A pull request that adds a migration migrates this repository’s preview database, with a short-lived `--expiration` token, before preview smoke. Same-number collisions fail closed.
 - Upgrader from §3.7. Clean tree, release tag, SHA written to the registry. Canary first. Stop on the first failure. No continue-on-error. Dump before migrate. Deploy only after the production migrate succeeds. Does not retarget `.vercel/project.json`. Does not seed. Does not `env pull`.
 
 **Acceptance**
 
-- Baseline on a fixture that already has the probed columns inserts the history rows and does not send the rebuild SQL. A fixture missing a probed column inserts nothing for that version and exits non-zero.
-- The child-row rebuild leaves `requisition_items`, `approval_requests`, and `purchase_orders` counts unchanged. `PRAGMA foreign_keys = OFF` is the first request in the pipeline, before `BEGIN`. `PRAGMA foreign_key_check` is before `COMMIT`.
-- The stub pipeline test: `exec` leaves the first row when the second statement errors; a `BEGIN`/`COMMIT` pipeline leaves none.
+- Baseline on a fixture whose `sqlite_schema.sql` contains `'waiting'`, `'short_pay'`, `'buyer_response'`, and `'skipped'`, and whose `users` table has `session_version`, inserts the history rows and does not send the rebuild SQL. A fixture whose `approval_requests` CHECK omits `'waiting'`, or whose `users` table has no `session_version`, inserts nothing for that version and exits non-zero.
+- The stub runs every pipeline request after an error. That fixture commits the `DROP` and writes `schema_migrations`. The conditional batch for the same SQL does not: no partial parent table, no orphaned children, no history row. The child-row rebuild keeps `requisition_items`, `approval_requests`, and `purchase_orders` counts. `BEGIN` is absent from the executed steps when `PRAGMA foreign_keys` is not 0.
 - A memory database records each applied version once. Applying twice does not throw and does not duplicate the history row.
 - Opening the server database when history is behind does not rebuild, and the health error code is `schema_behind`.
 - CI fails a fixture contract migration that drops a column the previous release still selects.
-- A fixture pull request that adds a migration and does not migrate preview fails its preview check.
+- A fixture pull request that adds a migration and does not migrate this repo’s preview database fails its preview check. A second file with the same version number and a different name exits non-zero and does not apply. The token argv is `tokens create` with `--expiration`, and the token is not in the registry fixture.
 - Dry-run of the upgrader prints the canary, then the other slug, and does not spawn dump, migrate, or deploy. A dirty tree and a HEAD that is not the tag exit before that.
 - A mocked migrate failure on the canary does not spawn deploy and does not start the second slug.
 - A mocked preview failure after a successful production deploy does not start the second slug, and the report names both facts.
@@ -466,7 +491,7 @@ Unit tests use a fake process runner and fixture files. The Deploy 1 done-when a
 **Risks**
 
 - Baseline has to finish on every live database before the boot-stop deploy. Shipping the boot stop first 503s every customer.
-- The foreign-key pipeline has to be one connection. A `close` between `PRAGMA foreign_keys = OFF` and `BEGIN` turns the pragma into a no-op on the next connection.
+- The foreign-key pragma and the batch share one stream. A `close` between `PRAGMA foreign_keys=OFF` and the batch opens a new connection, and the pragma no longer applies. Putting `COMMIT` in a pipeline after a failing statement commits the partial rebuild.
 - Sequential deploys are slow. Do not parallelize in this release.
 - A canary that is not a real customer proves nothing. Question 10 asks which slug that is.
 
@@ -522,7 +547,7 @@ Decisions already taken in this revision, so the sprints do not re-open them:
 - Preview does not receive production secrets. Session tokens carry `env`, `tenant`, and `ver` from Deploy 1, one logout.
 - A second apply is a no-op from an empty shell. Installed means `turso db show` and `vercel env ls` names. Generated secrets are not read from the shell. `--force` is only `--rotate`.
 - One Turso group per customer, after a quota check. `tokens invalidate` is group-wide and is not a routine operator tool.
-- Migrations are numbered. Parent rebuilds turn foreign keys off before `BEGIN`. A baseline records live databases before boot stops migrating. The upgrader ships in that same release, stops on the first failure, and dumps first.
+- Migrations are numbered conditional Hrana batches on one stream. A pipeline cannot skip `COMMIT` after an error. Baseline compares `CHECK` text and `users.session_version` before boot stops migrating. The upgrader ships in that same release, stops on the first failure, and dumps first. A re-apply resumes the first unfinished step.
 - The customer list lives in a private repo plus the Vercel and Turso APIs, including the deployed SHA. Secrets live in a secrets manager. Vercel copies are Sensitive from Deploy 1.
 - Dumps are `turso db shell <db> .dump`. Restore is `turso db create --from-dump`. PITR is automatic while the database exists. Paid plans can restore a deleted database; Free cannot. A dump is still required before destroy.
 
