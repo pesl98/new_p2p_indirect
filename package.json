@@ -31,7 +31,7 @@
   "dependencies": {
     "@node-saml/node-saml": "^5.1.0",
     "@vercel/functions": "^3.9.11",
-    "ai": "^7.0.133",
+    "ai": "^7.0.140",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2",
