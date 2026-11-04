@@ -310,9 +310,11 @@ The manual’s own summary of coverage: the customer commands; Sprint 1 session 
 
 ---
 
-### Sprint 8d — sourcing hardening (in review)
+### Sprint 8d — sourcing hardening ([#71](https://github.com/pesl98/new_p2p_indirect/pull/71))
 
 Mail after commit for Q&A answers, bid receipts and award outcomes (copy link stays the default), a buyer-controlled outcome page in the supplier portal, `sourcing:read` / `sourcing:write` API keys with sealing, an optional `CRON_SECRET` tick, a CORS allowlist, demo RFQs in `npm run seed`, and the go-live checklist in the deploy manual. See [SPRINT-LOG.md](SPRINT-LOG.md) for decisions.
+
+**Merge.** `fcf7b9bab801a735823092c631123497921cf388` on 2026-10-11 (squash-merged). `npm test` at merge: 763 passing. A 4 MiB portal upload and deadline-rush concurrency still need a Vercel preview check.
 
 ## 4. Design principles in force
 
