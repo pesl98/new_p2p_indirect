@@ -2,9 +2,9 @@
 
 Scoping note for the owner. This pull request is documentation only. It does not change the app, the CLIs, or [SPRINT-LOG.md](SPRINT-LOG.md) (another pull request owns that register).
 
-The priority is a repeatable install per customer: **one Vercel project and one Turso database (plus a separate preview database) per customer**, then the same path for env, schema, first admin, hostname, SSO, mail, upgrades, backups, and offboarding. Feature sprints wait until this path is boring.
+Revised after the architect review of PR #76 (head `349f3df`). The current-state section stands. The target workflow and the sprint order below replace the first draft: separate secrets per environment, slug-bound credentials, migrations that can fail closed, and a registry that is not a file on one laptop.
 
-The isolation model is already the right one. What is missing is the fleet around it: a registry, a preview database inside the happy path, an upgrade that visits every customer, and backups.
+The priority is a repeatable install per customer: **one Vercel project, one Turso group, one production database, and one preview database per customer**. Feature sprints wait until that path is boring.
 
 ---
 
@@ -22,7 +22,7 @@ There is no shared-row `org_id`. Customer A and customer B are two Turso databas
 | Env names, no secrets | [.env.example](../.env.example) |
 | Product behavior of SSO, mail, webhooks | [SYSTEM_MANUAL.md](SYSTEM_MANUAL.md), [DEPLOYMENT.md](DEPLOYMENT.md) §2.1 and §2.2 |
 
-Laptop with both `TURSO_*` unset uses `better-sqlite3` (`PROCUREMENT_DB_PATH` or `server/data/procurement.db`). Vercel requires Turso. A half-set URL/token pair is refused. The function talks to classic libSQL over HTTPS `POST /v2/pipeline` ([server/src/tursoHttp.js](../server/src/tursoHttp.js)). It does not load a native libsql addon. `vercel.json` builds the Vite client into `public/` and runs two Node functions (`api/index.js`, `api/invoice-proposal-upload.js`), both bundling `server/src/schema.sql`. There is no cron in `vercel.json`.
+Laptop with both `TURSO_*` unset uses `better-sqlite3` (`PROCUREMENT_DB_PATH` or `server/data/procurement.db`). Vercel requires Turso. A half-set URL/token pair is refused. The function talks to classic libSQL over HTTPS `POST /v2/pipeline` ([server/src/tursoHttp.js](../server/src/tursoHttp.js)). It does not load a native libsql addon. `vercel.json` builds the Vite client into `public/` and runs two Node functions (`api/index.js`, `api/invoice-proposal-upload.js`), both bundling `server/src/schema.sql`. There is no `regions` key and no cron in `vercel.json`.
 
 ### 1.2 Commands that exist today
 
@@ -36,7 +36,7 @@ All of these are dry-run unless `--apply` is passed. They shell out to `turso` a
 | `npm run provision:customer` | Schema + optional `--with-org` + optional first admin. This is **not** the full customer install. The full install is `onboard:customer`. | [server/src/provisionCustomer.js](../server/src/provisionCustomer.js), [server/src/provision.js](../server/src/provision.js) |
 | `npm run db:migrate` / `db:status` | `applySchema`, or a read-only table/user count. `--seed` is the destructive demo wipe. `--turso` fails closed when `TURSO_*` are unset. | [server/scripts/db-migrate.js](../server/scripts/db-migrate.js), [server/scripts/db-status.js](../server/scripts/db-status.js) |
 | `npm run bootstrap-org` | Idempotent five cost centers and fiscal-year budgets. Does not wipe. | [server/scripts/bootstrap-org.js](../server/scripts/bootstrap-org.js) |
-| `npm run bootstrap-admin` | First admin on an empty user table. Exits once any user exists. | [server/src/bootstrapAdmin.js](../server/src/bootstrapAdmin.js) |
+| `npm run bootstrap-admin` | First admin on an empty user table. Exits once any user exists. | [server/src/bootstrapAdmin.js](../server/src/bootstrapAdmin.js), [server/src/usersService.js](../server/src/usersService.js) `bootstrapFirstAdmin` |
 | `npm run db:seed:preview` | Demo personas on a Preview database only. Second run is a no-op. Refuses a database that already has other users or departments. | [server/src/previewSeed.js](../server/src/previewSeed.js) |
 | `npm run seed` | Destructive demo wipe of whatever database the shell points at. Password `ProcureFlow!demo`. | [server/src/seed.js](../server/src/seed.js) |
 | `npm run smoke` | `/api/health`, auth config, users. Optional login. | [server/scripts/smoke.js](../server/scripts/smoke.js) |
@@ -55,59 +55,90 @@ PR [#55](https://github.com/pesl98/new_p2p_indirect/pull/55). When `VERCEL_ENV=p
 | Preview token equals `TURSO_AUTH_TOKEN` | 503 `preview_db_token_matches_production` |
 | `ALLOW_PREVIEW_PRODUCTION_DATABASE=allow` and the preview pair is missing or illegal | Serves the production database and logs an error. `1` and `true` do nothing. |
 
-Production and a laptop with `VERCEL_ENV` unset keep using `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`. Tests: [server/src/dbConfig.test.js](../server/src/dbConfig.test.js).
+Production and a laptop with `VERCEL_ENV` unset keep using `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`. Tests: [server/src/dbConfig.test.js](../server/src/dbConfig.test.js). A preview pair alone is enough to boot when no production URL is visible.
 
-The operator manual tells a human to create `procureflow-<slug>-preview` by hand and to set the preview variables by hand ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.2.1). `onboard:customer`, `turso:customer`, and `vercel:customer` do not create that database and do not write `TURSO_PREVIEW_*`. `vercel:customer` still copies the **production** URL and token onto the Preview environment. After a finished onboard, a Preview deployment is therefore fail-closed, and the production token is present in Preview env, which is what the `allow` hatch would use.
+The operator manual tells a human to create `procureflow-<slug>-preview` by hand and to set the preview variables by hand ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.2.1). `onboard:customer`, `turso:customer`, and `vercel:customer` do not create that database and do not write `TURSO_PREVIEW_*`. `vercel:customer` still copies the **production** URL, the production token, and `SESSION_SECRET` onto the Preview environment (`CUSTOMER_ENV_KEYS` × `VERCEL_ENV_TARGETS`). After a finished onboard, a Preview deployment is therefore fail-closed, and the production token is present in Preview env, which is what the `allow` hatch would use.
 
 Vercel Preview is one environment per project, shared by every git branch and every preview URL. Sprint 8.0 is one preview database per customer, not one per branch.
 
-### 1.4 Env, secrets, domain, SSO, mail
+### 1.4 Session cookie (why a shared secret crosses environments)
 
-The CLIs write three keys and nothing else: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER`.
+`signSessionToken` ([server/src/auth.js](../server/src/auth.js) lines 95–104) signs `{ uid, iat, exp }` with HMAC-SHA256 and `SESSION_SECRET`. `verifySessionToken` (lines 106–126) checks the signature, that `uid` is a positive integer, and that `exp` is in the future. It does not read an environment, an audience, or a session version. `attachSession` (lines 181–196) loads `users.id = uid` from whichever database this process opened.
+
+The cookie header ([server/src/auth.js](../server/src/auth.js) lines 146–159) is `Path=/`, `HttpOnly`, `SameSite=Lax`, and `Secure` when `VERCEL` or `NODE_ENV=production`. It sets no `Domain`, so a browser stores it for the host that set it and does not send a preview-host cookie to the production host on its own. Presenting that same cookie value to the other host still verifies when both hosts share `SESSION_SECRET`. User ids start at 1 in every database, so a Preview login for uid 1 is a Production session for uid 1.
+
+`setUserPassword` ([server/src/usersService.js](../server/src/usersService.js) lines 267–270) writes a new bcrypt hash and does not change the cookie. Existing sessions keep working until `exp` (7 days). `bootstrapFirstAdmin` (lines 273–279) returns 409 once any user exists, so there is no operator command that replaces a lost admin.
+
+### 1.5 Env, secrets, and the stale shell
+
+The CLIs write three keys and nothing else: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER`. They do not generate `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, or `WEBHOOK_SIGNING_SECRET`.
+
+Credential reuse does not look at the slug:
+
+| Behavior | Where |
+| --- | --- |
+| An exported `SESSION_SECRET` is kept as-is. Nothing checks that it was minted for this slug. | [server/src/tursoCustomer.js](../server/src/tursoCustomer.js) `resolveSessionSecret`, lines 248–257 |
+| Vercel apply only checks that the three strings are non-empty. It does not check that the URL host is `procureflow-<slug>`. | [server/src/vercelCustomer.js](../server/src/vercelCustomer.js) `missingCustomerEnvKeys`, lines 164–166 |
+| Onboard copies whatever Turso just minted over the shell, including a new token. | [server/src/onboardCustomer.js](../server/src/onboardCustomer.js) `enrichEnvWithTursoExports`, lines 258–265 |
+| Every `turso:customer --apply` calls `turso db tokens create`, even when a token is already exported. | [server/src/tursoCustomer.js](../server/src/tursoCustomer.js) line 612 |
+
+A shell left over from customer A, then `onboard:customer --slug beta`, can write A’s `SESSION_SECRET` into B’s project, or point B at A’s database. A second apply mints another database token and pushes it. Old tokens stay valid. A fresh shell with no `SESSION_SECRET` mints a new one and the next Vercel apply signs everyone out.
+
+`turso:customer --apply` prints full `export` lines on stdout. `--json` redacts to the last four characters. The first-admin password is a CLI argument.
 
 Everything else is a dashboard or `vercel env add` step, documented and not scripted:
 
 | Concern | App support | How it is set today |
 | --- | --- | --- |
-| Session | HMAC `pf_session`, `SESSION_SECRET` | Minted by `turso:customer` |
-| First admin | `bootstrap-admin` / onboard `--email` `--password` | Password is a CLI argument |
+| Session | HMAC `pf_session`, `SESSION_SECRET` | Minted by `turso:customer`, then copied to Preview |
+| First admin | `bootstrap-admin` / onboard `--email` `--password` | Password is a CLI argument. Refuses once any user exists. |
 | Custom domain | App reads `APP_BASE_URL` for SSO redirects, supplier links, and CORS | Dashboard. [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §5.5. Scripts do not call `vercel domains`. |
 | SSO | OIDC and SAML mint the same cookie. Unknown users rejected unless provisioning is on. Secrets stay in env. | [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §3.1, [server/src/sso.js](../server/src/sso.js), [server/src/ssoConfig.js](../server/src/ssoConfig.js) |
 | SMTP | `MAIL_PROVIDER=smtp` plus `MAIL_FROM` and `MAIL_SMTP_URL`. Default is copy-link. | [server/src/mail/providers/smtp.js](../server/src/mail/providers/smtp.js). Not written by the CLIs. |
-| Webhooks | `WEBHOOK_TARGET_URL`, `WEBHOOK_SIGNING_SECRET` | [DEPLOYMENT.md](DEPLOYMENT.md) §2.2 |
-| Sourcing tick | `CRON_SECRET` on `/api/sourcing/tick`. Safe to run twice. | Documented as a `vercel.json` cron the repo does not ship ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §8, sourcing). |
-| Currency, OCR, fiscal year | Env allowlists, fail closed on a bad currency | [.env.example](../.env.example) |
+| Webhooks | `WEBHOOK_TARGET_URL`, `WEBHOOK_SIGNING_SECRET` | [DEPLOYMENT.md](DEPLOYMENT.md) §2.2. Secret is not generated at install. |
+| Supplier portal | `PORTAL_TOKEN_SECRET` (minimum 32 characters) or publish returns 503 | Not written by the CLIs. |
+| Sourcing tick | `CRON_SECRET` on `/api/sourcing/tick`. Safe to run twice. Unset means 401. | Documented as a `vercel.json` cron the repo does not ship ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) sourcing section). |
 
-`turso:customer --apply` prints full `export` lines on stdout. `--json` redacts to the last four characters. A second `--apply` always runs `turso db tokens create` again (a new token, old one still valid). A second `--apply` in a shell that does not already export `SESSION_SECRET` mints a new secret and, once `vercel:customer` runs, signs every user out.
+Region: `turso db create` is invoked with no `--group` and no `--location`. The database lands in the org’s default group. The scripts cannot move it later ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.2). `turso db tokens invalidate` invalidates every token in the group, not one database. Invalidating a token for a customer who still shares the default group invalidates every other customer in that group. New databases must not be created until each customer has a group of their own.
 
-Region: `turso db create` is invoked with no `--group` and no `--location`. The database lands in the org’s default group. The scripts cannot move it later ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.2).
+GitHub: `vercel project add` does not attach the repo. Production is `vercel deploy --prod` / `vercel redeploy` from a laptop. Git-push deploys are a dashboard step per project. Vercel env is not marked Sensitive by these scripts, so a later `env pull` can read the values back.
 
-GitHub: `vercel project add` does not attach the repo. Production is `vercel deploy --prod` / `vercel redeploy` from a laptop. Git-push deploys are a dashboard step per project.
+### 1.6 Schema and upgrades
 
-### 1.5 Schema and upgrades
+[server/src/db.js](../server/src/db.js) `applySchema` runs `schema.sql` and then a fixed sequence of idempotent migrations (`CREATE TABLE IF NOT EXISTS`, column checks, and table rebuilds). There is no `schema_migrations` table and no version integer. [server/src/provision.js](../server/src/provision.js) `EXPECTED_TABLES` is the progress signal `db:status` prints (table count and user count). A column added to an existing table does not change that count.
 
-[server/src/db.js](../server/src/db.js) `applySchema` runs `schema.sql` and then a fixed sequence of idempotent migrations (`CREATE TABLE IF NOT EXISTS`, column checks, a few table rebuilds). `openDatabase` calls it on startup, so the first request of a new deployment migrates that process’s database. [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §7 still says to run `npm run db:migrate` on the laptop **before** replacing Production, so a bad migration leaves the previous deployment serving.
+Rebuilds are multi-statement scripts executed through `exec`, which does not wrap `BEGIN`/`COMMIT`:
 
-There is no `schema_migrations` table and no version integer. [server/src/provision.js](../server/src/provision.js) `EXPECTED_TABLES` is the progress signal `db:status` prints (table count and user count). A column added to an existing table does not change that count.
+| Rebuild | SQL | How it runs |
+| --- | --- | --- |
+| `approval_requests` CHECK gains `waiting` | [server/src/db.js](../server/src/db.js) lines 31–50 | `database.exec` at line 61 |
+| `invoice_exception_dispositions` CHECK gains `short_pay` / `buyer_response` | lines 157–177 | `database.exec` at line 212 |
+| `purchase_requisitions` CHECK gains `skipped` | lines 514–544, with `PRAGMA foreign_keys` off in the same script (lines 540–544) | `database.exec` at line 568 |
 
-Upgrades are a hand loop, one customer at a time, because one checkout links to one project and the CLIs refuse to retarget ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §7). A git push does not migrate Turso. There is no command that walks every customer.
+[server/src/tursoHttp.js](../server/src/tursoHttp.js) `exec` (lines 469–476) splits the script and sends one pipeline of `execute` requests, then `close`, with no `BEGIN` and no `COMMIT`. Statements outside a transaction store send no baton (file header, lines 5–8). Each statement autocommits. If a later statement fails, the earlier ones stay. `batch` (lines 325–346) is the pipeline that sends `BEGIN`, the statements, `COMMIT`, and `close`. The rebuilds do not use it.
+
+`openDatabase` ([server/src/db.js](../server/src/db.js) lines 748–758) calls `applySchema` whenever `options.migrate` is not `false`. The request path uses the default, so every cold start runs those rebuilds. Nothing takes a lock. Two overlapping cold starts can both decide a rebuild is required.
+
+[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §7 says to run `npm run db:migrate` on the laptop before replacing Production. That is one customer at a time, because one checkout links to one project and the CLIs refuse to retarget. A git push does not migrate Turso. There is no command that walks every customer, no snapshot before the migrate, and no canary.
 
 One repair lives outside `applySchema`: [server/scripts/invoice-proposal-pdf-column.js](../server/scripts/invoice-proposal-pdf-column.js) (read-only unless `--apply`). A fleet runner should not invoke one-off repairs unless that release says to.
 
-### 1.6 Backups and offboarding
+### 1.7 Backups, PITR, and offboarding
 
-[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.5 and §8.4: the scripts do not take backups and do not restore them. Vercel Instant Rollback restores code, env stays, rows stay. Point-in-time restore, if the Turso plan has it, is a dashboard setting per database and is not turned on by `turso:customer`.
+[DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.5 and §8.4: the scripts do not take backups and do not restore them. Vercel Instant Rollback restores code, env stays, rows stay.
+
+Turso point-in-time recovery is already on for a database. It is not a switch these scripts flip. Retention is 24 hours on the Free plan and 10, 30, or 90 days on paid plans. `turso db destroy` ends that history with the database. PITR does not survive offboard. A dump taken before destroy is the copy that still exists afterwards. The dump command on the Turso CLI is `turso db shell <db> .dump`. There is no `turso db dump` in the manual’s pinned CLI, and this repo does not call the shell.
 
 Offboard (PR #40), after `--confirm-slug` matches the normalized slug:
 
 1. Stops if this checkout is linked to a different project.
 2. Checks `vercel whoami` and `turso auth whoami`.
 3. `vercel env rm` for the three `CUSTOMER_ENV_KEYS` on Production and Preview.
-4. `turso db destroy procureflow-<slug> --yes`.
+4. `turso db destroy procureflow-<slug> --yes`. No dump first.
 
-It does not destroy `procureflow-<slug>-preview`. It does not remove `TURSO_PREVIEW_*`, SSO, SMTP, webhook, or `APP_BASE_URL` keys. It does not revoke database tokens. It does not delete the Vercel project: the manual records that `vercel project rm` on CLI 59.26.0 has no `--yes`. It does not touch password-manager copies or a local SQLite file. Domains and the GitHub connection stay with the project ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §9).
+It does not destroy `procureflow-<slug>-preview`. It does not remove `TURSO_PREVIEW_*`, SSO, SMTP, webhook, portal, or cron keys. It does not revoke database tokens. It does not delete the Vercel project: the manual records that `vercel project rm` on CLI 59.26.0 has no `--yes`. It does not touch password-manager copies or a local SQLite file. Domains and the GitHub connection stay with the project ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §9).
 
-### 1.7 CI
+### 1.8 CI and repo visibility
 
 [.github/workflows/test.yml](../.github/workflows/test.yml) on pull requests and pushes to `main`:
 
@@ -115,11 +146,9 @@ It does not destroy `procureflow-<slug>-preview`. It does not remove `TURSO_PREV
 - client production build
 - `npm audit --omit=dev --audit-level=high` at the root and in `client/`
 
-Nothing in CI deploys, migrates a database, or reads a customer list. `package.json` allows Node `>=18`. `vercel project add` does not set the project’s Node version.
+Nothing in CI deploys, migrates a database, or checks that release N still runs on schema N−1. `package.json` allows Node `>=18`. `vercel project add` does not set the project’s Node version.
 
-### 1.8 Repo visibility
-
-`pesl98/new_p2p_indirect` is a **public** GitHub repository. A committed file of real customer slugs, hostnames, or domains would publish that list. Secrets are already gitignored (`.env`, `.vercel/`, `*.db`). There is no customer registry in the tree.
+`pesl98/new_p2p_indirect` is a **public** GitHub repository. A committed file of real customer slugs, hostnames, or domains would publish that list. Secrets are already gitignored (`.env`, `.vercel/`, `*.db`). There is no customer registry in the tree. The only inventory today is the operator’s shell and password manager.
 
 ### 1.9 What is already good
 
@@ -130,6 +159,7 @@ Keep these. Later sprints extend them.
 - Fail-closed on a half-set Turso pair, on a wrong Vercel link, and on Preview using the production database.
 - Onboard waits until Production is Ready before smoke.
 - Empty customer data path is migrate → org skeleton → first admin. Demo seed is a separate destructive command.
+- `batch()` already exists for a single pipeline transaction. Rebuilds need to move onto it. The client does not need a new transport.
 - SSO, SMTP, webhooks, and audit tables already exist in the product. The gap is wiring them into the operator path, not building them again.
 - CLI tests mock the process runner, so fleet commands can be tested without cloud credentials.
 
@@ -137,326 +167,360 @@ Keep these. Later sprints extend them.
 
 ## 2. Gaps, ranked by impact
 
-Impact means “how many customers this blocks or puts at risk”, not how many lines of code it is.
+The architect confirmed the five gaps from the first draft (preview left manual while production credentials are copied onto it, no fleet upgrade, no schema version, re-apply mints credentials, backups and offboard stop short). The lines in §1 add three sharper edges: a shared `SESSION_SECRET` is a cross-environment session, a stale shell crosses customers, and rebuilds autocommit on every cold start. Token invalidate is group-wide, so the default Turso group is a shared blast radius.
 
 | Rank | Gap | Why it hurts |
 | --- | --- | --- |
-| 1 | Preview database is a manual step, while Preview fail-closes. Production URL and token are still copied onto Preview. | A completed `onboard:customer --apply` leaves every Preview deployment at 503 `preview_db_unconfigured`. The production token sits in Preview env, which is the credential the `allow` hatch would use. PR previews of a customer project are not safe or usable. |
-| 2 | No customer registry, and no command that upgrades every customer. One checkout can be linked to only one project. | [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §7 is a hand loop. A release reaches only the project someone deployed from that laptop. Others keep old code. `applySchema` on cold start migrates only the database that process opens. This is the scaling limit on “one project per customer”. |
-| 3 | No schema version. | `db:status` counts tables in `EXPECTED_TABLES`. A new column on an existing table is invisible. An upgrade runner cannot say which customers are current, and a reviewer cannot see that a migration shipped without a version bump. |
-| 4 | Re-running Turso/onboard is not idempotent for credentials. | Every `turso:customer --apply` calls `turso db tokens create` (old tokens stay valid). A fresh shell also mints a new `SESSION_SECRET`. The next Vercel apply rotates the cookie key and signs everyone out. Create-if-missing for the database itself is already idempotent. |
-| 5 | Backups are a calendar reminder. | Offboard and `turso db destroy` delete the only copy. Instant Rollback does not restore rows. Nothing in `package.json` dumps or snapshots a database, and nothing records that a backup happened. |
-| 6 | Offboard covers the three original env keys and the production database name. | The preview database from Sprint 8.0, preview tokens, IdP secrets, `MAIL_SMTP_URL` (credentials in the URL), webhook secret, domains, and the Vercel project all remain. A customer marked “gone” can still have a live database and live secrets. |
-| 7 | Custom domain, SSO, and SMTP are a second procedure after the CLI. | The product code is done. `APP_BASE_URL` has to match the hostname or SSO redirects and supplier links are wrong. Forgetting Preview vs Production, or enabling `SSO_PROVISIONING` by accident, is easy when the steps are a checklist instead of a dry-run. |
-| 8 | First-admin password is a process argument, and Turso apply prints full export lines. | Shell history and `ps` see `--password`. Fine for one operator on one laptop. It gets worse as soon as a fleet command is scripted or logged. `--json` already redacts. Human stdout does not. |
-| 9 | Region, Vercel team, Node version, GitHub connection, and the sourcing cron are outside the CLI. | A Netherlands customer lands in whatever group the Turso CLI defaults to, and the database cannot be moved later. `project add` does not pin Node (CI is 22, `engines` is `>=18`). Git-push deploys are per-project dashboard work. The tick cron is documented and absent from `vercel.json`, so RFQs close on the next read after the deadline unless someone adds cron by hand. |
-| 10 | CI never deploys or migrates. | [.github/workflows/test.yml](../.github/workflows/test.yml) is unit tests, the client build, and `npm audit`. A migration that fails on Turso HTTP shows up when an operator points `db:migrate` at a customer. |
+| 1 | Production `SESSION_SECRET` and the production Turso token are written onto Preview. The cookie carries only `uid` and `exp`. | A Preview login, replayed on Production, is that uid. The browser will not send the cookie across hosts by itself. Anyone who can copy the value can. The `allow` hatch would also open the production database with the token that is already sitting in Preview env. |
+| 2 | Exported `TURSO_*` and `SESSION_SECRET` are reused with no slug check. Re-apply always mints a new database token. | [server/src/tursoCustomer.js](../server/src/tursoCustomer.js) lines 248–257 and 612, [server/src/vercelCustomer.js](../server/src/vercelCustomer.js) lines 164–166, [server/src/onboardCustomer.js](../server/src/onboardCustomer.js) lines 258–265. Customer B can receive customer A’s secret or database. A second onboard rotates the token and can rotate the session secret. |
+| 3 | Schema changes are unversioned rebuilds. They autocommit, they run on every cold start, and nothing locks them. | [server/src/db.js](../server/src/db.js) lines 31–50, 157–177, 514–544, and 748–758. A failed statement leaves the earlier statements applied. Two cold starts can rebuild the same table. `db:status` cannot say which customers are current. |
+| 4 | New databases join the org’s default group, and `turso db tokens invalidate` is group-wide. | Revoking one customer’s tokens revokes every customer that still shares the group. The database cannot be moved later. This has to be decided before any more databases are created. |
+| 5 | Preview database is still a manual step, while Preview fail-closes without one. | A finished onboard leaves Preview at 503 `preview_db_unconfigured`. |
+| 6 | Inventory and secrets live on one laptop. Vercel env is readable back. | There is no private registry, no drift report, and no action log. `env pull` can reprint secrets. A lost laptop is a lost customer list. |
+| 7 | Destroy ends PITR, and offboard does not dump first. | Retention is 24 hours (Free) or 10/30/90 days (paid) only while the database exists. Offboard removes three env keys and the production database. The preview database, the other secrets, domains, and the project remain. |
+| 8 | Custom domain, SSO, and SMTP are a second procedure. | The product code is done. `APP_BASE_URL` has to match the hostname. This is real work and it is behind the safety gaps above. |
+| 9 | CI never deploys, migrates, or checks N against N−1. | [.github/workflows/test.yml](../.github/workflows/test.yml) is unit tests, the client build, and `npm audit`. |
 
-Docs are already ahead of the CLIs on preview, domain, SSO, mail, backup, and the per-customer upgrade loop. The work is to make the commands match the manual, then shorten the manual. Four overlapping runbooks ([DEPLOY_MANUAL.md](DEPLOY_MANUAL.md), [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [DEPLOYMENT.md](DEPLOYMENT.md), [scripts/provision-customer.md](../scripts/provision-customer.md)) plus README phrases are locked by tests. Change them in the same pull request as the CLI they describe. Do not add a fifth procedure that contradicts them.
+`PORTAL_TOKEN_SECRET`, `CRON_SECRET`, and `WEBHOOK_SIGNING_SECRET` are also unset after install. Sourcing and webhooks then fail closed until someone hand-writes secrets. That is part of Deploy 1, not a separate product sprint.
+
+Docs are already ahead of the CLIs on preview, domain, SSO, mail, and the per-customer upgrade loop. The PITR paragraph in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.5 is behind the facts in §1.7 here. Change the runbooks in the same pull request as the CLI they describe. [server/src/provision.test.js](../server/src/provision.test.js) locks phrases in those files. Do not add a fifth procedure that contradicts them.
 
 ---
 
 ## 3. Target workflow
 
-Keep the names that already exist. `provision:customer` stays “migrate this database, optional org skeleton, optional first admin”. Folding Turso and Vercel into that name would make every current runbook and test lie.
-
-`onboard:customer` stays the single install command. New verbs follow the same shape: dry-run by default, `--apply` to mutate, `--slug` for one customer, no secrets in the git tree, no seed on a production database.
+Keep the names that already exist. `provision:customer` stays “migrate this database, optional org skeleton, optional first admin”. `onboard:customer` stays the install command.
 
 ```bash
-# Install (dry-run, then apply). Preview database included.
+# Install. Dry-run, then apply. Second apply is a no-op.
 npm run onboard:customer -- --slug acme
 npm run onboard:customer -- --slug acme --apply \
   --email admin@acme.example --password-stdin --smoke
 
-# This database only (unchanged role)
-npm run provision:customer -- --with-org --email admin@acme.example --password-stdin
+# Read-only fleet picture. Writes nothing to a customer project or database.
+npm run customers:inventory
 
-# Every active customer. Sequential. One failure does not skip the rest.
-npm run upgrade:customers
-npm run upgrade:customers -- --apply
-npm run upgrade:customers -- --apply --only acme
+# One customer, then the rest. Canary first. Stop on the first failure.
+npm run upgrade:customers -- --slug acme
+npm run upgrade:customers -- --apply --canary acme
 
-# Dump outside the repo
-npm run backup:customer -- --slug acme
-npm run backup:customer -- --slug acme --apply --out "$HOME/procureflow-backups"
-
-# Remove
+# Dump, then destroy. Dump failure does not destroy.
 npm run offboard:customer -- --slug acme
 npm run offboard:customer -- --slug acme --apply --confirm-slug acme
 ```
 
-`--password` can remain as a compatibility flag. New docs and the orchestrator should prefer `--password-stdin` so the password is not in `ps`.
+`--password` can remain as a compatibility flag. New docs prefer `--password-stdin`.
 
-### 3.1 Registry (no secrets)
+### 3.1 Secrets per environment
 
-Because the GitHub repo is public, the registry that holds real customers is gitignored. Commit a schema and a fake example only.
+Production and Preview each get their own values. Preview never receives a production secret. That includes `SESSION_SECRET`, `TURSO_AUTH_TOKEN`, `TURSO_DATABASE_URL`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, and `WEBHOOK_SIGNING_SECRET`. It also includes leaving `TURSO_PRODUCTION_DATABASE_URL` and `ALLOW_PREVIEW_PRODUCTION_DATABASE` unset. A preview pair alone already boots ([server/src/dbConfig.test.js](../server/src/dbConfig.test.js)).
 
-| Path | Committed? | Contents |
+| Key | Production | Preview |
 | --- | --- | --- |
-| `ops/customers.example.json` | Yes | One row, slug `example`. Shows the fields. |
-| `ops/customers.json` | No (gitignored) | One row per real customer. |
-| `ops/customers/<slug>.local.env` | No (gitignored) | Optional domain, SSO, and SMTP values for that slug. |
+| `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | This customer’s production database | Unset |
+| `TURSO_PREVIEW_DATABASE_URL` / `TURSO_PREVIEW_AUTH_TOKEN` | Unset | This customer’s preview database |
+| `SESSION_SECRET` | Minted for production | A different mint |
+| `PORTAL_TOKEN_SECRET` | Minted at install, ≥ 32 characters | A different mint |
+| `CRON_SECRET` | Minted at install | A different mint |
+| `WEBHOOK_SIGNING_SECRET` | Minted at install | A different mint |
 
-Suggested row (names, not tokens):
+`WEBHOOK_TARGET_URL` stays unset until a person supplies the receiver. Generating the signing secret does not turn delivery on. `SOURCING_ENABLED` stays unset. Generating `PORTAL_TOKEN_SECRET` and `CRON_SECRET` does not turn the module or the cron on. The cron entry stays out of `vercel.json` until question 8 is answered.
 
-```json
-{
-  "slug": "acme",
-  "status": "active",
-  "project": "procureflow-acme",
-  "database": "procureflow-acme",
-  "previewDatabase": "procureflow-acme-preview",
-  "group": null,
-  "location": null,
-  "productionHost": "procureflow-acme.vercel.app",
-  "customDomain": null,
-  "schemaVersion": null,
-  "lastBackupAt": null
-}
-```
+Session token, in the same change as the split secrets. `signSessionToken` adds `env` (`production`, `preview`, or `local`) to the payload. `verifySessionToken` returns null when `env` is missing or does not equal this process: `VERCEL_ENV` when it is `production` or `preview`, otherwise `local`. A cookie signed for preview fails on production even if the secrets were copied by mistake. Shipping this signs everyone out once, because today’s cookies have no `env`. Say that in the release note.
 
-`status` is `active` or `offboarded`. Upgrade and backup skip `offboarded`. The file must not grow keys whose names contain `TOKEN`, `SECRET`, `PASSWORD`, or `KEY`, and must not contain `libsql://` URLs. A unit test rejects a fixture that does. URLs and tokens stay in Turso, in Vercel env, and in the password manager.
+Vercel env writes use the CLI’s sensitive flag, confirmed against `vercel env add --help` in that sprint. Sensitive values are not read back with `env pull`. The secrets manager in §3.3 is the copy the operator can read. Until that sprint lands, install still writes the values to Vercel and stores them in the password manager, per environment, and does not print them on a re-run.
 
-`onboard --apply` upserts the row. `offboard --apply` sets `status` to `offboarded` and clears `schemaVersion` / `lastBackupAt`. Dry-run prints the row it would write.
+### 3.2 Slug-bound credentials, and a no-op re-run
 
-If the owner later wants the list in git, that belongs in a private repo. It does not belong in this public one. Question 5 below.
+Refuse the shell when it points at someone else.
 
-### 3.2 Install, idempotent
+- If `TURSO_DATABASE_URL` is set, its host must be `procureflow-<slug>`, using the same host comparison as `sameDatabaseHost` in [server/src/dbConfig.js](../server/src/dbConfig.js). Any other host exits non-zero before a Turso or Vercel call.
+- If `TURSO_AUTH_TOKEN` is set, the URL must be set and must already have matched this slug. A token with no URL, or with another customer’s URL, is refused.
+- If `SESSION_SECRET` is set, `PROCUREFLOW_SECRET_SLUG` must equal the normalized slug. A secret with a missing or different marker is refused. It is not reused and it is not overwritten.
+- The same rules apply to the preview variable names and the host `procureflow-<slug>-preview`.
+- When the URL matches and the token is already present, do not call `turso db tokens create`. `enrichEnvWithTursoExports` must not replace that token with a newly minted one.
+- When the slug marker matches, do not mint a new `SESSION_SECRET`.
 
-`onboard:customer --slug acme` dry-run prints the plan and exits 0. It does not call the network and does not invent secrets. `--apply` does the following. Each step is safe to repeat.
+A second `onboard:customer --apply` for the same slug creates no group, no database, no token, and no secret, and it does not redeploy when the env names and hosts already match. The definition of done for Deploy 1 is this no-op, plus the two checks in §4.
 
-1. **Identity.** Normalize the slug (existing rules: lowercase, letters, digits, hyphens, no leading or trailing hyphen, max 48). Default names `procureflow-<slug>` and `procureflow-<slug>-preview`. Refuse `--tursodb`.
-2. **Link check.** If `.vercel/project.json` names a different project, stop before any Turso or Vercel mutation. Same rule as today.
-3. **Production database.** `turso db create` only when `turso db show` says it is missing. Pass `--group` / `--location` only when the registry row or flags set them. Same org otherwise.
-4. **Preview database.** Same create-if-missing, same group and location as production, name `procureflow-<slug>-preview`.
-5. **Credentials.** If Vercel Production already has a `TURSO_DATABASE_URL` whose host is this database, keep that token and the existing `SESSION_SECRET`. Mint a database token or a session secret only when the matching value is absent. Do not print a full token on a reuse. Never call `turso auth token`.
-6. **Vercel project.** `vercel project add` and `vercel link` as today, skipped when already linked to this project. Still no GitHub import.
-7. **Env split.**
-   - Production: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`.
-   - Preview: `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, and `TURSO_PRODUCTION_DATABASE_URL` (host check only, no token).
-   - Do not write the production token onto Preview. Do not write preview variables onto Production.
-   - Leave `ALLOW_PREVIEW_PRODUCTION_DATABASE` unset.
-8. **Deploy.** Redeploy Production (or `vercel deploy --prod` when none exists) and wait until Ready, as today.
-9. **Schema.** `applySchema` on the production database, then `bootstrap-org` unless `--no-org`. First admin only when the user table is empty. Never `npm run seed`.
-10. **Preview schema.** `applySchema` on the preview database. `db:seed:preview` only when `--preview-demo` is passed. Default is an empty preview schema, because the demo password is public.
-11. **Optional extras** from `ops/customers/<slug>.local.env`, when the file exists and `--with-extras` is passed (Deploy sprint 3). Absent file skips this step.
-12. **Smoke** when `--smoke` is set, against the production host.
-13. **Registry row** written with no secrets. `schemaVersion` set from the code constant after a successful migrate.
+### 3.3 One group per customer
 
-A second `--apply` with the same slug creates nothing, mints nothing, and exits 0.
+Before creating a database, create or reuse Turso group `procureflow-<slug>` in the fleet location (§5 question 3). Create `procureflow-<slug>` and `procureflow-<slug>-preview` with `--group procureflow-<slug>`. Do not pass `--tursodb`. Do not create new databases in the org default group.
 
-### 3.3 Upgrade every customer
+`turso db tokens invalidate` stays out of Deploy 1. It invalidates every token in the group. Deploy 4 may call it only after inventory shows that group contains only this customer’s two databases. Operator migrate uses a short-lived database token (`turso db tokens create` with the expiry flag the CLI documents) and does not invalidate at the end of the run. Invalidating the operator token would also invalidate the token Vercel is using.
 
-`upgrade:customers` reads gitignored `ops/customers.json`.
+### 3.4 Region
 
-Dry-run lists each `active` row: project, database names, the migrate command, and the deploy command. It does not pull env and does not print secrets.
+`vercel.json` gets a top-level `regions` array for the one fleet region that matches the Turso location. Every customer project built from this repo deploys there. A per-customer region would diverge from the committed file, so it is not the plan unless question 3 says customers differ. Deploy 1 does not add databases in a location that `regions` does not match.
 
-`--apply`, sequential, one customer at a time:
+### 3.5 Registry, inventory, secrets manager
 
-1. Refuse to rewrite `.vercel/project.json` when it points at someone else. Pass the project explicitly (`vercel deploy --prod --yes` with the project flag the installed CLI documents). Confirm that flag in the sprint before hardcoding it. A missing non-interactive form is a stop, not an excuse to `vercel link` over another customer.
-2. Read Production env into a temp file (mode `0600`) via `vercel env pull` or the equivalent the CLI documents. Delete the file in a `finally`. Do not mint a new Turso token just to migrate.
-3. `db:migrate` against that production URL. On failure, record it, leave the previous deployment in place, and continue to the next customer.
-4. Deploy Production and wait until Ready.
-5. Migrate the preview database the same way (preview env pull). A preview failure is recorded and does not roll back the production deploy that already succeeded. The report says so.
-6. Smoke the production host. Update `schemaVersion` on success.
-7. Exit non-zero if any customer failed. Print a one-line status per slug. `--only <slug>` limits the run. There is no `--seed`.
+The public repo does not hold real slugs. A gitignored file on one laptop is not the registry either.
 
-Code constant `SCHEMA_VERSION` in [server/src/db.js](../server/src/db.js) increments in the same change as any new migration function. `applySchema` writes `schema_meta` (single row: version, applied-at). `db:status --json` includes `schemaVersion`. Cold start may still migrate, and the laptop-or-fleet migrate **before** deploy stays the rule.
+| Store | Holds | Does not hold |
+| --- | --- | --- |
+| Private git repo | Slug, status, Vercel project, Turso group, database names, location, production host, schema version applied, last dump time | Tokens, session secrets, SMTP URLs, IdP secrets |
+| Secrets manager | Per-environment secrets from §3.1, keyed by slug and environment | Customer rows |
+| Vercel env | The same values, marked Sensitive, on the matching environment only | The operator’s source of truth |
+| Turso | The databases | A copy of the Vercel secrets |
 
-The one-off PDF-column repair stays manual. Upgrade does not run it.
+`npm run customers:inventory` is read-only. It lists projects and databases from the Vercel and Turso APIs, joins them to the private repo on the `procureflow-<slug>` names, and prints drift: project without a database, database without a project, missing preview database, database still in the default group, a production key name present on Preview, `regions` disagreeing with the group location, schema history behind the code. It does not create, deploy, migrate, or write env.
 
-### 3.4 Domain, SSO, SMTP
+Operator commands append one line to an action log in the private repo: time, actor, command, slug, dry-run or apply, exit code. The line has no secret values and no dump body.
 
-These stay optional. A customer can go live on `https://procureflow-<slug>.vercel.app` with password login and copy-link mail.
+### 3.6 Migrations
 
-When `ops/customers/<slug>.local.env` exists, a dry-run prints **key names and targets**, never values. `--apply` writes them only after the whole set for that feature validates:
+Numbered files under `server/migrations/` (`0001_name.sql`, then `0002_…`). A `schema_migrations` table records version, name, and applied-at. `db:status --json` prints the highest applied version and the versions still missing. `EXPECTED_TABLES` stays a sanity check, not the version.
 
-| Feature | Required inputs | Vercel targets | Fail closed when |
-| --- | --- | --- | --- |
-| Hostname | `customDomain` and/or `APP_BASE_URL` | `APP_BASE_URL` on Production. Preview only if the file has `PREVIEW_APP_BASE_URL`. | `APP_BASE_URL` is not `https` or has a path. |
-| Domain attach | hostname | Vercel project domain API or CLI, after reading `--help` on the installed CLI and recording the flag in the manual. | The command would attach the hostname to a project other than `procureflow-<slug>`. |
-| OIDC | `IDENTITY_PROVIDER=oidc`, issuer, client id, client secret, `APP_BASE_URL` | Production, and Preview only if preview SSO values are present as their own keys | Any required key missing. Do not write a partial IdP. |
-| SAML | provider `saml` plus the required cert and issuer keys already listed in [DEPLOYMENT.md](DEPLOYMENT.md) §2.1 | Same | Both assertion and response signing requested off, or any required key missing. |
-| Provisioning | explicit `SSO_PROVISIONING=1` in the file | Same targets as the IdP | Default remains off. The command never turns it on by itself. |
-| SMTP | `MAIL_PROVIDER=smtp`, `MAIL_FROM`, `MAIL_SMTP_URL` | Production. Preview only with a separate preview URL key. | `smtp` selected and from-address or URL missing. |
+Rules:
 
-DNS records are printed for the operator to create. The command cannot complete DNS at the customer’s registrar. Smoke after the domain answers, using `BASE_URL=https://<custom-domain>`.
+- A rebuild runs inside `database.batch()`, so `BEGIN` … `COMMIT` is one pipeline. `exec` stays available for single statements. Rebuild SQL is not sent through `exec`.
+- The request path opens the database with `migrate: false`. If `schema_migrations` is behind the code’s head, the process returns 503 `schema_behind` and does not rebuild. Cold start is not a migration runner and takes no schema lock because it writes no schema.
+- The upgrader is the only writer. It inserts the history row in the same `batch()` as that version’s statements. A second runner finds the row and does not apply the version again.
+- Expand/contract. An expand-only version (new table, new nullable column, new index) is valid while the previous release is still serving. A contract (drop column, tighten a CHECK, rebuild that removes a column the old code still writes) ships in a later version, after the release that stopped writing the old shape is the one in production. A pull request that adds a contract in the same version as the code which still needs the old shape fails review.
+- CI runs an N−1 check. Apply every migration except the last one, run the previous release’s read path against that schema, then apply the last migration and run the new code. A contract migration is refused by that job when the previous release still selects the dropped shape. The job does not need a live Turso org: it uses the HTTP client against a stub, or SQLite, for the schema, and the pipeline test below for autocommit.
+- Required test, in the migration sprint: a stub `POST /v2/pipeline` applies each `execute` outside an explicit transaction as its own commit. `exec` of a two-statement script whose second statement errors must leave the first statement’s row in place. `batch()` of the same script must leave no row. That test is what stops a later change from sending a rebuild through `exec` again.
 
-`MAIL_SMTP_URL` and IdP secrets are piped on stdin to `vercel env add`, same pattern as today’s three keys. They must not appear in stdout, stderr, or the registry.
+The one-off PDF-column repair stays manual. The upgrader does not run it.
 
-### 3.5 Backups
+### 3.7 Upgrade
 
-`backup:customer --slug acme` dry-run prints the dump command and the output path. `--apply` writes a dump **outside the git repo** (refuse a path inside the work tree). The sprint confirms the Turso CLI’s dump or snapshot command against `turso --help` before hardcoding a flag. The registry stores `lastBackupAt` only, not the file path if that path would leak a home directory the owner cares about — storing the timestamp is enough; the path can be in the human stdout of that run.
+`upgrade:customers` reads the private registry. It does not `vercel env pull` secrets. It reads the production token from the secrets manager, or mints a short-lived token as in §3.3.
 
-Restore is a **new** database name, then `vercel:customer` pointed at that name after a human checks the data. Restore never overwrites the live database URL in place.
+Order for one customer:
 
-Retention (how many dumps, where they live, who may decrypt them) is question 4. Until that is answered, the command writes one file and the operator copies it. The sprint does not invent a retention number.
+1. Refuse to rewrite `.vercel/project.json` when it names another project. Deploy with the project flag the installed CLI documents. If that flag does not exist, stop. Do not `vercel link` over another customer.
+2. `turso db shell <db> .dump` for production, to a path outside the repo. Dump failure stops the run. No migration.
+3. Apply pending migrations to production. Failure stops the run. The previous deployment is still serving.
+4. Deploy Production and wait until Ready. Smoke.
+5. Dump the preview database, then migrate it. A failure here stops the fleet. The report says production for this slug already moved and preview did not.
 
-### 3.6 Offboard
+`--canary <slug>` runs that slug first. The rest start only after the canary’s production deploy and preview migrate both succeed. Any failure stops the command. Later slugs are not started. There is no continue-on-error. There is no `--seed`.
 
-Same confirmation as today. Extended order:
+### 3.8 Backups, restore, recover, offboard
 
-1. Wrong Vercel link → stop, destroy nothing.
-2. Both CLIs logged in.
-3. Remove the three customer keys **and** `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `TURSO_PRODUCTION_DATABASE_URL`, plus SSO, SMTP, webhook, and `APP_BASE_URL` keys when they are present. A missing key is success.
-4. `turso db destroy` on the preview database, then the production database. Already-gone is success.
-5. Registry `status=offboarded`.
-6. Print the leftovers a human still deletes: Vercel project (until `vercel project rm` has a non-interactive confirm), domains that disappear with the project, token revoke if `turso db tokens --help` grows an invalidate command, password-manager entries, local SQLite files.
+Dump command: `turso db shell <db> .dump`. Output path outside the git repo. Refuse a path inside the work tree. The dump body is not copied to stdout.
 
-Do not delete the Vercel project from the script until the installed CLI can do it non-interactively with an explicit confirm. The current manual is right to refuse `project rm` without `--yes`.
+PITR remains the short undo while the database still exists (24 hours, or 10/30/90 days). It is not the offboard copy and it is not the restore drill. The drill restores a dump into a **new** database name, runs `db:status`, then destroys the drill database. Restore never overwrites the live URL.
 
-### 3.7 What stays a person
+Deploy 1’s offboard change is the gate: `turso db destroy` runs only after a dump of that same database succeeds in the same invocation. Destroy of the preview database, token revoke, and project delete are Deploy 4.
 
-- `vercel login`, `turso auth login`, and `vercel switch` to the right team.
-- DNS at the customer’s registrar, and SPF/DKIM for their mail domain.
-- Choosing whether SSO provisioning is on, and the default role.
-- Connecting GitHub for git-push deploys, if question 7 says yes.
-- Turning on Turso point-in-time in the dashboard if the plan includes it and the CLI cannot.
-- Deleting the Vercel project and the password-manager item after offboard.
-- Deciding the questions in §5. The sprints should not guess them.
+`admin:recover` is the lost-admin path. `bootstrap-admin` stays the empty-database command and keeps returning 409 when any user exists. Recover sets a new password on an existing admin email and bumps `users.session_version`. The session payload gains `ver`. `attachSession` rejects a token whose `ver` is not that user’s current version. `setUserPassword` bumps the same column, so a password reset kills that user’s cookies. Other users stay signed in. A missing `ver` is rejected once this code is in production (one forced login, called out in the release note, same as the `env` claim).
+
+Deploy 4 offboard, after `--confirm-slug`:
+
+1. Wrong Vercel link → stop.
+2. Dump preview, then production. A failed dump stops before any destroy.
+3. Remove every customer key this program writes, on both environments, including preview keys and the generated secrets. A missing key is success.
+4. Destroy the preview database, then the production database.
+5. `turso db tokens invalidate` for group `procureflow-<slug>` only when inventory shows that group has no other database. Otherwise stop before invalidate and say so.
+6. Delete the slug’s secrets-manager entries. Mark the private-repo row `offboarded`. Append the action log.
+7. Print what a person still deletes: the Vercel project (until `vercel project rm` has a non-interactive confirm), and DNS.
+
+### 3.9 Domain, SSO, SMTP
+
+These stay optional and they are the last sprint. A customer can go live on `https://procureflow-<slug>.vercel.app` with password login and copy-link mail.
+
+When the private repo has a hostname or an IdP for that slug, a dry-run prints key names and targets, never values. Apply writes them only after the whole set validates. Preview SSO and preview SMTP use their own keys. Production values are not copied. `SSO_PROVISIONING` stays off unless the file sets it. DNS at the registrar stays a person.
+
+### 3.10 What stays a person
+
+- `vercel login`, `turso auth login`, and `vercel switch`.
+- The fleet location, until question 3 is answered. Deploy 1 records the answer in `vercel.json` and in the group’s `--location`.
+- DNS, and SPF/DKIM if SMTP is turned on later.
+- The webhook receiver URL.
+- Choosing SSO provisioning and the default role.
+- Connecting GitHub, if question 6 says yes.
+- Deleting the Vercel project after offboard.
+- Running the restore drill on a schedule once Deploy 4 exists. The product does not email the first-admin password.
 
 ---
 
 ## 4. Sprint breakdown
 
-Four small sprints. Each one is shippable on its own and leaves install safer than it found it. They are named Deploy 1–4 so they do not collide with the product sprint numbers in [SPRINT-LOG.md](SPRINT-LOG.md). Register them there from the implementation pull request, not from this one.
+Five steps. Deploy 3 is two pull requests (3a then 3b) so the runner cannot ship before the history table does. Names stay clear of the product sprint numbers in [SPRINT-LOG.md](SPRINT-LOG.md). Register them from the implementation pull request, not from this one.
 
-Tests follow the existing style: fake `spawn` / injected runner, fixture files in `os.tmpdir()`, assertions on argv and on redacted stdout. No live Turso, Vercel, or DNS. `npm test` stays the CI gate.
+Tests use a fake process runner and fixture files. No live Turso, Vercel, or DNS. `npm test` stays the CI gate. Doc updates that change operator steps land in the same pull request as the CLI, in the files [server/src/provision.test.js](../server/src/provision.test.js) already reads.
 
-Doc updates that change operator steps land in the same pull request, in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md), [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md), [DEPLOYMENT.md](DEPLOYMENT.md), [scripts/provision-customer.md](../scripts/provision-customer.md), and the README lines those tests already read.
-
-### Deploy 1 — Registry and preview database on the install path
+### Deploy 1 — Safe install
 
 **Scope**
 
-- Gitignored registry plus committed `ops/customers.example.json` (slug `example` only).
-- `onboard:customer` and `turso:customer` create `procureflow-<slug>-preview` if missing, same group/location behavior as production.
-- Env write matches §3.2 step 7. Stop copying the production token onto Preview.
-- Re-apply reuses an existing matching URL, token, and `SESSION_SECRET`.
-- Registry upsert on successful apply. Writer rejects secret-shaped keys and `libsql://` values.
-- One paragraph in the manual for customers already installed the old way: create the preview database, set preview env, remove the production token from Preview, redeploy Preview.
+- Create group `procureflow-<slug>` and both databases in it. Preview database included. No `--tursodb`. No default group.
+- Per-environment secrets from §3.1, including a generated `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, and `WEBHOOK_SIGNING_SECRET` on each environment. No production secret, production URL, or production token on Preview.
+- `env` claim on the session token. Verifier rejects a missing or mismatched claim when `VERCEL_ENV` is `production` or `preview`.
+- Slug checks from §3.2. Re-apply does not mint a token over one that already matches the host, and does not mint a session secret when the slug marker matches.
+- `regions` in `vercel.json` for the fleet region. Group `--location` matches it.
+- Offboard dumps with `turso db shell <db> .dump` and refuses to destroy if that dump fails. Token invalidate is not called.
+- Manual paragraph for databases already in the default group: they stay there until a person recreates them. Do not call `tokens invalidate` on that group.
 
-**Acceptance**
+**Definition of done**
 
-- Dry-run for slug `acme` lists `turso db create procureflow-acme-preview` and does not pass `--tursodb`.
-- Production env plan is the three existing keys. Preview env plan is the preview pair, `SESSION_SECRET`, and `TURSO_PRODUCTION_DATABASE_URL`. The production token is not in the Preview plan.
-- A second apply, with a fake Vercel env that already matches the host, does not spawn `turso db tokens create` and does not generate a new session secret.
-- A checkout linked to another project is unchanged (no `project.json` write, no Turso spawn).
-- Registry file after a fake apply contains the row and none of the token strings the fake runner returned.
-- Existing [server/src/dbConfig.test.js](../server/src/dbConfig.test.js) cases stay as they are, including the `allow` hatch.
+- A second `onboard:customer --apply` for the same slug changes nothing: no new group, database, token, secret, or redeploy.
+- A fresh Preview deployment opens `procureflow-<slug>-preview` and its env has none of the production secret values.
+- A shell holding customer A’s `TURSO_*` or `SESSION_SECRET` cannot write those values into customer B’s project. The command exits non-zero and does not spawn Turso or Vercel.
+
+**Tests**
+
+- Dry-run lists `turso group create procureflow-acme` and `turso db create procureflow-acme-preview --group procureflow-acme`, and does not pass `--tursodb`.
+- Preview env plan has the preview pair and the preview mints. It does not contain the production token, the production URL, or the production `SESSION_SECRET`.
+- A fixture cookie signed with the preview secret and `env: "preview"` fails `verifySessionToken` under the production secret and under `VERCEL_ENV=production`. A payload with no `env` fails when `VERCEL_ENV` is `production` or `preview`.
+- Exported URL host `procureflow-beta` with `--slug acme` exits non-zero before spawn. Exported `SESSION_SECRET` without `PROCUREFLOW_SECRET_SLUG=acme` does the same.
+- A second apply, with the matching URL and token already present, does not spawn `turso db tokens create` and does not call `generateSessionSecret`.
+- Offboard with a failing dump does not spawn `turso db destroy`. Offboard without `--confirm-slug` mutates nothing.
+- `vercel.json` contains `regions`. Existing [server/src/dbConfig.test.js](../server/src/dbConfig.test.js) cases stay, including the `allow` hatch.
 
 **Risks**
 
-- The project `new-p2p-indirect` described in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md) §4.2.1 may still have Production credentials on Preview. Shipping the new env writer without the one-time cleanup on that project changes what the next Preview deploy sees. Do the cleanup in the same window as the first real `--apply`, or skip that project until someone does.
-- Host comparison for “token already installed” must use the same normalization as `sameDatabaseHost` in [server/src/dbConfig.js](../server/src/dbConfig.js). A false mismatch would mint a spare token. A false match would keep a token that points at the wrong database.
-- Reuse means reading Vercel env. The test double must prove the token never reaches stdout.
+- The `env` claim signs every current user out once.
+- Databases already in the default group cannot be moved. Invalidate on that group is a fleet outage. The sprint must not call it.
+- `new-p2p-indirect` may still have production credentials on Preview. Remove them in the same window as the first real apply, or leave that project out of the run.
+- Host comparison has to match `sameDatabaseHost`. A false mismatch mints a spare token. A false match keeps the wrong database.
 
-### Deploy 2 — Schema version and upgrade-all
+### Deploy 2 — Read-only inventory, action log, secrets manager
 
 **Scope**
 
-- `SCHEMA_VERSION` and `schema_meta`, written at the end of `applySchema`. `db:status` prints it.
-- `npm run upgrade:customers` as in §3.3, including `--only` and continue-on-error.
-- Spike, then hardcode, a non-interactive `vercel deploy` that takes a project name without retargeting `.vercel/project.json`. If that flag does not exist, stop the sprint and report it. Do not fall back to `vercel link`.
-- Temp env pull, deleted in `finally`.
+- Private repo for customer rows (§3.5). Public repo gains an example row with slug `example` only, no secrets and no `libsql://` URL.
+- `customers:inventory` as specified. Drift only. No mutation.
+- Append-only action log in the private repo.
+- Secrets manager becomes the source of truth. Vercel env written as Sensitive, after confirming the CLI flag. Operator runs use a short-lived Turso token and do not invalidate afterwards.
+- Install and offboard from Deploy 1 read and write the manager instead of the shell. The slug checks stay.
 
 **Acceptance**
 
-- A memory database reports the constant after `applySchema`. Running `applySchema` twice does not throw and does not change the version.
-- `db:status --json` includes `schemaVersion` and still omits tokens.
-- Dry-run over a two-row fixture prints two plans and does not spawn migrate, deploy, or seed.
-- A mocked failure on customer 2 still runs customer 3, exits non-zero, and does not update customer 2’s `schemaVersion`.
-- With `.vercel/project.json` aimed at a different project, the file bytes are unchanged after a dry-run and after a mocked apply.
-- Pulled env content does not appear in captured stdout or stderr.
+- Inventory over a fixture of two projects and one database prints the missing database and does not spawn `db create`, `env add`, or `deploy`.
+- A production key name listed on Preview is drift. The value is not printed.
+- Action log fixture lines contain the slug and the exit code and none of the fixture secret strings.
+- A unit test rejects a private-repo row that contains a key named like a token or a `libsql://` value.
+- Sensitive flag is present on the env-add argv the sprint verified.
 
 **Risks**
 
-- `schema_meta` is itself a migration. It has to be additive (`CREATE TABLE IF NOT EXISTS`) so existing customer databases pick it up on the next migrate.
-- Vercel rate limits if someone later parallelizes the loop. Keep the first version sequential.
-- Env pull may be interactive on some CLI versions. The spike is part of the sprint, not a follow-up.
-- Migrating preview after a successful production deploy can leave preview behind if the preview pull fails. The report must say which database was migrated. Do not hide that behind a single green slug.
+- Sensitive env cannot be read back. A bug that treats `env pull` as the source of truth will see empty secrets and mint replacements. Tests should fail if the inventory or the upgrader calls `env pull`.
+- The private repo is now part of the blast radius. It holds names, not tokens. Access to it is an owner decision (question 4).
 
-### Deploy 3 — Domain, SSO, and SMTP as optional inputs
+### Deploy 3a — Numbered migrations
 
 **Scope**
 
-- Gitignored `ops/customers/<slug>.local.env`.
-- Validation and env writes from §3.4, including stdin for secret values.
-- Domain attach only after the sprint reads the installed Vercel CLI help and records the exact command in the manual.
-- Offboard’s removal list grows to the preview database and the extra keys (destroy behavior for the preview database can land here if Deploy 4 has not merged; do not wait on backups to stop leaking the preview database).
-- `--password-stdin` on onboard and bootstrap-admin.
+- `server/migrations/` and `schema_migrations`, as in §3.6.
+- Existing rebuilds move to `batch()`. Boot uses `migrate: false` and returns 503 `schema_behind` when history is behind the code. Boot does not rebuild.
+- Expand/contract rule. N−1 CI job.
+- The autocommit partial-failure test in §3.6.
+
+**Acceptance**
+
+- The stub pipeline test: `exec` leaves the first row when the second statement errors; `batch()` leaves none.
+- A memory database records each applied version once. Applying twice does not throw and does not duplicate the history row.
+- Opening the server database when history is behind does not call `batch` or `exec` for a rebuild, and the health error code is `schema_behind`.
+- CI fails a fixture contract migration that drops a column the previous release still selects.
+- `db:status --json` includes the applied version and omits tokens.
+
+**Risks**
+
+- Turning off boot migrate means a deploy that races ahead of the upgrader 503s until Deploy 3b has run. That is the point. Do not merge 3a to a live customer project until 3b can migrate that project, or keep 3a dark behind the upgrader landing in the same release window.
+- Moving a rebuild into `batch()` changes failure behavior for databases that were mid-rebuild. Run it first on a copy.
+
+### Deploy 3b — Upgrader
+
+**Scope**
+
+- `upgrade:customers` from §3.7. Canary first. Stop on the first failure. No continue-on-error.
+- Dump before migrate. Deploy only after the production migrate succeeds.
+- Does not retarget `.vercel/project.json`. Does not seed. Does not `env pull`.
+
+**Acceptance**
+
+- Dry-run prints the canary, then the other slug, and does not spawn dump, migrate, or deploy.
+- A mocked migrate failure on the canary does not spawn deploy and does not start the second slug.
+- A mocked preview failure after a successful production deploy does not start the second slug, and the report names both facts.
+- With `.vercel/project.json` aimed at a different project, the file bytes are unchanged.
+- Dump failure does not spawn migrate.
+
+**Risks**
+
+- Sequential deploys are slow. Do not parallelize in this sprint.
+- A canary that is not a real customer proves nothing. Question 10 asks which slug that is.
+
+### Deploy 4 — Backups, restore drill, recover, full offboard
+
+**Scope**
+
+- Scheduled dump of each active customer (operator schedule, not a `vercel.json` cron). Retention days come from question 5. The command itself does not invent a number.
+- Restore drill: new database name, `db:status`, destroy the drill database.
+- `admin:recover` and `session_version` / `ver` from §3.8. `setUserPassword` bumps the version. `bootstrap-admin` still refuses when users exist.
+- Full offboard from §3.8, including group-scoped token invalidate only when the group is exclusive.
+
+**Acceptance**
+
+- `--out` inside the work tree exits non-zero and does not spawn `turso`.
+- A mocked dump writes outside the repo and the body is not on stdout.
+- Recover on a database that already has users sets a password and bumps `session_version`. A token with the old `ver` fails `attachSession`. `bootstrap-admin` on that database still exits with the 409 path.
+- Offboard invalidate argv is absent when the fixture group contains a third database. It is present, and named `procureflow-acme`, when the group contains only the two expected databases.
+- Destroy argv order is preview, then production, and both come after a successful dump.
+
+**Risks**
+
+- A dump is personal data. Where it lives is question 5. The command’s help text says the file is sensitive.
+- `turso db shell <db> .dump` on a large database is a long HTTP session. The drill is the proof it can be restored, not a dashboard checkbox.
+- Bumping `session_version` on every password change signs that user out. That is intended. Call it out in the admin UI copy in the same pull request.
+
+### Deploy 5 — Domain, SSO, and SMTP
+
+**Scope**
+
+- Optional hostname, OIDC, SAML, and SMTP from §3.9, after Deploy 1’s secret split. Production values are not copied to Preview.
+- Domain attach only after reading the installed Vercel CLI help and recording the command in the manual.
 
 **Acceptance**
 
 - OIDC with a missing client secret writes zero env keys.
 - SAML with both signing flags off writes zero env keys.
-- A file that does not mention `SSO_PROVISIONING` leaves that variable unset.
-- Captured stdout and stderr for an SMTP apply do not contain the fixture `MAIL_SMTP_URL`.
-- Domain dry-run prints the command the sprint verified, and the project name in that command is `procureflow-<slug>`.
-- Offboard dry-run lists `procureflow-<slug>-preview` and the extra key names. Offboard without `--confirm-slug` still mutates nothing.
-- `--password-stdin` feeds bootstrap and does not put the password in `process.argv`.
+- A file that does not set `SSO_PROVISIONING` leaves it unset.
+- Captured stdout and stderr do not contain the fixture `MAIL_SMTP_URL` or the fixture client secret.
+- The domain command’s project name is `procureflow-<slug>`.
 
 **Risks**
 
-- PEM certificates and newlines through `vercel env add` stdin. Test with a multi-line fixture. A stripped newline breaks SAML in production and the unit test will still look green if it only checks the exit code.
-- Attaching a domain the team does not own fails at Vercel. The command should surface that stderr (redacted) and leave the registry `customDomain` unset.
-- Preview SSO pointed at the production IdP redirect URL will fail open in confusing ways. Separate preview keys are required for preview SSO. Default is production-only.
-
-### Deploy 4 — Backups and the rest of offboard
-
-**Scope**
-
-- `backup:customer` as in §3.5, after confirming the Turso dump/snapshot flag.
-- Restore runbook in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md): new database name, never overwrite the live URL.
-- Offboard destroys the preview database as well as production, if Deploy 3 did not already.
-- Token revoke only if the CLI help shows a non-interactive invalidate. Otherwise the manual keeps the human step.
-- Registry `lastBackupAt` and `status=offboarded`.
-
-**Acceptance**
-
-- `--out` inside the work tree exits non-zero and does not spawn `turso`.
-- Dry-run does not create a file.
-- A mocked dump writes under `--out` and updates `lastBackupAt`. The dump body is not copied to stdout.
-- Offboard `--apply` without a matching `--confirm-slug` does not spawn `env rm` or `db destroy`.
-- Offboard with confirm destroys preview first, then production, in the mocked argv log.
-- `npm test` green. No backup file and no `ops/customers.json` in `git status`.
-
-**Risks**
-
-- A dump of a real customer is personal data on a laptop disk. The sprint does not upload it anywhere. Where it should live is question 4. Until then, the command’s help text says the file is sensitive and the operator moves it.
-- `turso db dump` (or whatever the help text calls it) may not exist on the CLI version the manual pins (Turso CLI v1.0.32). If it does not, the sprint documents the verified alternative (dashboard snapshot, or a SQL dump through the HTTP pipeline) and does not invent a flag.
-- Destroying preview and production in one command is what offboard is for. A bug in name construction could destroy the wrong database. Tests should assert the full names, and the slug confirm stays mandatory.
+- PEM newlines through `vercel env add` stdin. Test a multi-line fixture.
+- Preview SSO that reuses the production redirect URL fails in a confusing way. Separate preview keys are required. Default is production-only.
 
 ---
 
-## 5. Open questions for the owner
+## 5. Open questions
 
-These change the shape of Deploy 1–4. Defaults are what the sprints will do if you do not answer. Say if a default is wrong.
+Decisions already taken in this revision, so the sprints do not re-open them:
 
-1. **Hostname.** Default: ship on `https://procureflow-<slug>.vercel.app`, and attach a customer domain later via the optional file. Is the real scheme the customer’s own host (`inkoop.customer.nl`), a subdomain we control (`acme.<our-domain>`), or the `vercel.app` name until a specific customer asks?
+- Preview does not receive production secrets. Session tokens carry `env`.
+- A stale shell cannot supply another customer’s URL or secret. Re-apply does not mint a token over a matching one.
+- One Turso group per customer, before any new database. `tokens invalidate` is group-wide and is not a routine operator tool.
+- Migrations are numbered, rebuilds run in `batch()`, boot does not migrate, the upgrader stops on the first failure, and it dumps first.
+- The customer list lives in a private repo plus the Vercel and Turso APIs. Secrets live in a secrets manager. Vercel copies are Sensitive.
+- Dumps are `turso db shell <db> .dump`. PITR is automatic and dies with the database.
 
-2. **Who pays.** Default: the operator’s existing Turso org and Vercel team, one database and one project per customer, no pass-through billing in the product. Should each customer have their own Turso org and Vercel team instead? Who is invoiced?
+Still open:
 
-3. **Region.** Default: Turso’s current org default group, which is what `turso db create` already does, and the same group for the preview database. For Netherlands customers, which location do you want, and should it be a flag (`--location`) required for every new slug?
+1. **Hostname.** Default until Deploy 5: `https://procureflow-<slug>.vercel.app`. Is the real scheme the customer’s own host, a subdomain we control, or the `vercel.app` name until a customer asks?
 
-4. **Backups.** Default: one dump file outside the repo, operator copies it, no retention number in code. How many days do you keep, where (laptop, encrypted disk, object storage), and who is allowed to restore a customer?
+2. **Who pays.** Default: the operator’s current Turso org and Vercel team. One group, two databases, and one project per customer. Should each customer have their own org and team? Who is invoiced?
 
-5. **Registry and the public repo.** Default: real slugs stay in gitignored `ops/customers.json` on the operator machine (and nowhere in GitHub). Do you want that file in a private repo instead, and is a public list of customer slugs ever acceptable?
+3. **Fleet region.** Deploy 1 needs one Turso location and the matching `vercel.json` `regions` entry. Which location, for a Netherlands customer? If customers ever differ, the committed `regions` array is the wrong tool and this plan has to change.
 
-6. **Preview data.** Default: one shared preview database per customer, empty unless someone passes `--preview-demo`. Every open pull request on that Vercel project shares it. Is that enough, or do you need a database per branch? Per-branch databases are a different design (Vercel Preview env is not per branch).
+4. **Private repo and secrets manager.** Which private repo, who can read it, and which secrets manager? The public repo stays empty of real slugs.
 
-7. **How code ships.** Default: keep laptop `vercel deploy --prod` per project, driven by `upgrade:customers`. GitHub stays a manual attachment. Do you want git-push deploys connected on each customer project, or one CI job with a Vercel token that runs the upgrade command?
+5. **Dump retention.** PITR is 24 hours on Free and 10, 30, or 90 days on paid, and only until destroy. How many dumps do we keep, where, and who may restore?
 
-8. **SSO at go-live.** Default: password login, SSO only when that customer’s local env file is present, provisioning off. Is any customer waiting on OIDC or SAML before the first production URL is useful?
+6. **How code ships.** Default: `upgrade:customers` deploys from the operator. Do you want git-push on each customer project, or one CI job with a Vercel token?
 
-9. **Mail.** Default: copy-link (`MAIL_PROVIDER` unset). SMTP only when the customer file has their relay. Do you want a shared transactional provider instead of each customer’s own SMTP?
+7. **Preview data.** Default: one preview database per customer, empty unless someone passes `--preview-demo`. Every open pull request on that project shares it. Per-branch databases are a different design.
 
-10. **Node on Vercel.** Default: leave the account default, and document “set 22 if the build fails”. CI is Node 22. Should Deploy 1 pin the project to 22 when the CLI can do that non-interactively?
+8. **Sourcing cron.** Deploy 1 mints `CRON_SECRET` and does not add a cron. Should a later sprint add the 15-minute tick for every customer, or only when sourcing is on?
 
-11. **Project delete.** Default: offboard leaves the Vercel project for a human, because CLI 59.26.0 has no `project rm --yes`. When a safe flag exists, should delete become part of `--confirm-slug`, or a second flag (`--delete-project`)?
+9. **Node on Vercel.** CI is Node 22. `engines` is `>=18`. `project add` does not pin it. Should Deploy 1 set 22 when the CLI can do that without a prompt?
 
-12. **Sourcing cron.** Default: leave `vercel.json` without crons, so deadlines close on the next read. Should a later deploy sprint add the 15-minute tick for every customer, or only when `CRON_SECRET` is set?
+10. **Existing installs.** Which slugs already exist, which of them share the default Turso group, and which slug is the canary for the first `upgrade:customers --apply`? `new-p2p-indirect` is the one the manual already names.
 
-13. **First-admin password delivery.** Default: operator types it on stdin and stores it in the password manager. The app does not email it. Is that the handoff you want with the customer?
+11. **Project delete.** Offboard leaves the Vercel project until `vercel project rm` can take a non-interactive confirm. Should that be a second flag when the CLI grows one?
 
-14. **Existing installs.** Default: Deploy 1’s manual cleanup for any project that already has production Turso credentials on Preview, including `new-p2p-indirect` if that project is still live. Which slugs exist today, and which of them are allowed to be touched by the first real `upgrade:customers --apply`?
+12. **First-admin handoff.** Default: the operator types the password on stdin and puts it in the password manager. The app does not email it. Is that the handoff you want?
