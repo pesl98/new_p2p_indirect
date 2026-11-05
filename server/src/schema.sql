@@ -1235,3 +1235,11 @@ CREATE TABLE IF NOT EXISTS integration_sourcing_links (
   UNIQUE (api_key_id, external_id),
   FOREIGN KEY (event_id) REFERENCES sourcing_events(id)
 );
+
+-- Shared fixed-window counters for the rate limiter (serverless instances do not share memory).
+CREATE TABLE IF NOT EXISTS rate_limits (
+  bucket TEXT PRIMARY KEY,
+  count INTEGER NOT NULL,
+  reset_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_reset ON rate_limits(reset_at);

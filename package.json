@@ -26,7 +26,8 @@
     "dev:client": "npm --prefix client run dev",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "test": "node --test server/src/*.test.js client/src/documentTrailNav.test.js client/src/i18n.test.js client/src/money.test.js",
-    "build": "npm --prefix client install && npm --prefix client run build && rm -rf public && mkdir -p public && cp -r client/dist/. public/"
+    "build": "npm --prefix client install && npm --prefix client run build && rm -rf public && mkdir -p public && cp -r client/dist/. public/",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@node-saml/node-saml": "^5.1.0",
@@ -43,6 +44,10 @@
     "better-sqlite3": "^11.8.1"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^8.2.2",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0"
   }
 }

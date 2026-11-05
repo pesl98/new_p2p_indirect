@@ -55,6 +55,7 @@ export const EXPECTED_TABLES = [
   'po_change_orders',
   'po_items',
   'purchase_orders',
+  'rate_limits',
   'purchase_requisitions',
   'requisition_items',
   'service_entry_sheet_items',

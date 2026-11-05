@@ -57,3 +57,20 @@ test('missing SESSION_SECRET throws in production only', () => {
   const set = { NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(32) };
   assert.doesNotThrow(() => warnIfInsecureSessionSecret(loadAuthConfig(set), set));
 });
+
+test('dbRateLimit counts in the database, resets after the window, falls back when the db fails', async () => {
+    const { createMemoryDatabase } = await import('./db.js');
+    const { dbRateLimit } = await import('./security.js');
+    const db = await createMemoryDatabase();
+    let t = 1000;
+    const limiter = dbRateLimit({ max: 2, windowMs: 1000, now: () => t, key: (r) => r.k, scope: 's' });
+    const mk = () => ({ code: 200, set() {}, status(c) { this.code = c; return this; }, json() { return this; } });
+    const hit = async (req) => { const res = mk(); let passed = false; await limiter(req, res, () => { passed = true; }); return passed ? 200 : res.code; };
+    const req = { db, k: 'a' };
+    assert.deepEqual([await hit(req), await hit(req), await hit(req)], [200, 200, 429]);
+    assert.equal(await hit({ db, k: 'b' }), 200, 'other keys are separate');
+    t += 1001;
+    assert.equal(await hit(req), 200, 'new window');
+    const broken = { prepare() { throw new Error('down'); } };
+    assert.equal(await hit({ db: broken, k: 'c' }), 200, 'falls back to memory');
+  });

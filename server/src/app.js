@@ -41,7 +41,7 @@ import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './au
 import { requireApiSession } from './requestActor.js';
 import { warnIfBadAppBaseUrl } from './sourcingConfig.js';
 import tickRouter from './routes/tick.js';
-import { corsDelegate, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
+import { corsDelegate, loginAttemptKey, originCheck, pickRateLimit, securityHeaders } from './security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -142,9 +142,10 @@ export function createApp(options = {}) {
     }
   });
 
+  const limiter = (opts) => pickRateLimit(opts, { env: runtimeEnv, onVercel: config.onVercel });
   app.use(attachSession);
   // Portal is bearer-only and must not inherit credentialed CORS.
-  app.use('/api/portal', options.portalRateLimit || rateLimit({ max: 300 }), portalRouter);
+  app.use('/api/portal', options.portalRateLimit || limiter({ max: 300, scope: 'portal' }), portalRouter);
   app.use(cors(corsDelegate(runtimeEnv)));
   app.use('/api', originCheck(runtimeEnv));
   app.use(requireApiSession);
@@ -153,10 +154,10 @@ export function createApp(options = {}) {
   // every visitor shares the proxy's address, so the address alone must not be the lock.
   const loginLimiters = options.loginRateLimit
     ? [options.loginRateLimit]
-    : [rateLimit({ max: 300 }), rateLimit({ max: 10, key: loginAttemptKey })];
-  for (const limiter of loginLimiters) {
-    app.use('/api/auth/login', limiter);
-    app.use('/api/auth/bootstrap', limiter);
+    : [limiter({ max: 300, scope: 'login-ip' }), limiter({ max: 10, key: loginAttemptKey, scope: 'login-account' })];
+  for (const loginLimiter of loginLimiters) {
+    app.use('/api/auth/login', loginLimiter);
+    app.use('/api/auth/bootstrap', loginLimiter);
   }
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);

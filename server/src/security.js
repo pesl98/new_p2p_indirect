@@ -138,3 +138,46 @@ export function rateLimit({ windowMs = 15 * 60 * 1000, max = 20, now = () => Dat
     return next();
   };
 }
+
+/**
+ * Fixed-window limiter whose counters live in the database (`rate_limits`), so every serverless
+ * instance shares them. Same signature as `rateLimit`; `scope` keeps the limiters apart. If the
+ * database fails the request falls back to a per-instance in-memory limiter instead of failing.
+ */
+export function dbRateLimit({ windowMs = 15 * 60 * 1000, max = 20, now = () => Date.now(), key = clientAddress, scope = 'default' } = {}) {
+  const fallback = rateLimit({ windowMs, max, now, key });
+  return async (req, res, next) => {
+    const db = req.db;
+    if (!db) return fallback(req, res, next);
+    let count;
+    let resetAt;
+    const t = now();
+    try {
+      const bucket = createHash('sha256').update(`${scope}|${key(req)}`).digest('hex');
+      await db.prepare(
+        `INSERT INTO rate_limits (bucket, count, reset_at) VALUES (?, 1, ?)
+         ON CONFLICT(bucket) DO UPDATE SET
+           count = CASE WHEN reset_at <= ? THEN 1 ELSE count + 1 END,
+           reset_at = CASE WHEN reset_at <= ? THEN ? ELSE reset_at END`
+      ).run(bucket, t + windowMs, t, t, t + windowMs);
+      const row = await db.prepare('SELECT count, reset_at FROM rate_limits WHERE bucket = ?').get(bucket);
+      count = Number(row?.count);
+      resetAt = Number(row?.reset_at);
+      if (!Number.isFinite(count) || !Number.isFinite(resetAt)) throw new Error('rate_limits row missing');
+      if (Math.random() < 0.01) await db.prepare('DELETE FROM rate_limits WHERE reset_at <= ?').run(t);
+    } catch {
+      return fallback(req, res, next);
+    }
+    if (count > max) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((resetAt - t) / 1000))));
+      return res.status(429).json({ error: 'Too many requests, try again later', code: 'rate_limited' });
+    }
+    return next();
+  };
+}
+
+/** Use the shared limiter on Vercel (or with RATE_LIMIT_STORE=db); in-memory elsewhere. */
+export function pickRateLimit(opts, { env = process.env, onVercel = false } = {}) {
+  const shared = onVercel || String(env.RATE_LIMIT_STORE || '').trim().toLowerCase() === 'db';
+  return shared ? dbRateLimit(opts) : rateLimit(opts);
+}
