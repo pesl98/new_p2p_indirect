@@ -8,8 +8,12 @@ import { timingSafeEqual } from 'node:crypto';
 import { DEMO_SEED_PASSWORD, isDemoPersonaSwitcher } from './auth.js';
 import { loadDbConfig, runningOnVercel } from './dbConfig.js';
 
-/** bcrypt uses only the first 72 UTF-8 bytes. Longer passwords are rejected. */
+/** bcrypt uses only the first 72 UTF-8 bytes. Enforced when a password is set. */
 export const MAX_PASSWORD_BYTES = 72;
+/** Login rejects only huge bodies. A stored hash of a longer password can still be checked. */
+export const MAX_LOGIN_PASSWORD_BYTES = 1024;
+
+const previewForbiddenCache = new WeakMap();
 
 function vercelEnv(env) {
   return String(env.VERCEL_ENV || '').trim();
@@ -22,10 +26,15 @@ function vercelEnv(env) {
  * refused there. Production, any other Vercel environment, and a laptop
  * whose shell points at Turso may not use it either.
  */
+function previewForbidsDemoPassword(env) {
+  if (previewForbiddenCache.has(env)) return previewForbiddenCache.get(env);
+  const forbidden = loadDbConfig(env, { quiet: true }).previewDatabase !== true;
+  previewForbiddenCache.set(env, forbidden);
+  return forbidden;
+}
+
 export function deploymentForbidsDemoPassword(env = process.env) {
-  if (vercelEnv(env) === 'preview') {
-    return loadDbConfig(env).previewDatabase !== true;
-  }
+  if (vercelEnv(env) === 'preview') return previewForbidsDemoPassword(env);
   if (vercelEnv(env) === 'production') return true;
   if (env.NODE_ENV === 'production') return true;
   if (runningOnVercel(env)) return true;
@@ -42,8 +51,16 @@ export function passwordIsDemoSeed(password) {
   return timingSafeEqual(left, right);
 }
 
+function passwordByteLength(password) {
+  return Buffer.byteLength(password == null ? '' : String(password), 'utf8');
+}
+
 export function passwordExceedsBcryptLimit(password) {
-  return Buffer.byteLength(password == null ? '' : String(password), 'utf8') > MAX_PASSWORD_BYTES;
+  return passwordByteLength(password) > MAX_PASSWORD_BYTES;
+}
+
+export function passwordExceedsLoginLimit(password) {
+  return passwordByteLength(password) > MAX_LOGIN_PASSWORD_BYTES;
 }
 
 export function assertPasswordAcceptable(password, env = process.env) {

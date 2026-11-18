@@ -18,7 +18,7 @@ import {
   verifyPassword
 } from './auth.js';
 import {
-  passwordExceedsBcryptLimit,
+  passwordExceedsLoginLimit,
   assertPasswordAcceptable,
   deploymentForbidsDemoPassword,
   passwordIsDemoSeed
@@ -310,7 +310,7 @@ export async function authenticateUser(db, email, password, { env = process.env 
     throw new UsersError('Email and password are required', 400);
   }
   const presented = String(password);
-  if (passwordExceedsBcryptLimit(presented)) {
+  if (passwordExceedsLoginLimit(presented)) {
     throw new UsersError('Invalid email or password', 401);
   }
   if (deploymentForbidsDemoPassword(env) && passwordIsDemoSeed(presented)) {

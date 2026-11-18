@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { loadDbConfig } from './dbConfig.js';
 import { DEMO_SEED_PASSWORD, hashPassword, loadAuthConfig } from './auth.js';
 import {
+  MAX_LOGIN_PASSWORD_BYTES,
   MAX_PASSWORD_BYTES,
   deploymentForbidsDemoPassword,
   warnIfDemoPersonaSwitcher
@@ -213,6 +214,56 @@ describe('demo credentials outside local', () => {
     } finally {
       db.close();
     }
+  });
+
+  test('login still checks a stored password longer than 72 bytes and rejects only huge inputs', async () => {
+    const db = await createMemoryDatabase();
+    try {
+      const stored = 'y'.repeat(80);
+      const hash = await hashPassword(stored, 4);
+      db.exec(`INSERT INTO users (id, name, email, role, title, approval_limit, status)
+        VALUES (1, 'Ada Admin', 'ada@example.com', 'admin', 'Admin', 0, 'active')`);
+      db.prepare(`INSERT INTO user_credentials (user_id, password_hash) VALUES (?, ?)`).run(1, hash);
+      const user = await authenticateUser(db, 'ada@example.com', stored, { env: {} });
+      assert.equal(user.email, 'ada@example.com');
+      const atLoginCap = await authenticateUser(
+        db,
+        'ada@example.com',
+        'y'.repeat(MAX_LOGIN_PASSWORD_BYTES),
+        { env: {} }
+      );
+      assert.equal(atLoginCap.email, 'ada@example.com');
+      await assert.rejects(
+        () => authenticateUser(db, 'ada@example.com', 'y'.repeat(MAX_LOGIN_PASSWORD_BYTES + 1), { env: {} }),
+        (error) => error.statusCode === 401
+      );
+      await assert.rejects(
+        () => setUserPassword(db, user.id, stored, { bcryptRounds: 4, env: {} }),
+        (error) => error.code === 'password_too_long'
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test('preview password checks do not log, including a second login', () => {
+    const env = {
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://prod.example.test',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      ALLOW_PREVIEW_PRODUCTION_DATABASE: 'allow'
+    };
+    const lines = [];
+    const original = console.error;
+    console.error = (...args) => lines.push(args.map(String).join(' '));
+    try {
+      assert.equal(deploymentForbidsDemoPassword(env), true);
+      assert.equal(deploymentForbidsDemoPassword(env), true);
+    } finally {
+      console.error = original;
+    }
+    assert.deepEqual(lines, []);
   });
 
   test('bootstrap and password set refuse the demo password before any user row is written', async () => {

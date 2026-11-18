@@ -116,11 +116,13 @@ export function allowPreviewProductionDatabase(env = process.env) {
   return String(env[PREVIEW_PRODUCTION_DB_ALLOW_ENV] || '').trim() === PREVIEW_PRODUCTION_DB_ALLOW_VALUE;
 }
 
-function logPreviewRefusal(code, message) {
+function logPreviewRefusal(code, message, quiet) {
+  if (quiet) return;
   console.error(`ProcureFlow preview database refused: ${code}. ${message}`);
 }
 
-function logPreviewEscape(host) {
+function logPreviewEscape(host, quiet) {
+  if (quiet) return;
   console.error(
     'ALLOW_PREVIEW_PRODUCTION_DATABASE=allow — PREVIEW IS SERVING THE PRODUCTION DATABASE. '
     + `Host: ${host || '(unset)'}. Remove this variable and set TURSO_PREVIEW_DATABASE_URL `
@@ -133,7 +135,7 @@ export const TURSO_REQUIRED_MSG =
   + '(ephemeral local SQLite is not supported). Set both on the Vercel project '
   + 'for Production and Preview (or All Environments), then Redeploy.';
 
-export function loadDbConfig(env = process.env) {
+export function loadDbConfig(env = process.env, { quiet = false } = {}) {
   const onVercel = runningOnVercel(env);
   const vercelEnv = nonEmpty(env.VERCEL_ENV);
   const productionUrl = nonEmpty(env.TURSO_DATABASE_URL);
@@ -150,7 +152,7 @@ export function loadDbConfig(env = process.env) {
   };
 
   if (vercelEnv === 'preview') {
-    return loadPreviewDbConfig(env, base, productionUrl, productionToken);
+    return loadPreviewDbConfig(env, base, productionUrl, productionToken, quiet);
   }
 
   const useTurso = Boolean(productionUrl && productionToken);
@@ -162,8 +164,8 @@ export function loadDbConfig(env = process.env) {
   };
 }
 
-function previewRefusal(base, code, message) {
-  logPreviewRefusal(code, message);
+function previewRefusal(base, code, message, quiet) {
+  logPreviewRefusal(code, message, quiet);
   return {
     ...base,
     tursoUrl: null,
@@ -173,7 +175,7 @@ function previewRefusal(base, code, message) {
   };
 }
 
-function loadPreviewDbConfig(env, base, productionUrl, productionToken) {
+function loadPreviewDbConfig(env, base, productionUrl, productionToken, quiet) {
   const comparisonUrl = nonEmpty(env.TURSO_PRODUCTION_DATABASE_URL) || productionUrl;
   const previewUrl = nonEmpty(env.TURSO_PREVIEW_DATABASE_URL);
   const previewToken = nonEmpty(env.TURSO_PREVIEW_AUTH_TOKEN);
@@ -211,7 +213,7 @@ function loadPreviewDbConfig(env, base, productionUrl, productionToken) {
   }
 
   if (allowPreviewProductionDatabase(env)) {
-    logPreviewEscape(databaseHost(productionUrl));
+    logPreviewEscape(databaseHost(productionUrl), quiet);
     return {
       ...base,
       tursoUrl: productionUrl,
@@ -222,7 +224,7 @@ function loadPreviewDbConfig(env, base, productionUrl, productionToken) {
     };
   }
 
-  return previewRefusal(base, block.code, block.message);
+  return previewRefusal(base, block.code, block.message, quiet);
 }
 
 export function assertDeployableConfig(config = loadDbConfig()) {
