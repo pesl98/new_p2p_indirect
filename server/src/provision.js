@@ -149,6 +149,7 @@ export function parseProvisionArgs(argv = []) {
     else if (arg === '--turso' || arg === '--require-turso') flags.add('requireTurso');
     else if (arg === '--json') flags.add('json');
     else if (arg === '--help' || arg === '-h') flags.add('help');
+    else if (arg === '--force') flags.add('force');
     else unknown.push(arg);
   }
   return {
@@ -301,11 +302,12 @@ export async function runProvisionCli({
     return 1;
   }
 
-  // Refuse a destructive seed before openDatabase. Otherwise a Turso shell
-  // migrates, then seed.js exits because this command cannot pass --force.
+  // Refuse a destructive seed before openDatabase. Pass an empty argv so
+  // `db:migrate -- --seed --force` cannot skip this check. --force only
+  // applies to `npm run seed` itself.
   if (command === 'migrate' && args.seed) {
     const { seedRefusal } = await import('./seed.js');
-    const refusal = seedRefusal(env, argv);
+    const refusal = seedRefusal(env, []);
     if (refusal) {
       write(stderr, `${refusal}\n`);
       write(stderr, 'db:migrate --seed does not accept --force and did not apply schema. '
