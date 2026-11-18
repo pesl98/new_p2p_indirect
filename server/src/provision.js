@@ -301,6 +301,19 @@ export async function runProvisionCli({
     return 1;
   }
 
+  // Refuse a destructive seed before openDatabase. Otherwise a Turso shell
+  // migrates, then seed.js exits because this command cannot pass --force.
+  if (command === 'migrate' && args.seed) {
+    const { seedRefusal } = await import('./seed.js');
+    const refusal = seedRefusal(env, argv);
+    if (refusal) {
+      write(stderr, `${refusal}\n`);
+      write(stderr, 'db:migrate --seed does not accept --force and did not apply schema. '
+        + 'An intentional wipe is: npm run seed -- --force\n');
+      return 1;
+    }
+  }
+
   try {
     const config = assertCustomerDbConfig(env, { requireTurso: args.requireTurso });
     if (command === 'migrate' && args.seed) {

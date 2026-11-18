@@ -38,4 +38,14 @@ describe('destructive seed refuses a remote database', () => {
       TURSO_AUTH_TOKEN: ''
     }, ['node', 'seed.js']), null);
   });
+
+  test('production-comparison URL and the preview hatch are refused without printing values', () => {
+    const prodUrl = 'libsql://procureflow-customer-prod.example.test';
+    const byUrl = seedRefusal({ TURSO_PRODUCTION_DATABASE_URL: prodUrl }, ['node', 'seed.js']);
+    assert.match(byUrl, /TURSO_PRODUCTION_DATABASE_URL/);
+    assert.equal(byUrl.includes(prodUrl), false);
+    const hatch = seedRefusal({ ALLOW_PREVIEW_PRODUCTION_DATABASE: 'allow' }, ['node', 'seed.js']);
+    assert.match(hatch, /ALLOW_PREVIEW_PRODUCTION_DATABASE/);
+    assert.equal(hatch.includes('allow'), false);
+  });
 });
