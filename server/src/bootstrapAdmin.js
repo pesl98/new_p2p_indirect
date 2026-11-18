@@ -80,7 +80,8 @@ export async function runBootstrapAdminCli({
     const db = await openDatabaseFn(dbConfig);
     const config = loadAuthConfig(env);
     const user = await bootstrapFirstAdmin(db, { name, email, password, title }, {
-      bcryptRounds: config.bcryptRounds
+      bcryptRounds: config.bcryptRounds,
+      env
     });
     write(stdout, `Created first admin: ${user.name} <${user.email}> (id=${user.id})\n`);
     write(stdout, 'Sign in at /login with that email and password. Credentials are stored hashed in this tenant DB only.\n');

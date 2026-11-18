@@ -6,21 +6,26 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { DEMO_SEED_PASSWORD, isDemoPersonaSwitcher } from './auth.js';
-import { runningOnVercel } from './dbConfig.js';
+import { loadDbConfig, runningOnVercel } from './dbConfig.js';
 
-export const MAX_PASSWORD_LENGTH = 128;
+/** bcrypt uses only the first 72 UTF-8 bytes. Longer passwords are rejected. */
+export const MAX_PASSWORD_BYTES = 72;
 
 function vercelEnv(env) {
   return String(env.VERCEL_ENV || '').trim();
 }
 
 /**
- * Preview may sign in with the demo seed (db:seed:preview). Production,
- * any other Vercel environment, and a laptop whose shell points at Turso
- * may not.
+ * Preview may sign in with the demo seed only when this process opened the
+ * preview database. ALLOW_PREVIEW_PRODUCTION_DATABASE=allow sets
+ * previewDatabase to false and serves production, so the demo password is
+ * refused there. Production, any other Vercel environment, and a laptop
+ * whose shell points at Turso may not use it either.
  */
 export function deploymentForbidsDemoPassword(env = process.env) {
-  if (vercelEnv(env) === 'preview') return false;
+  if (vercelEnv(env) === 'preview') {
+    return loadDbConfig(env).previewDatabase !== true;
+  }
   if (vercelEnv(env) === 'production') return true;
   if (env.NODE_ENV === 'production') return true;
   if (runningOnVercel(env)) return true;
@@ -37,10 +42,13 @@ export function passwordIsDemoSeed(password) {
   return timingSafeEqual(left, right);
 }
 
+export function passwordExceedsBcryptLimit(password) {
+  return Buffer.byteLength(password == null ? '' : String(password), 'utf8') > MAX_PASSWORD_BYTES;
+}
+
 export function assertPasswordAcceptable(password, env = process.env) {
-  const value = password == null ? '' : String(password);
-  if (value.length > MAX_PASSWORD_LENGTH) {
-    const error = new Error(`Password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
+  if (passwordExceedsBcryptLimit(password)) {
+    const error = new Error(`Password must be at most ${MAX_PASSWORD_BYTES} bytes.`);
     error.statusCode = 400;
     error.code = 'password_too_long';
     throw error;

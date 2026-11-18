@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { openDatabase } from './db.js';
+import { DEMO_SEED_PASSWORD } from './auth.js';
 import {
   parseBootstrapArgs,
   runBootstrapAdminCli
@@ -146,6 +147,35 @@ describe('empty-customer provision CLI', () => {
     });
     assert.equal(second, 2);
     assert.match(stderr.text, /already has users/);
+  });
+
+  test('caller env reaches first-admin checks, so a production env rejects the demo password', async () => {
+    const sqlitePath = tempSqlitePath('prod-env.db');
+    const { stderr } = captureStreams();
+    const code = await runCustomerProvisionCli({
+      argv: ['--email', 'ada@example.com', '--password', DEMO_SEED_PASSWORD],
+      env: sqliteEnv(sqlitePath, { NODE_ENV: 'production' }),
+      stdout: captureStreams().stdout,
+      stderr
+    });
+    assert.equal(code, 1);
+    assert.match(stderr.text, /not allowed on a customer or production deployment/);
+    assert.equal(stderr.text.includes(DEMO_SEED_PASSWORD), false);
+    const db = await openDatabase({
+      useTurso: false,
+      sqlitePath,
+      onVercel: false
+    }, { migrate: false });
+    const row = await db.prepare('SELECT COUNT(*) AS n FROM users').get();
+    assert.equal(Number(row.n), 0);
+
+    const ok = await runCustomerProvisionCli({
+      argv: ['--email', 'ada@example.com', '--password', 'choose-a-long-password'],
+      env: sqliteEnv(sqlitePath, { NODE_ENV: 'production' }),
+      stdout: captureStreams().stdout,
+      stderr: captureStreams().stderr
+    });
+    assert.equal(ok, 0);
   });
 
   test('--help prints the empty-customer runbook', async () => {

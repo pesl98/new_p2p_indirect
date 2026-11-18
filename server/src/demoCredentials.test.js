@@ -6,7 +6,7 @@ import { createApp } from './app.js';
 import { loadDbConfig } from './dbConfig.js';
 import { DEMO_SEED_PASSWORD, hashPassword, loadAuthConfig } from './auth.js';
 import {
-  MAX_PASSWORD_LENGTH,
+  MAX_PASSWORD_BYTES,
   deploymentForbidsDemoPassword,
   warnIfDemoPersonaSwitcher
 } from './demoCredentials.js';
@@ -22,6 +22,29 @@ function customerEnv(extra = {}) {
     SESSION_SECRET: 'x'.repeat(32),
     ...extra
   };
+}
+
+function previewDatabaseEnv(extra = {}) {
+  return {
+    VERCEL: '1',
+    NODE_ENV: 'production',
+    VERCEL_ENV: 'preview',
+    TURSO_DATABASE_URL: 'libsql://prod.example.test',
+    TURSO_AUTH_TOKEN: 'prod-token',
+    TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.example.test',
+    TURSO_PREVIEW_AUTH_TOKEN: 'preview-token',
+    ...extra
+  };
+}
+
+function withMutedError(fn) {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    return fn();
+  } finally {
+    console.error = original;
+  }
 }
 
 function withServer(app, fn) {
@@ -61,12 +84,14 @@ describe('demo credentials outside local', () => {
     assert.equal(deploymentForbidsDemoPassword({ VERCEL: '1' }), true);
     assert.equal(deploymentForbidsDemoPassword({ TURSO_DATABASE_URL: CUSTOMER_HOST }), true);
     assert.equal(deploymentForbidsDemoPassword({ TURSO_AUTH_TOKEN: 'present' }), true);
-    assert.equal(deploymentForbidsDemoPassword({
+    assert.equal(loadDbConfig(previewDatabaseEnv()).previewDatabase, true);
+    assert.equal(deploymentForbidsDemoPassword(previewDatabaseEnv()), false);
+    assert.equal(withMutedError(() => deploymentForbidsDemoPassword({
       NODE_ENV: 'production',
       VERCEL_ENV: 'preview',
       TURSO_DATABASE_URL: CUSTOMER_HOST,
       TURSO_AUTH_TOKEN: 'present'
-    }), false);
+    })), true);
   });
 
   test('boot refuses the persona switcher on production and preview', () => {
@@ -145,7 +170,7 @@ describe('demo credentials outside local', () => {
         const huge = await json(await fetch(`${base}/api/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'ada@example.com', password: 'x'.repeat(MAX_PASSWORD_LENGTH + 1) })
+          body: JSON.stringify({ email: 'ada@example.com', password: 'x'.repeat(MAX_PASSWORD_BYTES + 1) })
         }));
         assert.equal(huge.status, 401);
         assert.equal(huge.body.error, 'Invalid email or password');
@@ -163,9 +188,28 @@ describe('demo credentials outside local', () => {
         VALUES (1, 'Elena Rostova', 'elena@example.com', 'admin', 'CFO', 0, 'active')`);
       db.prepare(`INSERT INTO user_credentials (user_id, password_hash) VALUES (?, ?)`).run(1, hash);
       const user = await authenticateUser(db, 'elena@example.com', DEMO_SEED_PASSWORD, {
-        env: { NODE_ENV: 'production', VERCEL_ENV: 'preview', TURSO_DATABASE_URL: CUSTOMER_HOST }
+        env: previewDatabaseEnv()
       });
       assert.equal(user.email, 'elena@example.com');
+      const hatchEnv = {
+        VERCEL: '1',
+        NODE_ENV: 'production',
+        VERCEL_ENV: 'preview',
+        TURSO_DATABASE_URL: 'libsql://prod.example.test',
+        TURSO_AUTH_TOKEN: 'prod-token',
+        ALLOW_PREVIEW_PRODUCTION_DATABASE: 'allow'
+      };
+      assert.equal(withMutedError(() => loadDbConfig(hatchEnv).previewDatabase), false);
+      await assert.rejects(
+        () => withMutedError(() => authenticateUser(db, 'elena@example.com', DEMO_SEED_PASSWORD, {
+          env: hatchEnv
+        })),
+        (error) => {
+          assert.equal(error.statusCode, 401);
+          assert.equal(String(error.message).includes(DEMO_SEED_PASSWORD), false);
+          return true;
+        }
+      );
     } finally {
       db.close();
     }
@@ -200,7 +244,15 @@ describe('demo credentials outside local', () => {
         (error) => error.code === 'demo_password_forbidden'
       );
       await assert.rejects(
-        () => setUserPassword(db, created.id, 'x'.repeat(MAX_PASSWORD_LENGTH + 1), { bcryptRounds: 4, env }),
+        () => setUserPassword(db, created.id, 'x'.repeat(MAX_PASSWORD_BYTES + 1), { bcryptRounds: 4, env }),
+        (error) => error.code === 'password_too_long'
+      );
+      const twoByte = 'é';
+      assert.equal(Buffer.byteLength(twoByte, 'utf8'), 2);
+      const atLimit = await setUserPassword(db, created.id, twoByte.repeat(MAX_PASSWORD_BYTES / 2), { bcryptRounds: 4, env });
+      assert.equal(atLimit.email, 'ada@example.com');
+      await assert.rejects(
+        () => setUserPassword(db, created.id, twoByte.repeat((MAX_PASSWORD_BYTES / 2) + 1), { bcryptRounds: 4, env }),
         (error) => error.code === 'password_too_long'
       );
       const previewDb = await createMemoryDatabase();
@@ -210,7 +262,7 @@ describe('demo credentials outside local', () => {
           password: DEMO_SEED_PASSWORD
         }, {
           bcryptRounds: 4,
-          env: { VERCEL_ENV: 'preview', NODE_ENV: 'production', TURSO_DATABASE_URL: CUSTOMER_HOST }
+          env: previewDatabaseEnv()
         });
         assert.equal(preview.email, 'preview@example.com');
       } finally {
