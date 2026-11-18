@@ -1541,15 +1541,43 @@ export async function insertDemoData(rootDb) {
   await writer.flush();
 }
 
+const REMOTE_DB_ENV_KEYS = [
+  'TURSO_DATABASE_URL',
+  'TURSO_AUTH_TOKEN',
+  'TURSO_PREVIEW_DATABASE_URL',
+  'TURSO_PREVIEW_AUTH_TOKEN'
+];
+
+/** Env var names that are set, never their values. */
+export function remoteDatabaseEnvKeys(env = process.env) {
+  return REMOTE_DB_ENV_KEYS.filter((key) => String(env[key] || '').trim());
+}
+
 /**
- * The seed drops every application table. Refuse to run it where a production database may be
- * attached, unless the operator says --force.
+ * The seed drops every application table. Refuse production, preview, a Vercel
+ * process, and any shell that still has Turso variables set. `--force` is the
+ * only bypass. The message names variables and never prints their values.
  */
 export function seedRefusal(env = process.env, argv = process.argv) {
+  if (argv.includes('--force')) return null;
   const production = env.NODE_ENV === 'production' || env.VERCEL_ENV === 'production';
-  if (!production || argv.includes('--force')) return null;
-  return 'Refusing to seed: NODE_ENV or VERCEL_ENV is production, and the seed drops every table. '
-    + 'Pass --force only if you are sure this is not a customer database.';
+  if (production) {
+    return 'Refusing to seed: NODE_ENV or VERCEL_ENV is production, and the seed drops every table. '
+      + 'Pass --force only if you are sure this is not a customer database.';
+  }
+  if (env.VERCEL_ENV === 'preview' || env.VERCEL) {
+    return 'Refusing to seed: this process is Preview or Vercel, and the seed drops every table. '
+      + 'Use npm run db:seed:preview for an empty preview database. '
+      + 'Pass --force only if you are sure this is not a customer database.';
+  }
+  const remote = remoteDatabaseEnvKeys(env);
+  if (remote.length) {
+    return 'Refusing to seed: '
+      + `${remote.join(', ')} is set. This command drops every table in the database this process would open. `
+      + 'Unset those variables to seed the local SQLite file. '
+      + 'Pass --force only if you are sure this is not a customer database.';
+  }
+  return null;
 }
 
 async function destructiveSeed() {

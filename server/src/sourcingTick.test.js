@@ -193,7 +193,8 @@ describe('seed guard, APP_BASE_URL and same-origin logging', () => {
     assert.match(seedRefusal({ VERCEL_ENV: 'production' }, ['node', 'seed.js']), /Refusing/);
     assert.equal(seedRefusal({ NODE_ENV: 'production' }, ['node', 'seed.js', '--force']), null);
     assert.equal(seedRefusal({ NODE_ENV: 'development' }, ['node', 'seed.js']), null);
-    assert.equal(seedRefusal({ VERCEL_ENV: 'preview' }, ['node', 'seed.js']), null);
+    assert.match(seedRefusal({ VERCEL_ENV: 'preview' }, ['node', 'seed.js']), /db:seed:preview/);
+    assert.equal(seedRefusal({ VERCEL_ENV: 'preview' }, ['node', 'seed.js', '--force']), null);
   });
 
   test('a schemeless APP_BASE_URL is warned about', async () => {
