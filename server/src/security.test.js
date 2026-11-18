@@ -86,5 +86,15 @@ test('production and preview refuse the development default and a short SESSION_
     return null;
   })();
   assert.ok(thrown);
+  assert.equal(thrown.code, 'session_secret_insecure');
   assert.equal(thrown.message.includes(known), false);
+  const vercelDev = { VERCEL: '1' };
+  assert.throws(
+    () => warnIfInsecureSessionSecret(loadAuthConfig({ ...vercelDev, SESSION_SECRET: 'x'.repeat(31) }), vercelDev),
+    (error) => error.code === 'session_secret_insecure'
+  );
+  assert.doesNotThrow(() => warnIfInsecureSessionSecret(
+    loadAuthConfig({ ...vercelDev, SESSION_SECRET: 'x'.repeat(32) }),
+    vercelDev
+  ));
 });

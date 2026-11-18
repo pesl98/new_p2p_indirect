@@ -241,7 +241,7 @@ export function warnIfInsecureSessionSecret(config, env = process.env) {
       + 'Refusing to start with a missing, default, or short secret.'
     );
     error.statusCode = 503;
-    error.code = 'session_secret_missing';
+    error.code = 'session_secret_insecure';
     throw error;
   }
 }
