@@ -31,6 +31,9 @@ export const IDENTITY_PROVIDER = 'local';
 
 const DEV_SESSION_SECRET = 'procureflow-dev-insecure-session-secret';
 
+/** Production and Preview refuse anything shorter than this. */
+export const MIN_SESSION_SECRET_LENGTH = 32;
+
 export function isDemoPersonaSwitcher(env = process.env) {
   const flag = String(env.DEMO_PERSONA_SWITCHER || '').trim().toLowerCase();
   if (flag === '1' || flag === 'true' || flag === 'yes') return true;
@@ -217,10 +220,26 @@ export function requireAdmin(req, res, next) {
   return next();
 }
 
+/**
+ * Missing, the development default (even when SESSION_SECRET is set to that
+ * value), or shorter than MIN_SESSION_SECRET_LENGTH. Local development is
+ * allowed to boot with the default. The reason is a label, never the secret.
+ */
+export function sessionSecretProblem(config) {
+  const secret = String(config?.sessionSecret || '');
+  if (!secret || secret === DEV_SESSION_SECRET) return 'default';
+  if (secret.length < MIN_SESSION_SECRET_LENGTH) return 'short';
+  return null;
+}
+
 export function warnIfInsecureSessionSecret(config, env = process.env) {
-  if (!config?.usingDevSecret) return;
+  if (!sessionSecretProblem(config)) return;
   if (runningOnVercel(env) || env.NODE_ENV === 'production') {
-    const error = new Error('SESSION_SECRET must be set in production. Refusing to start with the insecure development default.');
+    const error = new Error(
+      'SESSION_SECRET must be set to a unique value of at least '
+      + `${MIN_SESSION_SECRET_LENGTH} characters in production. `
+      + 'Refusing to start with a missing, default, or short secret.'
+    );
     error.statusCode = 503;
     error.code = 'session_secret_missing';
     throw error;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { corsOptions, originCheck, rateLimit, parseOriginAllowlist } from './security.js';
-import { warnIfInsecureSessionSecret, loadAuthConfig } from './auth.js';
+import { warnIfInsecureSessionSecret, loadAuthConfig, sessionSecretProblem } from './auth.js';
 
 function run(mw, req) {
   const res = {
@@ -56,4 +56,35 @@ test('missing SESSION_SECRET throws in production only', () => {
   assert.doesNotThrow(() => warnIfInsecureSessionSecret(loadAuthConfig({}), {}));
   const set = { NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(32) };
   assert.doesNotThrow(() => warnIfInsecureSessionSecret(loadAuthConfig(set), set));
+});
+
+test('production and preview refuse the development default and a short SESSION_SECRET', () => {
+  const known = loadAuthConfig({}).sessionSecret;
+  const preview = { VERCEL: '1', VERCEL_ENV: 'preview' };
+  const production = { NODE_ENV: 'production', VERCEL_ENV: 'production' };
+  for (const env of [preview, production]) {
+    const explicitDefault = loadAuthConfig({ ...env, SESSION_SECRET: known });
+    assert.equal(explicitDefault.usingDevSecret, false);
+    assert.equal(sessionSecretProblem(explicitDefault), 'default');
+    assert.throws(() => warnIfInsecureSessionSecret(explicitDefault, env), /SESSION_SECRET/);
+    const short = loadAuthConfig({ ...env, SESSION_SECRET: 'x'.repeat(31) });
+    assert.equal(sessionSecretProblem(short), 'short');
+    assert.throws(() => warnIfInsecureSessionSecret(short, env), /32/);
+    const ok = loadAuthConfig({ ...env, SESSION_SECRET: 'x'.repeat(32) });
+    assert.equal(sessionSecretProblem(ok), null);
+    assert.doesNotThrow(() => warnIfInsecureSessionSecret(ok, env));
+  }
+  const localShort = loadAuthConfig({ SESSION_SECRET: 'x'.repeat(8) });
+  assert.equal(sessionSecretProblem(localShort), 'short');
+  assert.doesNotThrow(() => warnIfInsecureSessionSecret(localShort, {}));
+  const thrown = (() => {
+    try {
+      warnIfInsecureSessionSecret(loadAuthConfig({ NODE_ENV: 'production', SESSION_SECRET: known }), { NODE_ENV: 'production' });
+    } catch (error) {
+      return error;
+    }
+    return null;
+  })();
+  assert.ok(thrown);
+  assert.equal(thrown.message.includes(known), false);
 });
