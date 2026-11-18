@@ -27,6 +27,10 @@ function bcryptRounds(req) {
   return (req.authConfig || loadAuthConfig()).bcryptRounds;
 }
 
+function authEnv(req) {
+  return req.authEnv || process.env;
+}
+
 // Directory of users. Requires a session (see requireApiSession). Mutating
 // routes require a logged-in admin (req.user). Password hashes are never returned.
 router.get('/', async (req, res) => {
@@ -57,7 +61,10 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', requireAdmin, async (req, res) => {
   try {
-    const created = await createUser(req.db, req.body || {}, { bcryptRounds: bcryptRounds(req) });
+    const created = await createUser(req.db, req.body || {}, {
+      bcryptRounds: bcryptRounds(req),
+      env: authEnv(req)
+    });
     await recordUserChange(req.db, req.user, {
       action: 'USER_CREATED',
       user: created,
@@ -107,7 +114,8 @@ router.patch('/:id/status', requireAdmin, async (req, res) => {
 router.post('/:id/password', requireAdmin, async (req, res) => {
   try {
     const updated = await setUserPassword(req.db, req.params.id, req.body?.password, {
-      bcryptRounds: bcryptRounds(req)
+      bcryptRounds: bcryptRounds(req),
+      env: authEnv(req)
     });
     await recordUserChange(req.db, req.user, {
       action: 'USER_PASSWORD_SET',
