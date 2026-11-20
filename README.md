@@ -277,7 +277,7 @@ Dashboard fallback: project → Settings → Environment Variables, set **both**
 | --- | --- |
 | `TURSO_DATABASE_URL` | URL from `turso db show … --url` (often `libsql://…`) |
 | `TURSO_AUTH_TOKEN` | Token from `turso db tokens create …` |
-| `SESSION_SECRET` | Long random string (signs the httpOnly session cookie). Required for customer deploys. |
+| `SESSION_SECRET` | Unique string of at least 32 characters (signs the httpOnly session cookie). Required for customer deploys and for `vercel dev`, which sets `VERCEL` and refuses to boot without one (503 `session_secret_insecure`). |
 
 `--apply` redeploys after saving and waits until that Production deployment is Ready (`vercel inspect --json`, default 4 minutes via `VERCEL_READY_TIMEOUT_MS`), so `onboard:customer --apply --smoke` can close the happy path on one command. Env changes do not apply to an already-built Preview. GitHub auto-deploy is still a dashboard connection.
 
