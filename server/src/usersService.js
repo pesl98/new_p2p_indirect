@@ -17,6 +17,12 @@ import {
   loadPublicUser,
   verifyPassword
 } from './auth.js';
+import {
+  passwordExceedsLoginLimit,
+  assertPasswordAcceptable,
+  deploymentForbidsDemoPassword,
+  passwordIsDemoSeed
+} from './demoCredentials.js';
 
 export const USER_ROLES = ['requester', 'approver', 'procurement', 'finance', 'admin'];
 export const USER_STATUSES = ['active', 'inactive'];
@@ -131,7 +137,8 @@ async function countActiveAdmins(db, exceptUserId = null) {
   return Number(row?.n || 0);
 }
 
-async function writePassword(db, userId, password, rounds) {
+async function writePassword(db, userId, password, rounds, env = process.env) {
+  assertPasswordAcceptable(password, env);
   const hash = await hashPassword(assertPasswordPolicy(password), rounds);
   const existing = await db.prepare(`SELECT user_id FROM user_credentials WHERE user_id = ?`).get(userId);
   if (existing) {
@@ -148,7 +155,11 @@ async function writePassword(db, userId, password, rounds) {
   }
 }
 
-export async function createUser(db, body = {}, { bcryptRounds = 10 } = {}) {
+export async function createUser(db, body = {}, { bcryptRounds = 10, env = process.env } = {}) {
+  if (body.password) {
+    assertPasswordPolicy(body.password);
+    assertPasswordAcceptable(body.password, env);
+  }
   const name = normalizeName(body.name);
   const email = normalizeEmail(body.email);
   const role = normalizeUserRole(body.role);
@@ -178,7 +189,7 @@ export async function createUser(db, body = {}, { bcryptRounds = 10 } = {}) {
   }
 
   if (body.password) {
-    await writePassword(db, createdId, body.password, bcryptRounds);
+    await writePassword(db, createdId, body.password, bcryptRounds, env);
   }
 
   return loadUser(db, createdId);
@@ -264,13 +275,13 @@ export async function setUserStatus(db, id, status, actor = null) {
   return loadUser(db, user.id);
 }
 
-export async function setUserPassword(db, id, password, { bcryptRounds = 10 } = {}) {
+export async function setUserPassword(db, id, password, { bcryptRounds = 10, env = process.env } = {}) {
   const user = await loadUser(db, id);
-  await writePassword(db, user.id, password, bcryptRounds);
+  await writePassword(db, user.id, password, bcryptRounds, env);
   return loadUser(db, user.id);
 }
 
-export async function bootstrapFirstAdmin(db, body = {}, { bcryptRounds = 10 } = {}) {
+export async function bootstrapFirstAdmin(db, body = {}, { bcryptRounds = 10, env = process.env } = {}) {
   const existing = await countUsers(db);
   if (existing > 0) {
     throw new UsersError(
@@ -290,13 +301,20 @@ export async function bootstrapFirstAdmin(db, body = {}, { bcryptRounds = 10 } =
     approval_limit: body.approval_limit ?? 0,
     password: body.password,
     status: 'active'
-  }, { bcryptRounds });
+  }, { bcryptRounds, env });
 }
 
-export async function authenticateUser(db, email, password) {
+export async function authenticateUser(db, email, password, { env = process.env } = {}) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized || password == null || password === '') {
     throw new UsersError('Email and password are required', 400);
+  }
+  const presented = String(password);
+  if (passwordExceedsLoginLimit(presented)) {
+    throw new UsersError('Invalid email or password', 401);
+  }
+  if (deploymentForbidsDemoPassword(env) && passwordIsDemoSeed(presented)) {
+    throw new UsersError('Invalid email or password', 401);
   }
   const row = await db.prepare(`
     SELECT u.id, COALESCE(u.status, 'active') AS status, c.password_hash

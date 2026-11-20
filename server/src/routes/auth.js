@@ -93,7 +93,9 @@ router.post('/login', async (req, res) => {
         code: 'local_login_disabled'
       });
     }
-    const user = await authenticateUser(req.db, email, password);
+    const user = await authenticateUser(req.db, email, password, {
+      env: req.authEnv || process.env
+    });
     await recordLocalLoginSuccess(req.db, user);
     setSessionCookie(req, res, user.id);
     res.json({ user });
@@ -124,7 +126,8 @@ router.post('/bootstrap', async (req, res) => {
   try {
     const config = authConfig(req);
     const user = await bootstrapFirstAdmin(req.db, req.body || {}, {
-      bcryptRounds: config.bcryptRounds
+      bcryptRounds: config.bcryptRounds,
+      env: req.authEnv || process.env
     });
     await recordBootstrapAdmin(req.db, user);
     setSessionCookie(req, res, user.id);
