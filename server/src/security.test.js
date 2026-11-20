@@ -98,3 +98,27 @@ test('production and preview refuse the development default and a short SESSION_
     vercelDev
   ));
 });
+
+test('session_secret_insecure names missing, default, or too short and omits the value', () => {
+  const known = loadAuthConfig({}).sessionSecret;
+  const prod = { NODE_ENV: 'production' };
+  const cases = [
+    [loadAuthConfig(prod), 'missing', /missing/],
+    [loadAuthConfig({ ...prod, SESSION_SECRET: known }), 'default', /development default/],
+    [loadAuthConfig({ ...prod, SESSION_SECRET: 'x'.repeat(31) }), 'short', /too short/]
+  ];
+  for (const [config, reason, pattern] of cases) {
+    assert.equal(sessionSecretProblem(config), reason);
+    assert.throws(
+      () => warnIfInsecureSessionSecret(config, prod),
+      (error) => {
+        assert.equal(error.code, 'session_secret_insecure');
+        assert.equal(error.reason, reason);
+        assert.match(error.message, pattern);
+        assert.equal(error.message.includes(known), false);
+        assert.equal(error.message.includes('x'.repeat(31)), false);
+        return true;
+      }
+    );
+  }
+});

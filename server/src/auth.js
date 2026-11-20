@@ -225,23 +225,32 @@ export function requireAdmin(req, res, next) {
  * value), or shorter than MIN_SESSION_SECRET_LENGTH. Local development is
  * allowed to boot with the default. The reason is a label, never the secret.
  */
+const SESSION_SECRET_PROBLEM_TEXT = {
+  missing: 'SESSION_SECRET is missing.',
+  default: 'SESSION_SECRET is the development default.',
+  short: `SESSION_SECRET is too short (fewer than ${MIN_SESSION_SECRET_LENGTH} characters).`
+};
+
 export function sessionSecretProblem(config) {
   const secret = String(config?.sessionSecret || '');
-  if (!secret || secret === DEV_SESSION_SECRET) return 'default';
+  if (!secret || config?.usingDevSecret) return 'missing';
+  if (secret === DEV_SESSION_SECRET) return 'default';
   if (secret.length < MIN_SESSION_SECRET_LENGTH) return 'short';
   return null;
 }
 
 export function warnIfInsecureSessionSecret(config, env = process.env) {
-  if (!sessionSecretProblem(config)) return;
+  const problem = sessionSecretProblem(config);
+  if (!problem) return;
   if (runningOnVercel(env) || env.NODE_ENV === 'production') {
     const error = new Error(
-      'SESSION_SECRET must be set to a unique value of at least '
-      + `${MIN_SESSION_SECRET_LENGTH} characters in production. `
-      + 'Refusing to start with a missing, default, or short secret.'
+      `${SESSION_SECRET_PROBLEM_TEXT[problem]} `
+      + `Set SESSION_SECRET to a unique value of at least ${MIN_SESSION_SECRET_LENGTH} characters. `
+      + 'Refusing to start.'
     );
     error.statusCode = 503;
     error.code = 'session_secret_insecure';
+    error.reason = problem;
     throw error;
   }
 }
