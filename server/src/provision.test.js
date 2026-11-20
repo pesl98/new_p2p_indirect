@@ -298,6 +298,73 @@ describe('db:migrate / db:status against isolated SQLite files', () => {
     assert.equal(fs.existsSync(sqlitePath), false);
   });
 
+  test('--seed with a remote database refuses before migrate and before the seed process', async () => {
+    const url = 'libsql://customer.example.test';
+    let opened = false;
+    let seeded = false;
+    const { stderr } = captureStreams();
+    const code = await runProvisionCli({
+      command: 'migrate',
+      argv: ['--seed'],
+      env: {
+        TURSO_DATABASE_URL: url,
+        TURSO_AUTH_TOKEN: 'x'.repeat(16),
+        TURSO_PRODUCTION_DATABASE_URL: 'libsql://other.example.test',
+        ALLOW_PREVIEW_PRODUCTION_DATABASE: 'allow'
+      },
+      stdout: captureStreams().stdout,
+      stderr,
+      async openDatabaseFn() {
+        opened = true;
+        throw new Error('database was opened');
+      },
+      async runSeedFn() {
+        seeded = true;
+      }
+    });
+    assert.equal(code, 1);
+    assert.equal(opened, false);
+    assert.equal(seeded, false);
+    assert.match(stderr.text, /did not apply schema/);
+    assert.match(stderr.text, /TURSO_DATABASE_URL/);
+    assert.match(stderr.text, /TURSO_PRODUCTION_DATABASE_URL/);
+    assert.match(stderr.text, /ALLOW_PREVIEW_PRODUCTION_DATABASE/);
+    assert.equal(stderr.text.includes(url), false);
+    assert.equal(stderr.text.includes('other.example.test'), false);
+    assert.equal(stderr.text.includes('allow'), false);
+  });
+
+  test('--seed --force still refuses a remote database before migrate', async () => {
+    const url = 'libsql://customer.example.test';
+    let opened = false;
+    let seeded = false;
+    const { stderr } = captureStreams();
+    const code = await runProvisionCli({
+      command: 'migrate',
+      argv: ['--seed', '--force'],
+      env: {
+        TURSO_DATABASE_URL: url,
+        TURSO_AUTH_TOKEN: 'x'.repeat(16)
+      },
+      stdout: captureStreams().stdout,
+      stderr,
+      async openDatabaseFn() {
+        opened = true;
+        throw new Error('database was opened');
+      },
+      async runSeedFn() {
+        seeded = true;
+      }
+    });
+    assert.equal(code, 1);
+    assert.equal(opened, false);
+    assert.equal(seeded, false);
+    assert.match(stderr.text, /Refusing to seed/);
+    assert.match(stderr.text, /TURSO_DATABASE_URL/);
+    assert.match(stderr.text, /did not apply schema/);
+    assert.equal(stderr.text.includes(url), false);
+  });
+
   test('--help prints the runbook pointer', async () => {
     const { stdout } = captureStreams();
     const code = await runProvisionCli({
