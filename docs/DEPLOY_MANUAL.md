@@ -587,7 +587,7 @@ Three tiers. Do not confuse them.
 | Empty schema | `npm run db:migrate` | Tables exist. No departments, budgets, users, catalog, or PRs. PR submit fails closed. |
 | Org skeleton | `npm run bootstrap-org` or `provision:customer -- --with-org` or `onboard:customer` (default) | Five cost centers and FY **2026** budgets. Idempotent. Does not wipe or rename. No users. |
 | First admin | `npm run bootstrap-admin` or provision/onboard with `--email` and `--password` | One admin. Catalog, PRs, and invoices stay empty. |
-| Demo wipe | `npm run seed` or `npm run db:migrate -- --seed` | **Destructive.** Drops application tables on whatever database this shell points at, reloads the fictional Alice/Bob walkthrough, password `ProcureFlow!demo`. |
+| Demo wipe | `npm run seed` | **Destructive.** Drops application tables and reloads the fictional walkthrough. `npm run db:migrate -- --seed` is the same wipe, but it refuses **before** applying schema when `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `TURSO_PRODUCTION_DATABASE_URL`, or `ALLOW_PREVIEW_PRODUCTION_DATABASE` is set, or when the process is production, Preview, or Vercel. That command does not take `--force`. An intentional wipe is `npm run seed -- --force`, and only when the database is not a customer database. |
 
 Do not seed a live tenant. Seed is opt-in and there is no undo inside the app.
 

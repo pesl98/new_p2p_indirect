@@ -149,6 +149,7 @@ export function parseProvisionArgs(argv = []) {
     else if (arg === '--turso' || arg === '--require-turso') flags.add('requireTurso');
     else if (arg === '--json') flags.add('json');
     else if (arg === '--help' || arg === '-h') flags.add('help');
+    else if (arg === '--force') flags.add('force');
     else unknown.push(arg);
   }
   return {
@@ -299,6 +300,20 @@ export async function runProvisionCli({
   if (command === 'status' && args.seed) {
     write(stderr, 'db:status does not accept --seed. Use npm run db:migrate -- --seed\n');
     return 1;
+  }
+
+  // Refuse a destructive seed before openDatabase. Pass an empty argv so
+  // `db:migrate -- --seed --force` cannot skip this check. --force only
+  // applies to `npm run seed` itself.
+  if (command === 'migrate' && args.seed) {
+    const { seedRefusal } = await import('./seed.js');
+    const refusal = seedRefusal(env, []);
+    if (refusal) {
+      write(stderr, `${refusal}\n`);
+      write(stderr, 'db:migrate --seed does not accept --force and did not apply schema. '
+        + 'An intentional wipe is: npm run seed -- --force\n');
+      return 1;
+    }
   }
 
   try {

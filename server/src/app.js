@@ -38,6 +38,7 @@ import { loadDbConfig } from './dbConfig.js';
 import { mountConfigErrorApp, sendConfigError } from './configError.js';
 import { loadCurrencyConfig } from './currencyConfig.js';
 import { attachSession, loadAuthConfig, warnIfInsecureSessionSecret } from './auth.js';
+import { warnIfDemoPersonaSwitcher } from './demoCredentials.js';
 import { requireApiSession } from './requestActor.js';
 import { warnIfBadAppBaseUrl } from './sourcingConfig.js';
 import tickRouter from './routes/tick.js';
@@ -103,12 +104,13 @@ export function createApp(options = {}) {
     return startupErrorApp(new TursoConfigError(TURSO_REQUIRED_MSG));
   }
 
-  const authConfig = options.authConfig || loadAuthConfig();
-  const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   const runtimeEnv = options.env || process.env;
+  const authConfig = options.authConfig || loadAuthConfig(runtimeEnv);
+  const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   warnIfBadAppBaseUrl(runtimeEnv);
   try {
     warnIfInsecureSessionSecret(authConfig, runtimeEnv);
+    warnIfDemoPersonaSwitcher(runtimeEnv);
   } catch (error) {
     console.error(error.message);
     return startupErrorApp(error);
@@ -128,6 +130,7 @@ export function createApp(options = {}) {
     try {
       req.db = options.db || await getDb();
       req.authConfig = authConfig;
+      req.authEnv = runtimeEnv;
       req.integrationConfig = integrationConfig;
       req.currency = currencyConfig.currency;
       req.now = typeof options.now === 'function' ? options.now : () => new Date();
