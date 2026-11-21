@@ -75,7 +75,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | 2026-10-11 | Hardening: email, integrations, tick, demo seed, docs | [#71](https://github.com/pesl98/new_p2p_indirect/pull/71) | Sprint 8d — Hardening, email, integrations, demo seed, and docs | `fcf7b9bab801a735823092c631123497921cf388` | merged |
-| — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | pending | Security: fail-closed first-admin bootstrap | pending | done |
+| — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | pending | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -582,7 +582,7 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **Goal:** Close the unauthenticated first-admin bootstrap. `POST /api/auth/bootstrap` must not create an admin on an empty database unless a server-side one-time setup secret is configured and presented.
 
-**PR:** pending
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/87 (#87).
 
 **Merge SHA:** pending
 
