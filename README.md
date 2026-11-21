@@ -149,7 +149,7 @@ Technical reference: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Operator chec
 
 14. **Sign-in (per customer DB) + optional demo persona switcher**
     - Email + password, bcrypt hashes in `user_credentials`, httpOnly `pf_session` cookie (`POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`). Business APIs reject calls with no session. Optional OIDC (`/api/auth/oidc/start`) or SAML (`/api/auth/saml/start`) mints that same cookie when `IDENTITY_PROVIDER` is set for the customer.
-    - Empty tenant: UI or `npm run bootstrap-admin` creates the first admin. See [docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md).
+    - Empty tenant: `npm run bootstrap-admin` creates the first admin (no token). `POST /api/auth/bootstrap` stays off unless `BOOTSTRAP_TOKEN` is set. See [docs/CUSTOMER_ONBOARDING.md](docs/CUSTOMER_ONBOARDING.md).
     - **Elena** (admin) manages users under Administration → Users.
     - Header persona switcher is **demo-only**: set `DEMO_PERSONA_SWITCHER=1`. It signs in again as the chosen seeded user. Default customer deploy shows the login page.
     - Local seed demo password (never a production secret): **`ProcureFlow!demo`** for Alice, Bob, Carol, David, Elena, Priya, James, Sofia. Example: `elena.rostova@company.com` / `ProcureFlow!demo`.

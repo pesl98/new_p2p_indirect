@@ -43,6 +43,7 @@ import { requireApiSession } from './requestActor.js';
 import { warnIfBadAppBaseUrl } from './sourcingConfig.js';
 import tickRouter from './routes/tick.js';
 import { corsDelegate, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
+import { warnIfShortBootstrapToken } from './bootstrapToken.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,6 +109,9 @@ export function createApp(options = {}) {
   const authConfig = options.authConfig || loadAuthConfig(runtimeEnv);
   const integrationConfig = options.integrationConfig || loadIntegrationConfig();
   warnIfBadAppBaseUrl(runtimeEnv);
+  // Missing BOOTSTRAP_TOKEN is normal and must not refuse boot. A short
+  // value is ignored (the route stays disabled) and warned, without logging it.
+  warnIfShortBootstrapToken(runtimeEnv);
   try {
     warnIfInsecureSessionSecret(authConfig, runtimeEnv);
     warnIfDemoPersonaSwitcher(runtimeEnv);
@@ -154,6 +158,7 @@ export function createApp(options = {}) {
 
   // Per account and address (10 tries), plus a generous cap per address. With TRUST_PROXY off
   // every visitor shares the proxy's address, so the address alone must not be the lock.
+  // Bootstrap uses the same limiters so a missing or wrong X-Bootstrap-Token is rate-limited.
   const loginLimiters = options.loginRateLimit
     ? [options.loginRateLimit]
     : [rateLimit({ max: 300 }), rateLimit({ max: 10, key: loginAttemptKey })];

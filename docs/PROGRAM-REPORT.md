@@ -151,7 +151,7 @@ Owner recorded in [SPRINT-LOG.md](SPRINT-LOG.md): Peter (`pesl98`). The program 
 **What was built.**
 
 - Cookie `pf_session`, HMAC-SHA256 with `SESSION_SECRET`, not a JWT library. Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Secure` when `VERCEL` is set or `NODE_ENV=production`.
-- Public without a session: `GET /api/health`, and `/api/auth/*` (`GET /api/auth/config`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/bootstrap`, `GET /api/auth/me`). `GET /api/auth/me` returns 401 when signed out.
+- Public without a session: `GET /api/health`, and `/api/auth/*` (`GET /api/auth/config`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/bootstrap`, `GET /api/auth/me`). `GET /api/auth/me` returns 401 when signed out. As of 2026-11-21, `POST /api/auth/bootstrap` is still on this list (no session) but creates nothing unless `BOOTSTRAP_TOKEN` is configured and presented. See section 5.2.
 - Every other `/api` route requires the cookie (401). Actor fields (`approver_id`, `requester_id`, `received_by`, `created_by`, `actor_name`, and the same kind of field on goods, services, consignment, utilities, bulk, contracts, and delegations) come from `req.user`. A body or query id that names someone else is 403.
 - AP approve, mark paid, exception resolve, duplicate resolve, aging, and payment runs require `finance` or `admin`. User administration and department-head assignment require `admin`.
 - `GET /api/auth/config` reported `identityProvider: "local"`. No SSO routes.
@@ -373,7 +373,7 @@ A few README feature sections, and one architecture sentence about contract APIs
 | Method | When | Result |
 | --- | --- | --- |
 | Local email + password | `LOCAL_LOGIN` on (default). `POST /api/auth/login`. | Sets `pf_session`. `403 local_login_disabled` when local login is off. |
-| First admin | Empty `users` table. `POST /api/auth/bootstrap` or `npm run bootstrap-admin`. | One admin. Refuses (CLI exit 2) if any user exists. |
+| First admin | Empty `users` table. Primary: `npm run bootstrap-admin` (no token). Optional: `POST /api/auth/bootstrap` only when `BOOTSTRAP_TOKEN` (≥ 32 characters) matches `X-Bootstrap-Token`. Otherwise `403 bootstrap_disabled` / `bootstrap_token_invalid`. | One admin. **409** (CLI exit 2) if any user exists, including when the token is unset. |
 | OIDC | `IDENTITY_PROVIDER=oidc` and the IdP env is valid. | Same cookie. See Sprint 2. |
 | SAML | `IDENTITY_PROVIDER=saml` and the IdP env is valid. | Same cookie. SP-initiated. |
 | Demo switcher | `DEMO_PERSONA_SWITCHER=1` after `npm run seed`. | Signs in again as a seeded user with `ProcureFlow!demo`. Off by default. The customer CLIs never set it. |
@@ -483,7 +483,7 @@ npm run onboard:customer -- --slug <customer> --apply --email … --password '�
 
 That creates or reuses the Turso database, ensures and links `procureflow-<slug>`, writes the three secrets to Production and Preview, waits until Production is Ready, migrates, inserts the five cost centers (`--with-org` is the default; `--no-org` skips them), and bootstraps the first admin. It does not seed. It does not set SSO, webhook, or `CURRENCY` variables. GitHub auto-deploy is still a one-time dashboard connection: `vercel project add` does not connect the Git repository.
 
-**Bootstrap the first admin.** Included in the apply command above when `--email` and `--password` are passed. On an existing empty database: [DEPLOY_MANUAL.md §6.3](DEPLOY_MANUAL.md#63-empty-tenant-demo-seed-and-the-first-admin). UI **Create the first admin**, or `npm run bootstrap-admin`. Password length is at least 8 characters. This is not `npm run seed`.
+**Bootstrap the first admin.** Included in the apply command above when `--email` and `--password` are passed (that calls the CLI). On an existing empty database: [DEPLOY_MANUAL.md §6.3](DEPLOY_MANUAL.md#63-empty-tenant-demo-seed-and-the-first-admin). Use `npm run bootstrap-admin`. Password length is at least 8 characters. `POST /api/auth/bootstrap` is optional and stays off unless `BOOTSTRAP_TOKEN` is set. This is not `npm run seed`.
 
 **Configure SSO.** [DEPLOY_MANUAL.md §8.6](DEPLOY_MANUAL.md#86-configure-sso-for-this-customer). Set the IdP variables on that project’s Production and Preview, register the redirect or ACS URL, redeploy, and confirm `ssoReady: true` on `GET /api/auth/config`. Leave provisioning off until you mean to create unknown users. The role never comes from the IdP.
 

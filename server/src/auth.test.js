@@ -20,6 +20,8 @@ const TEST_AUTH = loadAuthConfig({}, {
   demoPersonaSwitcher: false
 });
 
+const BOOTSTRAP_TOKEN = 'a'.repeat(32);
+
 function withServer(app, fn) {
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
@@ -105,12 +107,20 @@ describe('auth HTTP', () => {
 
   test('bootstrap creates first admin, sets cookie, and refuses a second call', async () => {
     const db = await createMemoryDatabase();
-    const app = createApp({ db, config: loadDbConfig({}), authConfig: TEST_AUTH });
+    const app = createApp({
+      db,
+      config: loadDbConfig({}),
+      authConfig: TEST_AUTH,
+      env: { BOOTSTRAP_TOKEN }
+    });
 
     await withServer(app, async (base) => {
       const first = await json(await fetch(`${base}/api/auth/bootstrap`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bootstrap-Token': BOOTSTRAP_TOKEN
+        },
         body: JSON.stringify({
           name: 'Ada Admin',
           email: 'ada@acme.com',
@@ -133,7 +143,10 @@ describe('auth HTTP', () => {
 
       const second = await json(await fetch(`${base}/api/auth/bootstrap`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bootstrap-Token': BOOTSTRAP_TOKEN
+        },
         body: JSON.stringify({
           name: 'Other',
           email: 'other@acme.com',

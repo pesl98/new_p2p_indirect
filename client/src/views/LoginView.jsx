@@ -16,6 +16,7 @@ export default function LoginView({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [setupToken, setSetupToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(
     externalError
@@ -33,7 +34,10 @@ export default function LoginView({
     setError('');
     try {
       const result = mode === 'bootstrap'
-        ? await api.bootstrapAdmin({ name: name || 'Administrator', email, password })
+        ? await api.bootstrapAdmin(
+          { name: name || 'Administrator', email, password },
+          setupToken
+        )
         : await api.login(email, password);
       onAuthenticated(result.user);
     } catch (err) {
@@ -131,6 +135,19 @@ export default function LoginView({
                 autoComplete={mode === 'bootstrap' ? 'new-password' : 'current-password'}
               />
             </label>
+            {mode === 'bootstrap' && (
+              <label className="block">
+                <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">{t('shell.bootstrapToken')}</span>
+                <input
+                  type="password"
+                  value={setupToken}
+                  onChange={(e) => setSetupToken(e.target.value)}
+                  className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+            )}
             <button
               type="submit"
               disabled={submitting}

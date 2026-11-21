@@ -132,6 +132,7 @@ The customer CLIs write only three variables, and only to **Production** and **P
 | `TURSO_PRODUCTION_DATABASE_URL` | The production libsql URL, used only to compare hosts. No token. | Optional. Set it on Preview when the production URL is not already there as `TURSO_DATABASE_URL`. A preview pair alone is enough to boot. | **Preview.** Optional on Production (ignored). | Treat as sensitive. It names the production database. | The same value as production `TURSO_DATABASE_URL`. |
 | `ALLOW_PREVIEW_PRODUCTION_DATABASE` | Escape hatch. The only value that does anything is the exact word `allow`. | Leave unset. `1` and `true` do nothing. Ignored when a valid preview database is configured. | Preview, and only if you accept Preview serving the production database because it has no valid preview database. The process logs an error every time it loads config. | No. | Do not set it for a customer. |
 | `SESSION_SECRET` | HMAC key for the `pf_session` cookie. | Required for a customer deploy, for Production, for Preview, and for `vercel dev`. At least 32 characters, and not the development default. A laptop `npm run dev` without `VERCEL` may omit it. | Production and Preview. Also the Development environment when you run `vercel dev`. One value per customer project. Do not reuse it across customers. | Yes. | 32-byte hex (64 characters). `turso:customer --apply` mints one with `crypto.randomBytes(32)` unless `SESSION_SECRET` is already exported, in which case it **reuses** it and does not rotate. Or: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. |
+| `BOOTSTRAP_TOKEN` | Optional gate for `POST /api/auth/bootstrap`. | Leave unset. Unset disables that route (`403 bootstrap_disabled`) and is not required at boot. `/api/health` does not read it. A value shorter than 32 characters is ignored and warned at startup. The value is never logged. | Not written by the customer CLIs. Set it yourself only if you want the optional HTTP path, on Production (and Preview, if you use it there). | Yes. | 32-byte hex, same generator as `SESSION_SECRET`. The request sends it as `X-Bootstrap-Token`. `npm run bootstrap-admin` does not read it. |
 | `DEMO_PERSONA_SWITCHER` | Shows the header persona switcher when the value is `1`, `true`, or `yes`. Any other value, including unset, `0`, `false`, and `no`, leaves it off. | Optional. Leave unset on a live customer. | Do not set it for a real customer. The CLIs will not copy it to Vercel even if it is set in your shell. | No. | Set the shell variable yourself only for a training demo. |
 | `PROCUREMENT_DB_PATH` | SQLite file path. Used only when both Turso variables are unset. | Optional locally. Do **not** set it on Vercel. Serverless has no durable disk. | Leave unset on Vercel. | The file holds all P2P data. Do not commit it. | A path you choose, for example `server/data/acme.db`. Default is `server/data/procurement.db`. |
 | `BCRYPT_ROUNDS` | bcrypt cost for new password hashes. Default **10**. A non-integer or a value below 4 falls back to 10. | Optional. | Not written by the CLIs. Set on Production and Preview only if you need a different cost. | No. | An integer you choose. |
@@ -614,12 +615,12 @@ npm run bootstrap-org -- --force-budget
 
 First admin, if you did not pass `--email` to onboard:
 
-- **CLI.** `npm run bootstrap-admin -- --email … --password '…' [--name "…"] [--title "…"]`. Exit **2** if any user already exists. It will not add a second admin.
-- **UI.** If the database has zero users, open the Production URL. The login page shows **Create the first admin** (name, email, password of at least 8 characters). That calls `POST /api/auth/bootstrap`.
+- **CLI (primary).** `npm run bootstrap-admin -- --email … --password '…' [--name "…"] [--title "…"]`. Exit **2** if any user already exists. It will not add a second admin. It does not read `BOOTSTRAP_TOKEN`.
+- **HTTP (optional).** Off unless `BOOTSTRAP_TOKEN` is set to at least 32 characters. The login page then accepts that value as the setup token and calls `POST /api/auth/bootstrap` with `X-Bootstrap-Token`. Without the env the route returns `403 bootstrap_disabled` and creates nothing. A wrong or missing token is `403 bootstrap_token_invalid`. Once any user exists the route stays **409**.
 
 Then sign in and create everyone else under **Administration → Users** (unique email, role, department, title, approval limit, password). Deactivate with status. `DELETE` returns 405. Hand each person their own password. Do not share `ProcureFlow!demo`.
 
-SSO does not replace this step. Just-in-time provisioning is off by default, and when it is on the new user’s role is `SSO_DEFAULT_ROLE` or the stored default (`requester`), never a role from the IdP. An empty database still needs this first admin before anyone can turn provisioning on in the UI (`PUT /api/auth/sso-settings` is admin-only). Bootstrap is `POST /api/auth/bootstrap` or `npm run bootstrap-admin`.
+SSO does not replace this step. Just-in-time provisioning is off by default, and when it is on the new user’s role is `SSO_DEFAULT_ROLE` or the stored default (`requester`), never a role from the IdP. An empty database still needs this first admin before anyone can turn provisioning on in the UI (`PUT /api/auth/sso-settings` is admin-only). Create that admin with `npm run bootstrap-admin`. `POST /api/auth/bootstrap` is optional and fail-closed.
 
 `npm run seed` drops application tables (including the append-only audit tables, via `DROP TABLE`, which the delete triggers do not block) and reloads the fictional walkthrough. It is demo-only. Do not run it against a customer database.
 
@@ -1176,7 +1177,7 @@ What to do: compare the project env with section 3.1. `APP_BASE_URL` must be the
 - [ ] `SESSION_SECRET` is set on Production and Preview and stored only in Vercel and the password manager. It is not the dev default.
 - [ ] `DEMO_PERSONA_SWITCHER` is unset on the customer project.
 - [ ] `npm run seed` was not run against this database (or you accepted a full wipe).
-- [ ] The first admin was created with `POST /api/auth/bootstrap` or `npm run bootstrap-admin`. The password is not `ProcureFlow!demo`.
+- [ ] The first admin was created with `npm run bootstrap-admin` (or `onboard:customer` / `provision:customer` with `--email` and `--password`). `POST /api/auth/bootstrap` was used only if `BOOTSTRAP_TOKEN` was set. The password is not `ProcureFlow!demo`. `BOOTSTRAP_TOKEN` is unset unless you deliberately enabled the HTTP path.
 - [ ] Business APIs require `pf_session`. You are not relying on a user id in the JSON body.
 - [ ] If SSO is off, `IDENTITY_PROVIDER` is unset or `local`. If it is on, the IdP secret (`OIDC_CLIENT_SECRET` or `SAML_IDP_CERT`) is only in this project’s env, Production and Preview, and `ssoReady` is true after redeploy. `OIDC_ALLOW_INSECURE` and `SAML_ALLOW_INSECURE` are unset.
 - [ ] Provisioning is still off unless this customer asked for just-in-time users. The default role is not taken from the IdP. The first admin was not created by SSO.
@@ -1206,7 +1207,7 @@ Dry-run is the default only for the customer CLIs `onboard:customer`, `turso:cus
 | `npm run db:migrate -- --turso` | Schema, including `compliance_audit_events` and the append-only triggers. `--seed` wipes. |
 | `npm run db:status` | Mode, tables, user count. No secrets. |
 | `npm run bootstrap-org` | Five cost centers and FY 2026 budgets. |
-| `npm run bootstrap-admin -- --email … --password '…'` | First admin only (`POST /api/auth/bootstrap` is the UI equivalent). Exit 2 if users exist. Optional `--name` and `--title`. |
+| `npm run bootstrap-admin -- --email … --password '…'` | First admin only. No token. Exit 2 if users exist. Optional `--name` and `--title`. `POST /api/auth/bootstrap` is optional and off unless `BOOTSTRAP_TOKEN` is set. |
 | `npm run smoke` | HTTP checks. Set `BASE_URL`. Optional `--email` and `--password` together. |
 | `npm run offboard:customer -- --slug <slug> --apply --confirm-slug <slug>` | Strip the three env vars, then `turso db destroy`. Leaves the Vercel project and any SSO env vars. |
 | `npm run seed` | Destructive demo. Drops application tables and loads personas. Not for a live customer. |

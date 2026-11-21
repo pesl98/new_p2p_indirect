@@ -232,6 +232,8 @@ export const common = {
   'code.sso_identity_conflict': 'Deze identiteit is al gekoppeld aan een andere gebruiker.',
   'code.sso_failed': 'SSO-aanmelding is mislukt.',
   'code.method_not_allowed': 'Deze actie is niet toegestaan.',
+  'code.bootstrap_disabled': 'HTTP-bootstrap staat uit op deze omgeving. Maak de eerste beheerder aan met npm run bootstrap-admin.',
+  'code.bootstrap_token_invalid': 'Het setup-token ontbreekt of klopt niet.',
 
   'api.invalidCredentials': 'Ongeldig e-mailadres of wachtwoord.',
   'api.emailPasswordRequired': 'E-mailadres en wachtwoord zijn verplicht.',

@@ -91,6 +91,7 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 | `PROCUREMENT_DB_PATH` | No | Override local SQLite path. |
 | `DEMO_PERSONA_SWITCHER` | No | Set to `1` to show the header persona switcher (demo only). Default **off** — customer deploys use login. |
 | `BCRYPT_ROUNDS` | No | bcrypt cost (default 10). |
+| `BOOTSTRAP_TOKEN` | No | Optional gate for `POST /api/auth/bootstrap`. Unset disables that route (`403 bootstrap_disabled`) and is not required at boot. At least 32 characters; shorter is ignored and warned at startup (the value is never logged). Send it as `X-Bootstrap-Token`. The CLIs do not set it. `npm run bootstrap-admin` does not read it. |
 | `BASE_URL` | Smoke only | Origin for `npm run smoke` (`http://127.0.0.1:5000` or the customer Vercel URL). |
 | `SMOKE_EMAIL` / `SMOKE_PASSWORD` | Smoke only | Optional login check after bootstrap. |
 | `IDENTITY_PROVIDER` | No | `local` (default), `oidc`, or `saml`. See [§2.1](#21-sso-oidc-or-saml-per-customer). |
@@ -205,13 +206,9 @@ First process start (`npm start` / Vercel cold start) also calls `applySchema` o
 
 ## 4. First admin bootstrap (empty tenant)
 
-After `db:migrate`, the customer DB has **0 users** and, unless you ran `bootstrap-org`, **0 departments**. Until a user exists, `GET /api/auth/config` returns `{ bootstrapNeeded: true }` and the UI shows **Create the first admin**. `npm run provision:customer` is migrate plus optional `--with-org` plus this step when `--email` and `--password` are passed; it still **does not seed**.
+After `db:migrate`, the customer DB has **0 users** and, unless you ran `bootstrap-org`, **0 departments**. Until a user exists, `GET /api/auth/config` returns `{ bootstrapNeeded: true }`. The login screen explains that HTTP bootstrap is off unless a setup token is configured. `npm run provision:customer` is migrate plus optional `--with-org` plus this step when `--email` and `--password` are passed; it still **does not seed**. The primary path is the CLI below. It does not need `BOOTSTRAP_TOKEN`.
 
-### Option A — UI
-
-Open the app with no users in the DB. Submit name, email, and password (≥ 8 characters). That calls `POST /api/auth/bootstrap`, hashes the password with bcrypt, writes `users` + `user_credentials`, and sets an httpOnly session cookie.
-
-### Option B — CLI (same database the server uses)
+### Option A — CLI (same database the server uses)
 
 ```bash
 # Local SQLite (default server/data/procurement.db, or PROCUREMENT_DB_PATH)
@@ -229,7 +226,7 @@ npm run bootstrap-admin -- --email ada@customer.com --password '…'
 
 The CLI **refuses** if any users already exist (exit 2). After that, sign in as that admin and use **Administration → Users** to create more people.
 
-One-shot empty tenant (still no demo data):
+One-shot empty tenant (still no demo data; this calls the same CLI):
 
 ```bash
 npm run provision:customer -- --with-org \
@@ -238,6 +235,12 @@ npm run provision:customer -- --with-org \
 ```
 
 Omit `--with-org` if you only want schema + first admin.
+
+### Option B — HTTP (optional)
+
+Leave `BOOTSTRAP_TOKEN` unset on a normal customer. The route then returns **403** `bootstrap_disabled` and writes nothing. It is not required for the process to boot, and `/api/health` does not read it. A deployment that already has users keeps answering **409** whether or not the variable is set.
+
+To use the route on an empty database, set `BOOTSTRAP_TOKEN` to at least 32 characters (shorter values are ignored, with a startup warning that does not print the value) and send the same value in `X-Bootstrap-Token`. A missing or wrong token is **403** `bootstrap_token_invalid` and is covered by the login rate limiter. The comparison is SHA-256 digests with `timingSafeEqual`. The token is never logged. A successful call still hashes the password, writes `users` + `user_credentials`, sets the httpOnly session cookie, and appends `BOOTSTRAP_ADMIN` attributed to the new user. The login screen has a setup-token field for this path.
 
 ---
 
@@ -268,7 +271,7 @@ npm run seed
 
 Seed is the existing `server/src/seed.js` path. Do **not** run `npm run seed` against a production customer unless you intend to replace their data with the fictional walkthrough (Alice/Bob/… and the README demo password `ProcureFlow!demo`).
 
-**Empty-customer UI:** the login page is the default. With 0 users it shows first-admin bootstrap, not a broken persona switcher. `GET /api/auth/config` reports `bootstrapNeeded: true`. `GET /api/users` without a session is 401. Leave `DEMO_PERSONA_SWITCHER` unset on a live tenant.
+**Empty-customer UI:** the login page is the default. With 0 users it explains that the first admin is created with `npm run bootstrap-admin`, and it offers a setup-token field for the optional HTTP path. It does not create an account when `BOOTSTRAP_TOKEN` is unset. `GET /api/auth/config` reports `bootstrapNeeded: true`. `GET /api/users` without a session is 401. Leave `DEMO_PERSONA_SWITCHER` unset on a live tenant.
 
 ---
 
@@ -356,7 +359,7 @@ Operator troubleshooting (login with users but no passwords, Preview-only env, m
 | `POST` | `/api/auth/login` | `{ email, password }` → httpOnly `pf_session` cookie |
 | `POST` | `/api/auth/logout` | Clears the cookie |
 | `GET` | `/api/auth/me` | Session user or 401 |
-| `POST` | `/api/auth/bootstrap` | First admin only (empty `users` table) |
+| `POST` | `/api/auth/bootstrap` | Optional first admin (empty `users` table). Public, fail-closed: `403 bootstrap_disabled` without `BOOTSTRAP_TOKEN` (≥ 32 characters); `403 bootstrap_token_invalid` without a matching `X-Bootstrap-Token`; **409** once any user exists. `npm run bootstrap-admin` is the path that needs no token. |
 
 Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` when `VERCEL` or `NODE_ENV=production`. TTL 7 days.
 

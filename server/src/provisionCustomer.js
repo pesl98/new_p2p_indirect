@@ -20,7 +20,9 @@ Usage:
   2. If --with-org, insert default cost centers + FY budgets
      (same as npm run bootstrap-org). Idempotent; never wipes or renames.
   3. If --email and --password are set, create the first admin
-     (same as npm run bootstrap-admin). Skipped when omitted.
+     (same as npm run bootstrap-admin; no BOOTSTRAP_TOKEN). Skipped when omitted.
+     HTTP POST /api/auth/bootstrap is optional and stays off unless that
+     server env is set to at least 32 characters. The CLIs do not set it.
   4. Print the smoke command. Start the app (or use the Vercel URL), then:
 
        BASE_URL=http://127.0.0.1:5000 npm run smoke
@@ -132,8 +134,11 @@ export function nextStepsText({
   const lines = [''];
   if (!bootstrapped) {
     lines.push(
-      'Empty tenant: create the first admin next (UI at /login, or):',
-      `  npm run bootstrap-admin -- --email admin@customer.com --password 'choose-a-long-password'`
+      'Empty tenant: create the first admin with the CLI (direct database; no HTTP token):',
+      `  npm run bootstrap-admin -- --email admin@customer.com --password 'choose-a-long-password'`,
+      'Optional: POST /api/auth/bootstrap only when the server has BOOTSTRAP_TOKEN',
+      '  (at least 32 characters) and the request sends X-Bootstrap-Token.',
+      '  Unset means the route is disabled. This CLI does not read or set it.'
     );
   } else {
     lines.push('First admin created. Sign in at /login with that email and password.');

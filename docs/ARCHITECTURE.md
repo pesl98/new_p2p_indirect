@@ -6,7 +6,7 @@ Non-production **Procure-to-Pay (P2P)** demo: React client, Express API, SQLite 
 
 This document describes the control model implemented in code.
 
-**Authentication (Sprint 1):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Every `/api` route except `/api/health` and `/api/auth/*` requires that session and fails closed (401). Approvals, buyer inbox, and AP actions use `req.user`. A body or query persona id (`approver_id`, `requester_id`, `received_by`, `actor_name`, …) that names someone else is rejected (403). Admin user CRUD and department-head assignment require `req.user.role === 'admin'`. AP money movement (approve, mark paid, exception resolve, duplicate resolve, aging, payment runs) requires `finance` or `admin`. Operator procedure: [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md). Runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md). Daily program: [SPRINT-LOG.md](SPRINT-LOG.md).
+**Authentication (Sprint 1, HTTP bootstrap fail-closed 2026-11-21):** email + bcrypt password per tenant database, httpOnly `pf_session` cookie, `GET/POST /api/auth/*`. Every `/api` route except `/api/health` and `/api/auth/*` requires that session and fails closed (401). `POST /api/auth/bootstrap` is still on that public prefix (an empty tenant has no session yet) but creates nothing unless `BOOTSTRAP_TOKEN` is configured and sent as `X-Bootstrap-Token`. `/api/health` does not read that variable. Approvals, buyer inbox, and AP actions use `req.user`. A body or query persona id (`approver_id`, `requester_id`, `received_by`, `actor_name`, …) that names someone else is rejected (403). Admin user CRUD and department-head assignment require `req.user.role === 'admin'`. AP money movement (approve, mark paid, exception resolve, duplicate resolve, aging, payment runs) requires `finance` or `admin`. Operator procedure: [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md). Runbook: [CUSTOMER_ONBOARDING.md](CUSTOMER_ONBOARDING.md). Technical reference: [DEPLOYMENT.md](DEPLOYMENT.md). Daily program: [SPRINT-LOG.md](SPRINT-LOG.md).
 
 **Identity provider:** `local` (default), `oidc`, or `saml`. An OIDC or SAML callback resolves the IdP subject to `users.id` and calls `signSessionToken` — the same `pf_session` cookie, no second identity header. IdP endpoints and secrets are env vars on that customer’s deployment. `tenant_settings` stores only the provisioning switch (default off) and the default role (`requester`). Unknown users are rejected unless provisioning is explicitly enabled. A role is never taken from an IdP claim. There is no `org_id` shared-row tenancy — one SQLite file or Turso DB per customer. Configure: [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -21,7 +21,7 @@ Passwords live in `user_credentials` (bcrypt hash, never plaintext, never in API
 | `POST /api/auth/login` | `{ email, password }` → httpOnly cookie |
 | `POST /api/auth/logout` | Clears cookie |
 | `GET /api/auth/me` | Session user or 401 |
-| `POST /api/auth/bootstrap` | First admin on an **empty** tenant only |
+| `POST /api/auth/bootstrap` | Optional first admin on an **empty** tenant. Public (no session) but fail-closed: `403 bootstrap_disabled` without `BOOTSTRAP_TOKEN` (≥ 32 characters), `403 bootstrap_token_invalid` if the `X-Bootstrap-Token` header does not match, **409** once any user exists. Operator path: `npm run bootstrap-admin` (no token). |
 | `POST /api/users` etc. | Require logged-in `role=admin`. Create/edit name, unique email, role (existing CHECK), department_id, title, approval_limit cents, optional password. |
 
 Empty customer DB → `npm run db:migrate` (`applySchema`) → optional `npm run bootstrap-org` (five cost centers + FY budgets; not seed) → bootstrap admin + password → `npm run smoke` → login → admin creates more users. Demo `npm run seed` still creates Alice/Bob/… with the README demo password (destructive, opt-in).
@@ -611,7 +611,8 @@ cd server && npm install && cd ../client && npm install && cd ..
 # Schema only (empty customer DB; SQLite locally, Turso when TURSO_* are set)
 npm run db:migrate
 npm run db:status
-# First admin (empty tenant only): npm run bootstrap-admin -- --email … --password …
+# First admin (empty tenant only; CLI, no token): npm run bootstrap-admin -- --email … --password …
+# Optional HTTP: BOOTSTRAP_TOKEN (≥ 32 chars) + header X-Bootstrap-Token. Unset disables POST /api/auth/bootstrap.
 # Org skeleton (cost centers + FY budgets; not seed): npm run bootstrap-org
 # Wrapper: npm run provision:customer -- --with-org --email … --password …
 # Turso DB + exports: npm run turso:customer -- --slug <customer> [--apply]

@@ -40,6 +40,8 @@ describe('Dutch UI catalog', () => {
 
   test('API codes and known sentences become Dutch, unknown text does not stay English', () => {
     assert.match(presentError('sso_not_configured'), /niet geconfigureerd/);
+    assert.match(presentError('bootstrap_disabled'), /bootstrap-admin/);
+    assert.match(presentError('bootstrap_token_invalid'), /setup-token/);
     assert.match(presentError({ message: 'Invalid email or password' }), /Ongeldig e-mailadres/);
     assert.equal(presentError('Supplier OfficePro is not active.'), 'Leverancier OfficePro is niet actief.');
     const unknown = presentError('Something went wrong in English');
