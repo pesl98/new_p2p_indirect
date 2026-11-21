@@ -18,6 +18,7 @@ import {
   recordLocalLoginSuccess,
   recordLogout
 } from '../complianceAudit.js';
+import { bootstrapHttpRefusal } from '../bootstrapToken.js';
 import ssoRouter from './sso.js';
 
 const router = express.Router();
@@ -124,10 +125,23 @@ router.post('/logout', async (req, res) => {
 
 router.post('/bootstrap', async (req, res) => {
   try {
+    // Users already present: same refusal as before, with or without a token.
+    // Existing deployments do not set BOOTSTRAP_TOKEN and must stay on 409.
+    const existing = await countUsers(req.db);
+    if (existing > 0) {
+      return res.status(409).json({
+        error: 'This tenant already has users. Sign in as an admin to create more.'
+      });
+    }
+    const env = req.authEnv || process.env;
+    const refusal = bootstrapHttpRefusal(env, req.get('x-bootstrap-token'));
+    if (refusal) {
+      return res.status(refusal.statusCode).json(refusal.body);
+    }
     const config = authConfig(req);
     const user = await bootstrapFirstAdmin(req.db, req.body || {}, {
       bcryptRounds: config.bcryptRounds,
-      env: req.authEnv || process.env
+      env
     });
     await recordBootstrapAdmin(req.db, user);
     setSessionCookie(req, res, user.id);

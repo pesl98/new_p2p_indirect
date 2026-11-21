@@ -75,7 +75,8 @@ export const shell = {
 
   'shell.loginSubtitle': 'Indirecte P2P · inloggen',
   'shell.createFirstAdmin': 'Eerste beheerder aanmaken',
-  'shell.bootstrapHelp': 'Deze klantomgeving heeft nog geen gebruikers. Maak een beheerdersaccount aan in deze klantendatabase.',
+  'shell.bootstrapHelp': 'Deze klantomgeving heeft nog geen gebruikers. De operator maakt de eerste beheerder aan met npm run bootstrap-admin (direct op de database, geen token). Dit formulier werkt alleen als de server een eenmalig setup-token heeft van minstens 32 tekens en je dat token hier invult. Zonder dat token wordt er geen account aangemaakt.',
+  'shell.bootstrapToken': 'Setup-token',
   'shell.ssoHelp': 'Meld je aan via de identity provider van deze klant. Een gekoppelde gebruiker krijgt dezelfde httpOnly-sessie als bij inloggen met wachtwoord.',
   'shell.passwordHelp': 'Gebruik het e-mailadres en wachtwoord uit de database van deze klant. Het sessiecookie is httpOnly. Na npm run seed logt elke demogebruiker in met ProcureFlow!demo (bijvoorbeeld elena.rostova@company.com).',
   'shell.signInSaml': 'Inloggen met SAML',

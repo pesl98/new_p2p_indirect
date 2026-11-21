@@ -36,6 +36,8 @@ npm run db:migrate
 npm run db:status
 npm run bootstrap-org
 npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-password'
+# CLI is the primary path and needs no BOOTSTRAP_TOKEN.
+# POST /api/auth/bootstrap stays off unless that env is set (≥ 32 characters).
 # equivalent: npm run provision:customer -- --with-org --email admin@acme.test --password 'choose-a-long-password'
 
 # Demo only (WIPES this DB): npm run seed

@@ -51,13 +51,19 @@ export function isPortalRoute(req) {
   return path === '/api/portal' || path.startsWith('/api/portal/');
 }
 
+/**
+ * No session cookie required. `/api/auth/bootstrap` is in this prefix so an
+ * empty tenant can be called before anyone can sign in. The route itself
+ * creates nothing unless BOOTSTRAP_TOKEN is configured and presented
+ * (`bootstrapToken.js`). `/api/health` does not read that variable.
+ */
 export function isPublicApiRequest(req) {
   if (req.method === 'GET' && req.path === '/api/health') return true;
   if (req.path === '/api/auth' || req.path.startsWith('/api/auth/')) return true;
   return false;
 }
 
-/** Fail closed: every /api route except health, /api/auth/*, portal, and integration machine routes needs a session. */
+/** Fail closed: every /api route except health, /api/auth/*, portal, and integration machine routes needs a session. Bootstrap is session-public and token-gated. */
 export function requireApiSession(req, res, next) {
   if (!req.path.startsWith('/api')) return next();
   if (isPublicApiRequest(req)) return next();

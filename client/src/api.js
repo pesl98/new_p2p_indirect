@@ -49,14 +49,23 @@ export const api = {
     });
     return jsonOk(r, t('errors.logout'));
   },
-  bootstrapAdmin: async (data) => {
+  bootstrapAdmin: async (data, setupToken) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (setupToken) headers['X-Bootstrap-Token'] = String(setupToken);
     const r = await apiFetch(`${API_BASE}/auth/bootstrap`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(data)
     });
-    return jsonOk(r, t('errors.bootstrap'));
+    let body = {};
+    try {
+      body = await r.json();
+    } catch {
+      body = {};
+    }
+    if (!r.ok) throw new Error(body.code || body.error || t('errors.bootstrap'));
+    return body;
   },
 
   // Users & Roles

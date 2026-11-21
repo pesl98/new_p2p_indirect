@@ -75,6 +75,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | 2026-10-11 | Hardening: email, integrations, tick, demo seed, docs | [#71](https://github.com/pesl98/new_p2p_indirect/pull/71) | Sprint 8d — Hardening, email, integrations, demo seed, and docs | `fcf7b9bab801a735823092c631123497921cf388` | merged |
+| — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | pending | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -106,13 +107,13 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | Example | `elena.rostova@company.com` / `ProcureFlow!demo` |
 | Also | `alice.chen@company.com`, `bob.martinez@company.com`, `carol.zhang@company.com`, `david.miller@company.com`, `priya.nair@company.com`, `james.okonkwo@company.com`, `sofia.berg@company.com` |
 
-Empty customer databases do not use that password. Bootstrap the first admin (`POST /api/auth/bootstrap` or `npm run bootstrap-admin`) and sign in with the password you chose.
+Empty customer databases do not use that password. Bootstrap the first admin with `npm run bootstrap-admin` and sign in with the password you chose. (`POST /api/auth/bootstrap` was open in this sprint; as of 2026-11-21 it is fail-closed unless `BOOTSTRAP_TOKEN` is set. See the security entry at the end of this file.)
 
 `DEMO_PERSONA_SWITCHER=1` shows a header dropdown that signs in again with `ProcureFlow!demo`. It is off by default. It is not a way to skip the session.
 
 ### What the session covers
 
-Public without a cookie: `GET /api/health`, `GET /api/auth/config`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/bootstrap`, `GET /api/auth/me` (401 when signed out).
+Public without a cookie: `GET /api/health`, `GET /api/auth/config`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/bootstrap`, `GET /api/auth/me` (401 when signed out). `POST /api/auth/bootstrap` remains on this list (no session) but, as of 2026-11-21, creates nothing unless `BOOTSTRAP_TOKEN` is configured and sent as `X-Bootstrap-Token`.
 
 Everything else under `/api` requires `pf_session`. Actor fields (`approver_id`, `requester_id`, `received_by`, `created_by`, `actor_name`, and the same kind of field on goods, services, consignment, utilities, bulk, contracts, and delegations) come from `req.user`.
 
@@ -147,7 +148,7 @@ That callback is Sprint 2 (below). Sprint 1’s cookie format is unchanged.
 - **User mapping.** Look up `user_identities` (`provider`, `subject`) first. If that row exists, the linked user signs in (inactive users are rejected). Otherwise match `users.email` case-insensitively. OIDC requires `email_verified` true for that match. A signed SAML email is treated as verified. The first verified email match stores the subject. A subject already linked to a different user is rejected (`sso_identity_conflict`).
 - **Unknown users are rejected** (`403 sso_user_unknown`) unless provisioning is explicitly on: `SSO_PROVISIONING=1` or an admin sets `tenant_settings.sso_provisioning`. Just-in-time users get the configured default role, never a role from an IdP claim, the callback query, or a `role` field on the settings body. The role is `SSO_DEFAULT_ROLE` when that value is one of the five roles, otherwise the tenant row, otherwise `requester`. Approval limit is 0. No password is stored. An invalid provisioning flag or default role does not disable SSO for mapped users; a provision attempt then fails closed (`sso_provisioning_misconfigured`).
 - **Same cookie.** Success calls `signSessionToken` and sets `pf_session`. There is no second identity header. Browser clients redirect to `APP_BASE_URL` `/`. RelayState is not used as a redirect.
-- **Local passwords stay.** `LOCAL_LOGIN` defaults on. `LOCAL_LOGIN=0` disables `POST /api/auth/login` (`403 local_login_disabled`) and does not open an unauthenticated path. Demo seed remains any seeded email plus `ProcureFlow!demo`. The first admin on an empty database is still `POST /api/auth/bootstrap`, because the JIT default role is `requester`.
+- **Local passwords stay.** `LOCAL_LOGIN` defaults on. `LOCAL_LOGIN=0` disables `POST /api/auth/login` (`403 local_login_disabled`) and does not open an unauthenticated path. Demo seed remains any seeded email plus `ProcureFlow!demo`. The first admin on an empty database is `npm run bootstrap-admin` (the JIT default role is `requester`, so SSO does not create that admin). `POST /api/auth/bootstrap` is optional and fail-closed as of 2026-11-21.
 - **Validation libraries.** OIDC uses `openid-client` (authorization code, PKCE S256, state, nonce, and `enableNonRepudiationChecks` so the ID token signature is checked against the issuer JWKS, plus issuer, audience, and expiry). SAML uses `@node-saml/node-saml` (signature, audience, `NotOnOrAfter`, `InResponseTo`). This app also requires the assertion `Recipient` to equal the ACS URL and records the assertion id. SP-initiated only. At least one of assertion signature or response signature must be required. `SAML_WANT_ASSERTIONS_SIGNED` defaults true; `SAML_WANT_RESPONSE_SIGNED` defaults false.
 - **Evidence, not Sprint 3.** `sso_login_events` and `sso_assertion_uses` are append-only inserts. There is no audit report API. `sso_requests` are single-use and deleted when the attempt finishes.
 - **Fail closed.** `IDENTITY_PROVIDER` unset or `local` is password login. `oidc` or `saml` with a missing or invalid IdP setting leaves `ssoReady` false: start and callback return `503 sso_not_configured` and set no cookie. An unknown provider value does the same and does not fall through to a persona.
@@ -574,4 +575,31 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **S5 Tick.** About 20 s in total: at most 20 closes in about 8 s, each in a busy retry, one failing RFQ is reported in `close_errors` and does not stop the rest, then deliveries until the budget is spent, each send timing out inside what is left (5 s cap).
 - **Nits.** Background mail is sent in parallel and each result is logged as it settles (invitations also update `delivery_status` per row). `runMailAfterCommit` swallows and logs any failure while preparing mail after a commit, so a recipient read can no longer turn a committed write into an error. Key actions are audited with the key id (`API key #n` in the actor name, `api_key_id` in the compliance details). `external_id` is unique per API key (`integration_sourcing_links (api_key_id, external_id)`; this table was new in 8d and not yet on main during review, so it was changed in place). A schemeless `APP_BASE_URL` warns at startup. Same-origin requests are not logged as denied CORS origins (`corsDelegate`).
 - **Follow-ups from the #59 review.** (a) `approval_requests.policy_version` (NULL = version 1, 2 = requesters, award owner and proposer excluded) is written by `insertApprovalChain` and the award chain insert. The compliance report builds the expected chain by the chain's own version, and no longer adds `wrong_approver` to a step already flagged `self_approval`. (b) The legacy convert-to-PO route uses `BEGIN IMMEDIATE` with busy retry (409 `busy_snapshot`, 503 with `Retry-After`), and re-checks that the requisition is still approved inside the transaction. (c) Re-routing a step around the requester first avoids everyone already on the chain, and falls back to avoiding only the requester when nobody else is left. (d) Fixtures derive the fiscal year and document-number years from the clock. The whole suite also passes with the clock set to January 2027 (checked with a Date shim; 750 tests).
+
+## Security: fail-closed first-admin bootstrap
+
+**Date:** 2026-11-21
+
+**Goal:** Close the unauthenticated first-admin bootstrap. `POST /api/auth/bootstrap` must not create an admin on an empty database unless a server-side one-time setup secret is configured and presented.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/87 (#87).
+
+**Merge SHA:** pending
+
+**Status:** done (waiting on review).
+
+### What changed
+
+- The HTTP route stays on the public `/api/auth/*` prefix (an empty tenant has no session) and is fail-closed. `BOOTSTRAP_TOKEN` must be at least 32 characters or the route returns `403 bootstrap_disabled` and writes nothing. A missing or wrong `X-Bootstrap-Token` returns `403 bootstrap_token_invalid`. The compare is SHA-256 digests with `crypto.timingSafeEqual`, so unequal lengths do not throw and do not short-circuit on the raw strings. The token is never logged. A shorter configured value is treated as unset and warned once at startup, without printing it.
+- The process does not require the variable to boot. `/api/health` does not read it. When any user already exists the route still returns **409** with the same message as before, whether or not a token is configured, so existing deployments need no new env.
+- The token check lives on the route, not in `bootstrapFirstAdmin`. `npm run bootstrap-admin`, `provision:customer`, and `onboard:customer --email` keep creating the first admin by direct database access with no token. Those flows and the operator docs point at the CLI. The HTTP path is documented as optional. The customer CLIs do not set `BOOTSTRAP_TOKEN`.
+- Wrong and missing tokens still pass the existing login rate limiters on `/api/auth/bootstrap`.
+- A successful HTTP bootstrap still appends `BOOTSTRAP_ADMIN` attributed to the created user.
+- The empty-tenant login screen explains that the CLI is the path and accepts the setup token. `bootstrap_disabled` and `bootstrap_token_invalid` map to Dutch.
+
+### Tests
+
+Server tests cover: no token configured (refused, no user, health still ok, no startup warning); missing, wrong, and body-supplied token (`403`, no user, token not logged); a short configured token (refused, startup warning that does not contain the value, health still ok); the correct token on an empty database (admin created, audit row attributed to that user); the correct token after a user exists (409); existing users with no token (409); rate limit on repeated wrong tokens; CLI bootstrap with no token and with a token set in the environment (both create the admin, neither print the token).
+
+`npm test`: 788 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 

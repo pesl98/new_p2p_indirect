@@ -282,9 +282,9 @@ npm run provision:customer -- --with-org \
 
 Omit `--with-org` if you only want schema + first admin (departments stay empty until `npm run bootstrap-org`).
 
-**C — UI** if the database still has 0 users: open the Production URL, use **Create the first admin** (name, email, password ≥ 8 characters).
+**C — HTTP (optional, off by default)** if the database still has 0 users **and** the server has `BOOTSTRAP_TOKEN` (at least 32 characters). Open the Production URL, use **Create the first admin**, and fill the setup-token field (`X-Bootstrap-Token`). Without that env the page explains the route is disabled and the POST returns `403 bootstrap_disabled` without creating a user. `onboard:customer` does not set the variable. Prefer A or B.
 
-The CLI **refuses** (exit 2) if any users already exist. Additional people are created in the UI, not by running bootstrap again.
+The CLI **refuses** (exit 2) if any users already exist. Additional people are created in the UI, not by running bootstrap again. A database that already has users makes `POST /api/auth/bootstrap` return **409** even when no token is configured.
 
 ### Do not seed a real customer
 

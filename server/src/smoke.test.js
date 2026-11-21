@@ -28,6 +28,8 @@ const TEST_AUTH = loadAuthConfig({}, {
   demoPersonaSwitcher: false
 });
 
+const BOOTSTRAP_TOKEN = 'a'.repeat(32);
+
 function captureStreams() {
   const stdout = { text: '', write(chunk) { this.text += chunk; } };
   const stderr = { text: '', write(chunk) { this.text += chunk; } };
@@ -184,11 +186,19 @@ describe('smoke against a live Express app', () => {
 
   test('after bootstrap, optional login check passes', async () => {
     const db = await createMemoryDatabase();
-    const app = createApp({ db, config: loadDbConfig({}), authConfig: TEST_AUTH });
+    const app = createApp({
+      db,
+      config: loadDbConfig({}),
+      authConfig: TEST_AUTH,
+      env: { BOOTSTRAP_TOKEN }
+    });
     await withServer(app, async (base) => {
       const created = await fetch(`${base}/api/auth/bootstrap`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bootstrap-Token': BOOTSTRAP_TOKEN
+        },
         body: JSON.stringify({
           name: 'Ada Admin',
           email: 'ada@acme.test',

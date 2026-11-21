@@ -109,7 +109,8 @@ Env:
 
 Isolation: one Turso database or SQLite file per customer. No org_id row tenancy.
 Empty tenant: after migrate, optional npm run bootstrap-org (cost centers + FY
-budgets; not seed), then first admin (UI or npm run bootstrap-admin).
+budgets; not seed), then first admin with npm run bootstrap-admin (no token).
+POST /api/auth/bootstrap stays off unless BOOTSTRAP_TOKEN is set (optional).
 Then: BASE_URL=http://127.0.0.1:5000 npm run smoke
 The same schema run creates Sprint 4 integration tables (api_keys, webhook_outbox).
 See docs/DEPLOY_MANUAL.md. docs/CUSTOMER_ONBOARDING.md and docs/DEPLOYMENT.md point there.

@@ -54,7 +54,12 @@ Usage:
                         in-process. Secrets minted by Turso are passed to later
                         steps without copying export lines by hand. vercel:customer
                         returns only after Production is Ready (or a timeout/error).
-  --email / --password  First admin (both required together). Optional.
+  --email / --password  First admin via the CLI path (both required together).
+                        Optional. Does not use BOOTSTRAP_TOKEN.
+                        If omitted, run npm run bootstrap-admin afterwards.
+                        POST /api/auth/bootstrap stays off unless that server
+                        env is set (at least 32 characters) and is not written
+                        by this command.
   --name <display>      First-admin display name (optional with --email).
   --with-org            Include cost centers + FY budgets (DEFAULT ON here;
                         provision:customer still requires the flag).
@@ -444,7 +449,10 @@ export function formatOnboardApplyReport({
     VERCEL_GITHUB_LIMIT,
     '',
     'Next:',
-    `  Sign in at ${baseUrl} (or Create the first admin if you omitted --email).`,
+    `  Sign in at ${baseUrl}.`,
+    '  If you omitted --email, create the first admin with npm run bootstrap-admin.',
+    '  That CLI needs no token. POST /api/auth/bootstrap stays off unless',
+    '  BOOTSTRAP_TOKEN (at least 32 characters) is set on the server.',
     smoked ? null : `  BASE_URL=${baseUrl} npm run smoke`,
     '  Administration → Users → Department Approvers'
   ].filter((line) => line != null);

@@ -101,7 +101,7 @@ These five values are the only allowed roles. Additional people are created in *
 | `POST /api/auth/login` | `{ email, password }` → cookie. `403 local_login_disabled` when `LOCAL_LOGIN=0` |
 | `POST /api/auth/logout` | Clears cookie |
 | `GET /api/auth/me` | Session user or 401 |
-| `POST /api/auth/bootstrap` | First admin on an **empty** `users` table only |
+| `POST /api/auth/bootstrap` | Optional HTTP first admin on an **empty** `users` table. Fail closed: `403 bootstrap_disabled` unless `BOOTSTRAP_TOKEN` is at least 32 characters, then `403 bootstrap_token_invalid` without a matching `X-Bootstrap-Token` (constant-time compare; the value is never logged). A tenant that already has users stays **409**. Not required at boot. The operator path is `npm run bootstrap-admin`, which does not use the token. |
 
 ### SSO (OIDC or SAML)
 
@@ -111,7 +111,7 @@ IdP endpoints and secrets are **environment variables on that customer’s deplo
 
 Missing or invalid IdP settings leave `ssoReady` false. `GET /api/auth/oidc/start`, the OIDC callback, and the SAML start/ACS routes then return **503** `sso_not_configured` and set **no** cookie. They do not fall back to a persona or to an unsigned login. Password login still works unless `LOCAL_LOGIN=0`.
 
-**Mapping.** `user_identities` (`provider` + `subject`) is checked first. Otherwise the verified email is matched to `users.email` (case-insensitive) and the subject is stored. OIDC requires `email_verified`. A signed SAML email counts as verified. Unknown users are **rejected** (`403 sso_user_unknown`) unless provisioning is on. The new user’s role is `SSO_DEFAULT_ROLE` when that env value is one of the five roles, otherwise the tenant row, otherwise `requester`. A role claim, query parameter, or `role` field on the settings body is ignored. Inactive users are rejected. An empty tenant still needs bootstrap for an admin: the default JIT role is `requester`.
+**Mapping.** `user_identities` (`provider` + `subject`) is checked first. Otherwise the verified email is matched to `users.email` (case-insensitive) and the subject is stored. OIDC requires `email_verified`. A signed SAML email counts as verified. Unknown users are **rejected** (`403 sso_user_unknown`) unless provisioning is on. The new user’s role is `SSO_DEFAULT_ROLE` when that env value is one of the five roles, otherwise the tenant row, otherwise `requester`. A role claim, query parameter, or `role` field on the settings body is ignored. Inactive users are rejected. An empty tenant still needs an admin before anyone can turn provisioning on: the default JIT role is `requester`. Create that admin with `npm run bootstrap-admin`. `POST /api/auth/bootstrap` does not replace the CLI unless `BOOTSTRAP_TOKEN` is set.
 
 **OIDC** (`IDENTITY_PROVIDER=oidc`). Confidential authorization-code client. The server sends PKCE S256, `state`, and `nonce`, and checks the ID token signature (issuer JWKS), issuer, audience, and expiry.
 
@@ -547,7 +547,7 @@ Surfaces when present: PR header, sequential approval steps, linked PO branch(es
 
 - List / create / edit: name, unique email, role (existing CHECK), department, title, `approval_limit` cents, optional password, `status` active/inactive.
 - Set / reset password (`POST /api/users/:id/password`). Soft-deactivate (`PATCH …/status`). Cannot deactivate last admin or self. Unique email → 409. `DELETE` → 405.
-- Empty tenant: `GET /api/auth/config` → `bootstrapNeeded: true`. UI **Create the first admin** or `npm run bootstrap-admin`. CLI **refuses** (exit 2) if any users already exist.
+- Empty tenant: `GET /api/auth/config` → `bootstrapNeeded: true`. The login screen says HTTP bootstrap is off unless a setup token is configured, and it has a field for that token. The operator path is `npm run bootstrap-admin` (direct database access, no token). The CLI **refuses** (exit 2) if any users already exist. `POST /api/auth/bootstrap` creates nothing unless `BOOTSTRAP_TOKEN` (≥ 32 characters) is set and the request sends `X-Bootstrap-Token`. `onboard:customer` and `vercel:customer` do not set that variable. Unset is healthy: `/api/health` does not read it, and a database that already has users still answers **409**.
 
 **Department Approvers**
 
@@ -936,6 +936,9 @@ npm run turso:customer -- --apply
    npm run db:status
    npm run bootstrap-org
    npm run bootstrap-admin -- --email admin@customer.com --password 'choose-a-long-password'
+   # CLI is the primary path and needs no token.
+   # Optional only: set BOOTSTRAP_TOKEN (≥ 32 characters) on the server and
+   # POST /api/auth/bootstrap with header X-Bootstrap-Token. Unset disables that route.
    ```
 
    One-shot wrapper (still **never seeds**):
@@ -958,7 +961,7 @@ Click-by-click (Acme worked example, troubleshooting, deprovision): **[CUSTOMER_
 | --- | --- | --- |
 | Empty schema | `npm run db:migrate` | Tables exist. `departments` / `budgets` empty. PR submit fails closed. 0 users. |
 | Org skeleton | `npm run bootstrap-org` | Five cost centers + FY 2026 budgets. **Idempotent.** No users, catalog, or PRs. |
-| First admin | `npm run bootstrap-admin` | One admin + password. Catalog / PRs / invoices still blank. |
+| First admin | `npm run bootstrap-admin` | One admin + password. No `BOOTSTRAP_TOKEN`. Catalog / PRs / invoices still blank. HTTP bootstrap is optional and off unless that env is set. |
 | Demo wipe | `npm run seed` | **Destructive:** drops application tables, loads Alice/Bob/… and the demo password |
 
 `provision:customer -- --with-org` = migrate + org skeleton + optional first admin. It **never** seeds.

@@ -5,6 +5,8 @@
  *   node server/src/bootstrapAdmin.js --name "Ada Admin" --email ada@acme.com --password 'choose-a-long-password'
  *
  * Refuses if any users already exist. Auth is local to this SQLite/Turso DB.
+ * This CLI does not read BOOTSTRAP_TOKEN. That variable gates only
+ * POST /api/auth/bootstrap.
  */
 
 import path from 'node:path';
