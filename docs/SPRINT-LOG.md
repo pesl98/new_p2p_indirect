@@ -76,7 +76,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | 2026-10-11 | Hardening: email, integrations, tick, demo seed, docs | [#71](https://github.com/pesl98/new_p2p_indirect/pull/71) | Sprint 8d — Hardening, email, integrations, demo seed, and docs | `fcf7b9bab801a735823092c631123497921cf388` | merged |
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | pending | done |
-| — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | pending | Security: session revocation and inactive login | pending | done |
+| — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | pending | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -610,7 +610,7 @@ Server tests cover: no token configured (refused, no user, health still ok, no s
 
 **Goal:** Stop a changed or deactivated account from keeping a 7-day `pf_session`, and stop login from confirming that an inactive user’s password is correct.
 
-**PR:** pending
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/95 (#95).
 
 **Merge SHA:** pending
 
