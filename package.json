@@ -36,7 +36,7 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "jose": "^6.2.15",
-    "openid-client": "^6.8.8",
+    "openid-client": "^6.9.0",
     "zod": "^4.6.5"
   },
   "optionalDependencies": {
