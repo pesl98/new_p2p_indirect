@@ -1,13 +1,14 @@
 import express from 'express';
 import {
-  attachSessionCookie,
-  loadAuthConfig,
-  sessionCookieHeader
+  clearSessionCookie,
+  issueSessionCookie,
+  loadAuthConfig
 } from '../auth.js';
 import {
   UsersError,
   authenticateUser,
   bootstrapFirstAdmin,
+  changeOwnPassword,
   countUsers
 } from '../usersService.js';
 import { MasterDataError } from '../masterData.js';
@@ -16,7 +17,8 @@ import {
   recordBootstrapAdmin,
   recordLocalLoginFailure,
   recordLocalLoginSuccess,
-  recordLogout
+  recordLogout,
+  recordUserChange
 } from '../complianceAudit.js';
 import { bootstrapHttpRefusal } from '../bootstrapToken.js';
 import ssoRouter from './sso.js';
@@ -34,16 +36,8 @@ function authConfig(req) {
   return req.authConfig || loadAuthConfig();
 }
 
-function setSessionCookie(req, res, userId) {
-  attachSessionCookie(res, authConfig(req), userId);
-}
-
-function clearSessionCookie(req, res) {
-  const config = authConfig(req);
-  res.setHeader('Set-Cookie', sessionCookieHeader('', {
-    secure: config.cookieSecure,
-    clear: true
-  }));
+function setSessionCookie(req, res, user) {
+  issueSessionCookie(res, authConfig(req), user);
 }
 
 router.get('/config', async (req, res) => {
@@ -98,7 +92,7 @@ router.post('/login', async (req, res) => {
       env: req.authEnv || process.env
     });
     await recordLocalLoginSuccess(req.db, user);
-    setSessionCookie(req, res, user.id);
+    setSessionCookie(req, res, user);
     res.json({ user });
   } catch (error) {
     const status = error.statusCode || 500;
@@ -116,7 +110,7 @@ router.post('/login', async (req, res) => {
 router.post('/logout', async (req, res) => {
   try {
     if (req.user) await recordLogout(req.db, req.user);
-    clearSessionCookie(req, res);
+    clearSessionCookie(res, authConfig(req));
     res.json({ ok: true });
   } catch (error) {
     sendError(res, error);
@@ -144,8 +138,33 @@ router.post('/bootstrap', async (req, res) => {
       env
     });
     await recordBootstrapAdmin(req.db, user);
-    setSessionCookie(req, res, user.id);
+    setSessionCookie(req, res, user);
     res.status(201).json({ user });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.post('/password', async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required', user: null });
+    }
+    const body = req.body || {};
+    const user = await changeOwnPassword(
+      req.db,
+      req.user.id,
+      body.current_password,
+      body.new_password,
+      { bcryptRounds: authConfig(req).bcryptRounds, env: req.authEnv || process.env }
+    );
+    await recordUserChange(req.db, req.user, {
+      action: 'USER_PASSWORD_SET',
+      user,
+      details: { password: 'redacted', self: true }
+    });
+    setSessionCookie(req, res, user);
+    res.json({ user });
   } catch (error) {
     sendError(res, error);
   }

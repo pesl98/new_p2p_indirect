@@ -137,6 +137,14 @@ async function countActiveAdmins(db, exceptUserId = null) {
   return Number(row?.n || 0);
 }
 
+async function bumpSessionVersion(db, userId) {
+  await db.prepare(`
+    UPDATE users
+    SET session_version = COALESCE(session_version, 1) + 1
+    WHERE id = ?
+  `).run(userId);
+}
+
 async function writePassword(db, userId, password, rounds, env = process.env) {
   assertPasswordAcceptable(password, env);
   const hash = await hashPassword(assertPasswordPolicy(password), rounds);
@@ -249,6 +257,10 @@ export async function updateUser(db, id, body = {}, actor = null) {
     throw error;
   }
 
+  const roleChanged = nextRole !== current.role;
+  const deactivated = nextStatus === 'inactive' && current.status !== 'inactive';
+  if (roleChanged || deactivated) await bumpSessionVersion(db, current.id);
+
   return loadUser(db, current.id);
 }
 
@@ -271,14 +283,32 @@ export async function setUserStatus(db, id, status, actor = null) {
   if (next === 'inactive') {
     await assertCanDeactivate(db, user, actor);
   }
+  const deactivated = next === 'inactive' && user.status !== 'inactive';
   await db.prepare(`UPDATE users SET status = ? WHERE id = ?`).run(next, user.id);
+  if (deactivated) await bumpSessionVersion(db, user.id);
   return loadUser(db, user.id);
 }
 
 export async function setUserPassword(db, id, password, { bcryptRounds = 10, env = process.env } = {}) {
   const user = await loadUser(db, id);
   await writePassword(db, user.id, password, bcryptRounds, env);
+  await bumpSessionVersion(db, user.id);
   return loadUser(db, user.id);
+}
+
+export async function changeOwnPassword(db, userId, currentPassword, newPassword, options = {}) {
+  if (currentPassword == null || currentPassword === '' || newPassword == null || newPassword === '') {
+    throw new UsersError('Current password and a new password are required', 400);
+  }
+  const presented = String(currentPassword);
+  if (passwordExceedsLoginLimit(presented)) {
+    throw new UsersError('Current password is incorrect', 400);
+  }
+  const row = await db.prepare(`SELECT password_hash FROM user_credentials WHERE user_id = ?`).get(userId);
+  if (!row?.password_hash) throw new UsersError('Current password is incorrect', 400);
+  const ok = await verifyPassword(presented, row.password_hash);
+  if (!ok) throw new UsersError('Current password is incorrect', 400);
+  return setUserPassword(db, userId, newPassword, options);
 }
 
 export async function bootstrapFirstAdmin(db, body = {}, { bcryptRounds = 10, env = process.env } = {}) {
@@ -328,10 +358,13 @@ export async function authenticateUser(db, email, password, { env = process.env 
     return error;
   };
   if (!row || !row.password_hash) throw invalid();
+  // Compare before the status check so an inactive account with the right
+  // password takes the same time and returns the same 401 as a wrong password.
   const ok = await verifyPassword(password, row.password_hash);
-  if (!ok) throw invalid();
-  if (row.status === 'inactive') {
-    throw new UsersError('This account is inactive', 403);
+  if (!ok || row.status === 'inactive') {
+    const error = invalid();
+    if (ok && row.status === 'inactive') error.code = 'inactive';
+    throw error;
   }
   return loadPublicUser(db, row.id);
 }

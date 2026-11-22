@@ -513,6 +513,52 @@ describe('OIDC callback', () => {
       });
       assert.equal(linked.status, 200, linked.body.code);
       assert.equal(linked.session.userId, 1);
+      assert.equal(linked.session.sessionVersion, 1);
+    });
+  });
+
+  test('inactive user gets no OIDC session, including a linked subject', async () => {
+    await withOidc({}, async ({ base, db }) => {
+      await db.prepare(`UPDATE users SET status = 'inactive' WHERE id = 1`).run();
+      const started = await beginOidc(base);
+      const result = await callbackOidc(base, {
+        state: started.state,
+        code: codeFor({
+          challenge: started.challenge,
+          nonce: started.nonce,
+          sub: 'oidc-alice',
+          email: 'alice@example.com',
+          email_verified: true,
+          jti: 'jti-inactive'
+        })
+      });
+      assert.equal(result.status, 403);
+      assert.equal(result.body.code, 'sso_user_inactive');
+      assert.equal(result.session, null);
+      assert.doesNotMatch(result.header, /pf_session=[^;\s]/);
+
+      await db.prepare(`
+        INSERT INTO user_identities (user_id, provider, subject, email)
+        VALUES (1, 'oidc', 'oidc-alice', 'alice@example.com')
+      `).run();
+      const again = await beginOidc(base);
+      const linked = await callbackOidc(base, {
+        state: again.state,
+        code: codeFor({
+          challenge: again.challenge,
+          nonce: again.nonce,
+          sub: 'oidc-alice',
+          email: 'someone-else@example.com',
+          email_verified: false,
+          jti: 'jti-inactive-linked'
+        })
+      });
+      assert.equal(linked.status, 403);
+      assert.equal(linked.body.code, 'sso_user_inactive');
+      assert.equal(linked.session, null);
+      const events = await db.prepare(`SELECT outcome, reason FROM sso_login_events ORDER BY id`).all();
+      assert.equal(events.length, 2);
+      assert.ok(events.every((row) => row.outcome === 'failure' && row.reason === 'sso_user_inactive'));
     });
   });
 

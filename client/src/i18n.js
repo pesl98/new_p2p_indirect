@@ -216,6 +216,8 @@ export function formatDateTime(value) {
 
 const API_EXACT = {
   'Invalid email or password': 'api.invalidCredentials',
+  'Current password is incorrect': 'api.currentPasswordIncorrect',
+  'Current password and a new password are required': 'api.currentPasswordRequired',
   'Email and password are required': 'api.emailPasswordRequired',
   'This account is inactive': 'api.accountInactive',
   'Authentication required': 'api.authRequired',

@@ -76,6 +76,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | 2026-10-11 | Hardening: email, integrations, tick, demo seed, docs | [#71](https://github.com/pesl98/new_p2p_indirect/pull/71) | Sprint 8d — Hardening, email, integrations, demo seed, and docs | `fcf7b9bab801a735823092c631123497921cf388` | merged |
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | pending | done |
+| — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | pending | Security: session revocation and inactive login | pending | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -602,4 +603,35 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 Server tests cover: no token configured (refused, no user, health still ok, no startup warning); missing, wrong, and body-supplied token (`403`, no user, token not logged); a short configured token (refused, startup warning that does not contain the value, health still ok); the correct token on an empty database (admin created, audit row attributed to that user); the correct token after a user exists (409); existing users with no token (409); rate limit on repeated wrong tokens; CLI bootstrap with no token and with a token set in the environment (both create the admin, neither print the token).
 
 `npm test`: 788 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Security: session revocation and inactive login
+
+**Date:** 2026-11-22
+
+**Goal:** Stop a changed or deactivated account from keeping a 7-day `pf_session`, and stop login from confirming that an inactive user’s password is correct.
+
+**PR:** pending
+
+**Merge SHA:** pending
+
+**Status:** done (waiting on review).
+
+### Findings closed
+
+1. **Sessions were not revoked.** A password change, an admin password reset, deactivation, or a role change left cookies signed earlier valid until the 7-day expiry. `attachSession` already loaded the user and dropped `status = inactive`, but it did not clear the cookie and it did not compare a version, so a role change in particular kept the old cookie working with the new role.
+2. **Inactive login was a password oracle.** `POST /api/auth/login` returned **403** `This account is inactive` only after bcrypt succeeded. A wrong password was **401** `Invalid email or password`.
+
+### What changed
+
+- `users.session_version` is an integer, default **1**. `schema.sql` creates it. `migrateUsersAuth` adds `ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1` only when the column is missing, on SQLite and Turso/libsql. A second migrate does not reset a version that has already been bumped. No new environment variable.
+- Login, bootstrap, and a successful OIDC or SAML callback embed `sv` in the HMAC payload. Cookies minted before this change have no `sv` and are treated as version 1, so a deploy does not log every current session out.
+- Each authenticated request still loads the user (the middleware already did; it is HMAC via `crypto`, not `jose`). It now compares `sv` with `session_version`. A mismatch, a missing user, or `status = inactive` leaves `req.user` unset, returns **401** from the existing session gate, and clears `pf_session`.
+- The version increases on `POST /api/auth/password`, `POST /api/users/:id/password`, deactivation (`PATCH /api/users/:id/status` or a status change on `PATCH /api/users/:id`), and a role change. Creating a user does not bump. A self-service change, and an admin resetting their own password, set a new cookie for that response so the tab they used stays signed in. Other sessions of that user stop working.
+- Inactive password login is **401** `Invalid email or password`, the same body as a wrong password. bcrypt still runs before the status check. The compliance row can still be `LOCAL_LOGIN_INACTIVE`; that code is not in the JSON. OIDC and SAML already refused an inactive user in `requireActiveUser` and still set no cookie.
+
+### Tests
+
+Server tests cover: a pre-upgrade cookie works until a bump; the old cookie is **401** and cleared after self-service password change, admin reset, deactivation, and role change; the self-change response cookie and an admin’s own reset cookie keep working; a wrong current password does not revoke; inactive login matches a wrong password and still spends bcrypt time; OIDC rejects an inactive user, including a linked subject, with no `pf_session`; applying the migration twice on an existing `users` table adds `session_version` default 1 and does not clobber a later value.
+
+`npm test`: 792 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 

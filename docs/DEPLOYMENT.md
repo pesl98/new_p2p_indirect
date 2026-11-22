@@ -361,7 +361,7 @@ Operator troubleshooting (login with users but no passwords, Preview-only env, m
 | `GET` | `/api/auth/me` | Session user or 401 |
 | `POST` | `/api/auth/bootstrap` | Optional first admin (empty `users` table). Public, fail-closed: `403 bootstrap_disabled` without `BOOTSTRAP_TOKEN` (≥ 32 characters); `403 bootstrap_token_invalid` without a matching `X-Bootstrap-Token`; **409** once any user exists. `npm run bootstrap-admin` is the path that needs no token. |
 
-Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` when `VERCEL` or `NODE_ENV=production`. TTL 7 days.
+Cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` when `VERCEL` or `NODE_ENV=production`. TTL 7 days. The signed payload includes `sv` (`users.session_version`, default 1). Each authenticated request compares it with the user row. A mismatch or an inactive user is **401** and the cookie is cleared. Password change, admin password reset, deactivation, and role change increment the version. `POST /api/auth/password` (`current_password`, `new_password`) does that for the signed-in user and returns a fresh cookie. An inactive password login is **401** `Invalid email or password`, the same body as a wrong password. OIDC and SAML refuse an inactive user and set no cookie.
 
 Passwords are bcrypt hashes in `user_credentials`. They are never returned on `GET /api/users` or `/api/auth/me`.
 

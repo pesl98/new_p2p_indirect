@@ -1,5 +1,5 @@
 import express from 'express';
-import { attachSessionCookie, requireAdmin } from '../auth.js';
+import { issueSessionCookie, requireAdmin } from '../auth.js';
 import { finishOidcLogin, startOidcLogin } from '../oidc.js';
 import { finishSamlLogin, samlMetadataXml, startSamlLogin } from '../saml.js';
 import { SsoError, classifyProviderError, getSsoPolicy, updateSsoSettings } from '../sso.js';
@@ -36,7 +36,7 @@ function sendFailure(req, res, error) {
 
 function sendSuccess(req, res, user) {
   const config = authSettings(req);
-  attachSessionCookie(res, config, user.id);
+  issueSessionCookie(res, config, user);
   res.setHeader('Cache-Control', 'no-store');
   const base = ssoConfig(req)?.appBaseUrl || ssoConfig(req)?.oidc?.appBaseUrl || ssoConfig(req)?.saml?.appBaseUrl;
   if (wantsJson(req) || !base) return res.json({ user });

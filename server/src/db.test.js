@@ -20,6 +20,7 @@ import {
   PAYMENT_RUNS_TABLE_SQL,
   PAYMENT_RUN_ITEMS_TABLE_SQL,
   USERS_STATUS_COLUMN_SQL,
+  USERS_SESSION_VERSION_COLUMN_SQL,
   USER_CREDENTIALS_TABLE_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL,
@@ -140,6 +141,51 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(creds.length, 1);
     assert.match(creds[0], /CREATE TABLE IF NOT EXISTS user_credentials/i);
     assert.match(creds[0], /password_hash TEXT NOT NULL/);
+    const versionSql = splitSqlScript(USERS_SESSION_VERSION_COLUMN_SQL);
+    assert.equal(versionSql.length, 1);
+    assert.match(versionSql[0], /ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1/);
+  });
+
+  test('session_version migration is idempotent on an existing users table', async () => {
+    const raw = new Database(':memory:');
+    raw.pragma('foreign_keys = ON');
+    const db = new SqliteAdapter(raw);
+    db.exec(`
+      CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        role TEXT NOT NULL,
+        department_id INTEGER,
+        title TEXT,
+        approval_limit INTEGER DEFAULT 0,
+        avatar TEXT,
+        status TEXT NOT NULL DEFAULT 'active'
+      );
+      INSERT INTO users (id, name, email, role, status)
+        VALUES (7, 'Ada', 'ada@example.com', 'admin', 'active');
+    `);
+
+    await applySchema(db);
+    await applySchema(db);
+
+    const cols = columnNames(db, 'users');
+    assert.equal(cols.filter((name) => name === 'session_version').length, 1);
+    const row = db.prepare(`
+      SELECT id, name, email, role, status, session_version FROM users WHERE id = 7
+    `).get();
+    assert.equal(row.name, 'Ada');
+    assert.equal(row.email, 'ada@example.com');
+    assert.equal(row.role, 'admin');
+    assert.equal(row.status, 'active');
+    assert.equal(Number(row.session_version), 1);
+
+    db.prepare(`UPDATE users SET session_version = 4 WHERE id = 7`).run();
+    await applySchema(db);
+    const again = db.prepare(`SELECT session_version, email FROM users WHERE id = 7`).get();
+    assert.equal(Number(again.session_version), 4);
+    assert.equal(again.email, 'ada@example.com');
+    raw.close();
   });
 
   test('purchase_requisitions contract-link ALTER statements are single Turso-split statements', () => {
@@ -393,9 +439,14 @@ describe('Turso/SQLite schema migrations', () => {
     assert.ok(columnNames(db, 'payment_run_items').includes('invoice_id'));
     assert.ok(columnNames(db, 'payment_run_items').includes('payable_total_cents'));
     assert.ok(columnNames(db, 'users').includes('status'));
+    assert.ok(columnNames(db, 'users').includes('session_version'));
     assert.equal(
       db.prepare(`SELECT status FROM users WHERE id = 1`).get().status,
       'active'
+    );
+    assert.equal(
+      Number(db.prepare(`SELECT session_version FROM users WHERE id = 1`).get().session_version),
+      1
     );
     assert.ok(columnNames(db, 'user_credentials').includes('password_hash'));
   });

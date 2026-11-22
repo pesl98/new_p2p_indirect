@@ -207,7 +207,7 @@ export async function recordLocalLoginFailure(db, email, error) {
       `SELECT id FROM users WHERE lower(email) = ?`
     ).get(normalized);
   }
-  const inactive = error?.statusCode === 403;
+  const inactive = error?.code === 'inactive';
   return appendComplianceEvent(db, {
     actor_user_id: matched?.id ?? null,
     actor_name: normalized || 'unknown',

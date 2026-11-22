@@ -1,6 +1,6 @@
 import express from 'express';
 import { listDepartments } from '../departmentsService.js';
-import { requireAdmin } from '../auth.js';
+import { issueSessionCookie, loadAuthConfig, requireAdmin } from '../auth.js';
 import {
   UsersError,
   createUser,
@@ -11,7 +11,6 @@ import {
   updateUser
 } from '../usersService.js';
 import { MasterDataError } from '../masterData.js';
-import { loadAuthConfig } from '../auth.js';
 import { recordUserChange } from '../complianceAudit.js';
 
 const router = express.Router();
@@ -122,6 +121,9 @@ router.post('/:id/password', requireAdmin, async (req, res) => {
       user: updated,
       details: { password: 'redacted' }
     });
+    if (Number(req.user.id) === Number(updated.id)) {
+      issueSessionCookie(res, req.authConfig || loadAuthConfig(), updated);
+    }
     res.json({ ok: true, user: updated });
   } catch (error) {
     sendError(res, error);
