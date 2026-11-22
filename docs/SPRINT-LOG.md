@@ -75,8 +75,11 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | 8b | 2026-10-09 | Supplier portal: magic links, sealed bids, copy-link delivery | [#57](https://github.com/pesl98/new_p2p_indirect/pull/57) | Sprint 8b — Supplier portal and sealed bids | `f55f7177cf5514236f3be6454711296193a8d036` | merged |
 | 8c | 2026-10-10 | Comparison, scoring, award requisition, SoD, and POs | [#59](https://github.com/pesl98/new_p2p_indirect/pull/59) | Sprint 8c — Comparison, scoring, award, and POs | `2d50c015f3f581843c78e98b292e05515e3dd428` | merged |
 | 8d | 2026-10-11 | Hardening: email, integrations, tick, demo seed, docs | [#71](https://github.com/pesl98/new_p2p_indirect/pull/71) | Sprint 8d — Hardening, email, integrations, demo seed, and docs | `fcf7b9bab801a735823092c631123497921cf388` | merged |
-| — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | pending | done |
-| — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | pending | done |
+| — | 2026-11-20 | Refuse to boot when `SESSION_SECRET` is missing, the development default, or shorter than 32 characters | [#84](https://github.com/pesl98/new_p2p_indirect/pull/84) | Security: refuse an insecure SESSION_SECRET | `d417837d2ae31a736ef9125135889d15377140d5` | merged |
+| — | 2026-11-20 | Refuse the demo password and the persona switcher outside local development | [#85](https://github.com/pesl98/new_p2p_indirect/pull/85) | Security: refuse the demo password outside local | `ce8ac561edac6ff84d41a4ce95cba0d92cdb3e1a` | merged |
+| — | 2026-11-20 | Refuse the destructive demo seed against a remote database | [#86](https://github.com/pesl98/new_p2p_indirect/pull/86) | Security: refuse the demo seed against a remote database | `0cc06d3e05c1c32b30bebd31ef7e49b8e29af478` | merged |
+| — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | `213855c9208271400b2778ebb818265156803a34` | merged |
+| — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` | merged |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -577,6 +580,72 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 - **Nits.** Background mail is sent in parallel and each result is logged as it settles (invitations also update `delivery_status` per row). `runMailAfterCommit` swallows and logs any failure while preparing mail after a commit, so a recipient read can no longer turn a committed write into an error. Key actions are audited with the key id (`API key #n` in the actor name, `api_key_id` in the compliance details). `external_id` is unique per API key (`integration_sourcing_links (api_key_id, external_id)`; this table was new in 8d and not yet on main during review, so it was changed in place). A schemeless `APP_BASE_URL` warns at startup. Same-origin requests are not logged as denied CORS origins (`corsDelegate`).
 - **Follow-ups from the #59 review.** (a) `approval_requests.policy_version` (NULL = version 1, 2 = requesters, award owner and proposer excluded) is written by `insertApprovalChain` and the award chain insert. The compliance report builds the expected chain by the chain's own version, and no longer adds `wrong_approver` to a step already flagged `self_approval`. (b) The legacy convert-to-PO route uses `BEGIN IMMEDIATE` with busy retry (409 `busy_snapshot`, 503 with `Retry-After`), and re-checks that the requisition is still approved inside the transaction. (c) Re-routing a step around the requester first avoids everyone already on the chain, and falls back to avoiding only the requester when nobody else is left. (d) Fixtures derive the fiscal year and document-number years from the clock. The whole suite also passes with the clock set to January 2027 (checked with a Date shim; 750 tests).
 
+## Security: refuse an insecure SESSION_SECRET
+
+**Date:** 2026-11-20
+
+**Goal:** Refuse to boot when `SESSION_SECRET` is missing, the development default, or shorter than 32 characters. The 503 names which case it is.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/84 (#84).
+
+**Merge SHA:** `d417837d2ae31a736ef9125135889d15377140d5` (squash-merged).
+
+**Status:** merged.
+
+### What changed
+
+- Production, Preview, and any process with `VERCEL` set (including `vercel dev`) refuse to boot when `SESSION_SECRET` is missing, equal to the development default, or shorter than 32 characters. Local `npm run dev` without `VERCEL` and without `NODE_ENV=production` still starts.
+- The refusal is **503** `session_secret_insecure`. The message says which case it is: missing, the development default, or too short (fewer than 32 characters). The secret is not in the message. `reason` on the error is `missing`, `default`, or `short`.
+- `.env.example`, the README, and the deploy manual say a customer deploy and `vercel dev` need a unique value of at least 32 characters.
+
+### Tests
+
+`server/src/security.test.js` covers a missing secret in production, the development default and a short secret on production and preview, `vercel dev` (`VERCEL` set), a short secret on a local process (still boots), and that each refusal message matches its case and does not contain the secret.
+
+## Security: refuse the demo password outside local
+
+**Date:** 2026-11-20
+
+**Goal:** Refuse the documented demo password and the persona switcher outside local development.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/85 (#85).
+
+**Merge SHA:** `ce8ac561edac6ff84d41a4ce95cba0d92cdb3e1a` (squash-merged).
+
+**Status:** merged.
+
+### What changed
+
+- Login, first-admin bootstrap, user create, and password set refuse the demo seed password on production (`NODE_ENV` or `VERCEL_ENV`), on any non-preview Vercel process, and in a shell with `TURSO_DATABASE_URL` or `TURSO_AUTH_TOKEN` set. Login answers **401** `Invalid email or password`. Setting a password answers **400** `demo_password_forbidden` and writes nothing. The compare is equal-length buffers with `timingSafeEqual`. This path does not log the password.
+- Preview still accepts that password when the process opened the preview database. `ALLOW_PREVIEW_PRODUCTION_DATABASE=allow` serves production (`previewDatabase` is false) and rejects it. That decision is computed once, without the configuration error log, and reused.
+- Boot refuses `DEMO_PERSONA_SWITCHER` when the process is on Vercel (including `vercel dev`), `NODE_ENV=production`, or `VERCEL_ENV` is `production` or `preview`: **503** `demo_persona_switcher_forbidden`.
+- Setting a password rejects more than 72 UTF-8 bytes before bcrypt (**400** `password_too_long`). Sign-in rejects only an input larger than 1024 bytes (**401**), then runs the bcrypt compare, so an existing longer hash can still be checked.
+
+### Tests
+
+`server/src/demoCredentials.test.js` covers production, Vercel, and a Turso shell forbidding the demo password; preview sign-in when the preview database is open; boot refusal for the persona switcher; login still checking a stored password longer than 72 bytes; preview password checks not logging; and bootstrap and password set refusing the demo password before a user row is written.
+
+## Security: refuse the demo seed against a remote database
+
+**Date:** 2026-11-20
+
+**Goal:** Refuse the destructive demo seed when it would open a remote database.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/86 (#86).
+
+**Merge SHA:** `0cc06d3e05c1c32b30bebd31ef7e49b8e29af478` (squash-merged).
+
+**Status:** merged.
+
+### What changed
+
+- `npm run seed` already refused `NODE_ENV=production` or `VERCEL_ENV=production` unless `--force`. It now also refuses Preview, any process with `VERCEL` set, and a shell that still has `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `TURSO_PRODUCTION_DATABASE_URL`, or `ALLOW_PREVIEW_PRODUCTION_DATABASE` set. `--force` is the only bypass on `npm run seed`. The message names those variables and does not print their values.
+- `npm run db:migrate -- --seed` runs that check with an empty argument list before the database is opened, so schema is not applied and `--force` on that command cannot skip the refusal. An intentional wipe is `npm run seed -- --force`.
+
+### Tests
+
+`server/src/seedRefusal.test.js` checks that a Turso shell, preview variables, `VERCEL`, `TURSO_PRODUCTION_DATABASE_URL`, and `ALLOW_PREVIEW_PRODUCTION_DATABASE` are refused without those values appearing in the message. `server/src/provision.test.js` checks that `db:migrate --seed`, including with `--force`, returns before the database is opened and before the seed runs.
+
 ## Security: fail-closed first-admin bootstrap
 
 **Date:** 2026-11-21
@@ -585,9 +654,9 @@ Sprint 6 stays merged at `a41ec42a327afe2c0d28211c7e9a17d3343450a5` (#52). Sprin
 
 **PR:** https://github.com/pesl98/new_p2p_indirect/pull/87 (#87).
 
-**Merge SHA:** pending
+**Merge SHA:** `213855c9208271400b2778ebb818265156803a34` (squash-merged).
 
-**Status:** done (waiting on review).
+**Status:** merged.
 
 ### What changed
 
@@ -612,9 +681,9 @@ Server tests cover: no token configured (refused, no user, health still ok, no s
 
 **PR:** https://github.com/pesl98/new_p2p_indirect/pull/95 (#95).
 
-**Merge SHA:** pending
+**Merge SHA:** `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` (squash-merged).
 
-**Status:** done (waiting on review).
+**Status:** merged.
 
 ### Findings closed
 
