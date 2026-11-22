@@ -236,6 +236,8 @@ export const common = {
   'code.bootstrap_token_invalid': 'Het setup-token ontbreekt of klopt niet.',
 
   'api.invalidCredentials': 'Ongeldig e-mailadres of wachtwoord.',
+  'api.currentPasswordIncorrect': 'Het huidige wachtwoord klopt niet.',
+  'api.currentPasswordRequired': 'Het huidige wachtwoord en een nieuw wachtwoord zijn verplicht.',
   'api.emailPasswordRequired': 'E-mailadres en wachtwoord zijn verplicht.',
   'api.accountInactive': 'Dit account is inactief.',
   'api.authRequired': 'Aanmelden is verplicht.',

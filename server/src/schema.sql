@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
   approval_limit INTEGER DEFAULT 0,
   avatar TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  -- Bumped to revoke pf_session cookies. Missing token versions count as 1.
+  session_version INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (department_id) REFERENCES departments(id)
 );
 

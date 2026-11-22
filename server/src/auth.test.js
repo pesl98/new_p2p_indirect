@@ -12,6 +12,7 @@ import {
   signSessionToken,
   verifySessionToken
 } from './auth.js';
+import { authenticateUser } from './usersService.js';
 
 const TEST_AUTH = loadAuthConfig({}, {
   sessionSecret: 'test-session-secret',
@@ -75,6 +76,13 @@ describe('session tokens', () => {
     const token = signSessionToken(5, 'secret', 1_000_000, 60);
     const session = verifySessionToken(token, 'secret', 1_000_000);
     assert.equal(session.userId, 5);
+    assert.equal(session.sessionVersion, 1);
+
+    const legacy = signSessionToken(5, 'secret', 1_000_000, 60, null);
+    const legacySession = verifySessionToken(legacy, 'secret', 1_000_000);
+    assert.equal(legacySession.userId, 5);
+    assert.equal(legacySession.sessionVersion, null);
+    assert.equal(JSON.parse(Buffer.from(legacy.split('.')[0], 'base64url').toString('utf8')).sv, undefined);
 
     assert.equal(verifySessionToken(token, 'other', 1_000_000), null);
     assert.equal(verifySessionToken(`${token}x`, 'secret', 1_000_000), null);
@@ -157,7 +165,7 @@ describe('auth HTTP', () => {
     });
   });
 
-  test('login / me / logout cookie session; bad password 401; inactive 403', async () => {
+  test('login / me / logout cookie session; bad password and inactive are both 401', async () => {
     const db = await createMemoryDatabase();
     await seedUsers(db);
     const app = createApp({ db, config: loadDbConfig({}), authConfig: TEST_AUTH });
@@ -210,7 +218,10 @@ describe('auth HTTP', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'elena@example.com', password: DEMO_SEED_PASSWORD })
       }));
-      assert.equal(inactive.status, 403);
+      assert.equal(inactive.status, bad.status);
+      assert.deepEqual(inactive.body, bad.body);
+      assert.equal(inactive.body.error, 'Invalid email or password');
+      assert.equal(inactive.body.code, undefined);
     });
   });
 
@@ -226,6 +237,223 @@ describe('auth HTTP', () => {
       }));
       assert.equal(missing.status, 401);
       assert.equal(missing.body.error, 'Invalid email or password');
+    });
+  });
+
+  test('inactive login matches a wrong password, including a bcrypt compare', async () => {
+    const db = await createMemoryDatabase();
+    await seedUsers(db);
+    db.exec(`UPDATE users SET status = 'inactive' WHERE id = 5`);
+    const app = createApp({ db, config: loadDbConfig({}), authConfig: TEST_AUTH });
+
+    const time = async (fn) => {
+      const start = process.hrtime.bigint();
+      await fn();
+      return Number(process.hrtime.bigint() - start);
+    };
+    await authenticateUser(db, 'elena@example.com', 'wrong-password', {}).catch(() => {});
+    const wrongTimes = [];
+    const inactiveTimes = [];
+    for (let i = 0; i < 3; i += 1) {
+      wrongTimes.push(await time(() => authenticateUser(db, 'elena@example.com', 'wrong-password', {})
+        .catch((error) => error)));
+      inactiveTimes.push(await time(() => authenticateUser(db, 'elena@example.com', DEMO_SEED_PASSWORD, {})
+        .catch((error) => error)));
+    }
+    const median = (values) => values.slice().sort((a, b) => a - b)[1];
+    assert.ok(median(inactiveTimes) >= median(wrongTimes) * 0.4);
+
+    await withServer(app, async (base) => {
+      const wrong = await json(await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'elena@example.com', password: 'wrong-password' })
+      }));
+      const inactive = await json(await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'elena@example.com', password: DEMO_SEED_PASSWORD })
+      }));
+      assert.equal(wrong.status, 401);
+      assert.equal(inactive.status, wrong.status);
+      assert.deepEqual(inactive.body, wrong.body);
+      assert.equal(JSON.stringify(inactive.body), JSON.stringify(wrong.body));
+      assert.equal(inactive.body.error, 'Invalid email or password');
+      assert.equal(inactive.cookie.includes('pf_session='), false);
+
+      const events = db.prepare(`
+        SELECT action FROM compliance_audit_events ORDER BY id
+      `).all().map((row) => row.action);
+      assert.ok(events.includes('LOCAL_LOGIN_FAILURE'));
+      assert.ok(events.includes('LOCAL_LOGIN_INACTIVE'));
+    });
+  });
+});
+
+function sessionFromCookie(cookie) {
+  const token = parseCookies(cookie).pf_session;
+  return verifySessionToken(token, TEST_AUTH.sessionSecret);
+}
+
+async function login(base, email, password = DEMO_SEED_PASSWORD) {
+  return json(await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  }));
+}
+
+function cleared(response) {
+  const raw = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie().join('\n')
+    : (response.headers.get('set-cookie') || '');
+  return /pf_session=/.test(raw) && /Max-Age=0/i.test(raw);
+}
+
+describe('session revocation', () => {
+  test('old cookies die after self change, admin reset, deactivation, and role change', async () => {
+    const db = await createMemoryDatabase();
+    await seedUsers(db);
+    const app = createApp({ db, config: loadDbConfig({}), authConfig: TEST_AUTH });
+
+    await withServer(app, async (base) => {
+      const legacyToken = signSessionToken(1, TEST_AUTH.sessionSecret, Date.now(), 3600, null);
+      const legacyCookie = `pf_session=${encodeURIComponent(legacyToken)}`;
+      const legacyMe = await json(await fetch(`${base}/api/auth/me`, {
+        headers: { Cookie: legacyCookie }
+      }));
+      assert.equal(legacyMe.status, 200, legacyMe.body.error);
+      assert.equal(legacyMe.body.user.email, 'alice@example.com');
+
+      const alice1 = await login(base, 'alice@example.com');
+      const alice2 = await login(base, 'alice@example.com');
+      const elena = await login(base, 'elena@example.com');
+      assert.equal(alice1.status, 200, alice1.body.error);
+      assert.equal(sessionFromCookie(alice1.cookie).sessionVersion, 1);
+      assert.equal('session_version' in alice1.body.user, false);
+
+      const changed = await json(await fetch(`${base}/api/auth/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: alice1.cookie },
+        body: JSON.stringify({
+          current_password: DEMO_SEED_PASSWORD,
+          new_password: 'alice-new-pass'
+        })
+      }));
+      assert.equal(changed.status, 200, changed.body.error);
+      assert.match(changed.cookie, /pf_session=/);
+      assert.equal(sessionFromCookie(changed.cookie).sessionVersion, 2);
+      assert.equal(changed.body.user.email, 'alice@example.com');
+
+      const still = await json(await fetch(`${base}/api/users`, {
+        headers: { Cookie: changed.cookie }
+      }));
+      assert.equal(still.status, 200, still.body.error);
+      const me = await json(await fetch(`${base}/api/auth/me`, {
+        headers: { Cookie: changed.cookie }
+      }));
+      assert.equal(me.status, 200);
+      assert.equal(me.body.user.id, 1);
+
+      const oldTab = await fetch(`${base}/api/users`, { headers: { Cookie: alice1.cookie } });
+      assert.equal(oldTab.status, 401);
+      assert.equal(cleared(oldTab), true);
+      const otherDevice = await fetch(`${base}/api/auth/me`, { headers: { Cookie: alice2.cookie } });
+      assert.equal(otherDevice.status, 401);
+      assert.equal(cleared(otherDevice), true);
+      const legacyAfter = await fetch(`${base}/api/users`, { headers: { Cookie: legacyCookie } });
+      assert.equal(legacyAfter.status, 401);
+      assert.equal(cleared(legacyAfter), true);
+
+      const wrongCurrent = await json(await fetch(`${base}/api/auth/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: changed.cookie },
+        body: JSON.stringify({ current_password: 'not-the-password', new_password: 'another-pass-1' })
+      }));
+      assert.equal(wrongCurrent.status, 400);
+      const unchanged = await json(await fetch(`${base}/api/auth/me`, {
+        headers: { Cookie: changed.cookie }
+      }));
+      assert.equal(unchanged.status, 200);
+
+      const adminStill = await json(await fetch(`${base}/api/auth/me`, {
+        headers: { Cookie: elena.cookie }
+      }));
+      assert.equal(adminStill.status, 200);
+
+      const back = await login(base, 'alice@example.com', 'alice-new-pass');
+      const back2 = await login(base, 'alice@example.com', 'alice-new-pass');
+      assert.equal(sessionFromCookie(back.cookie).sessionVersion, 2);
+      const reset = await json(await fetch(`${base}/api/users/1/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ password: 'admin-reset-pass' })
+      }));
+      assert.equal(reset.status, 200, reset.body.error);
+      const afterReset = await fetch(`${base}/api/users`, { headers: { Cookie: back.cookie } });
+      assert.equal(afterReset.status, 401);
+      assert.equal(cleared(afterReset), true);
+      const afterReset2 = await fetch(`${base}/api/auth/me`, { headers: { Cookie: back2.cookie } });
+      assert.equal(afterReset2.status, 401);
+      const elenaStill = await json(await fetch(`${base}/api/auth/me`, {
+        headers: { Cookie: elena.cookie }
+      }));
+      assert.equal(elenaStill.status, 200);
+
+      const roleLogin = await login(base, 'alice@example.com', 'admin-reset-pass');
+      assert.equal(sessionFromCookie(roleLogin.cookie).sessionVersion, 3);
+      const role = await json(await fetch(`${base}/api/users/1`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ role: 'approver' })
+      }));
+      assert.equal(role.status, 200, role.body.error);
+      assert.equal(role.body.role, 'approver');
+      const afterRole = await fetch(`${base}/api/users`, { headers: { Cookie: roleLogin.cookie } });
+      assert.equal(afterRole.status, 401);
+      assert.equal(cleared(afterRole), true);
+
+      const activeAgain = await login(base, 'alice@example.com', 'admin-reset-pass');
+      assert.equal(sessionFromCookie(activeAgain.cookie).sessionVersion, 4);
+      const off = await json(await fetch(`${base}/api/users/1/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ status: 'inactive' })
+      }));
+      assert.equal(off.status, 200, off.body.error);
+      const afterOff = await fetch(`${base}/api/auth/me`, { headers: { Cookie: activeAgain.cookie } });
+      assert.equal(afterOff.status, 401);
+      assert.equal(cleared(afterOff), true);
+
+      const wrong = await json(await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com', password: 'wrong-password' })
+      }));
+      const inactive = await json(await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'alice@example.com', password: 'admin-reset-pass' })
+      }));
+      assert.equal(inactive.status, wrong.status);
+      assert.deepEqual(inactive.body, wrong.body);
+
+      const elenaOld = elena.cookie;
+      const elenaReset = await json(await fetch(`${base}/api/users/5/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: elena.cookie },
+        body: JSON.stringify({ password: 'elena-new-pass' })
+      }));
+      assert.equal(elenaReset.status, 200, elenaReset.body.error);
+      assert.equal(sessionFromCookie(elenaReset.cookie).sessionVersion, 2);
+      const elenaNow = await json(await fetch(`${base}/api/auth/me`, {
+        headers: { Cookie: elenaReset.cookie }
+      }));
+      assert.equal(elenaNow.status, 200);
+      assert.equal(elenaNow.body.user.id, 5);
+      const elenaDead = await fetch(`${base}/api/users`, { headers: { Cookie: elenaOld } });
+      assert.equal(elenaDead.status, 401);
+      assert.equal(cleared(elenaDead), true);
     });
   });
 });

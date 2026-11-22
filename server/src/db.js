@@ -477,6 +477,10 @@ async function migratePaymentRuns(database) {
 export const USERS_STATUS_COLUMN_SQL =
   `ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`;
 
+/** Existing sessions treat a missing token version as 1, matching this default. */
+export const USERS_SESSION_VERSION_COLUMN_SQL =
+  `ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1`;
+
 export const USER_CREDENTIALS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS user_credentials (
     user_id INTEGER PRIMARY KEY,
@@ -493,6 +497,9 @@ async function migrateUsersAuth(database) {
 
   if (tables.includes('users') && !(await tableHasColumn(database, 'users', 'status'))) {
     await maybe(database.exec(USERS_STATUS_COLUMN_SQL));
+  }
+  if (tables.includes('users') && !(await tableHasColumn(database, 'users', 'session_version'))) {
+    await maybe(database.exec(USERS_SESSION_VERSION_COLUMN_SQL));
   }
 
   await maybe(database.exec(USER_CREDENTIALS_TABLE_SQL));

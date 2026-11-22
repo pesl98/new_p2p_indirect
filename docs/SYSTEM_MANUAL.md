@@ -91,16 +91,18 @@ These five values are the only allowed roles. Additional people are created in *
 
 - Email + password. bcrypt hashes live in `user_credentials` (never returned by the API).
 - httpOnly cookie `pf_session` (HMAC-SHA256, not a JWT library). TTL **7 days**. `SameSite=Lax`, `Secure` when `VERCEL` or `NODE_ENV=production`.
+- The cookie carries `sv`, a copy of `users.session_version` (integer, default **1**). Every authenticated request loads that user’s status and version. A mismatch, a missing user, or `status = inactive` is **401** and the cookie is cleared. Cookies signed before `sv` existed count as version 1, so installing this change does not log everyone out. The version increases on a password change, an admin password reset, deactivation, and a role change, which rejects sessions signed earlier. A user who changes their own password gets a new cookie on that response, so the tab they used stays signed in. An admin who resets their own password gets the same refresh. Resetting someone else does not.
 - `SESSION_SECRET` signs the cookie. **Required** on customer / Vercel deploys. Local/dev falls back to an insecure default and logs a warning.
 - Password policy: **≥ 8 characters**.
-- Inactive users (`users.status = inactive`) cannot log in (403).
+- An inactive user who submits the correct password gets the same **401** `Invalid email or password` as a wrong password. The server still runs the bcrypt compare. The audit row can still say `LOCAL_LOGIN_INACTIVE`; that code is not in the HTTP body. OIDC and SAML do not mint a cookie for an inactive user (`403 sso_user_inactive`).
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/auth/config` | Public: `{ auth, identityProvider, ssoReady, localLogin, demoPersonaSwitcher, bootstrapNeeded }` |
-| `POST /api/auth/login` | `{ email, password }` → cookie. `403 local_login_disabled` when `LOCAL_LOGIN=0` |
+| `POST /api/auth/login` | `{ email, password }` → cookie. `403 local_login_disabled` when `LOCAL_LOGIN=0`. Inactive and wrong password are both **401** `Invalid email or password`. |
 | `POST /api/auth/logout` | Clears cookie |
-| `GET /api/auth/me` | Session user or 401 |
+| `GET /api/auth/me` | Session user or 401. A revoked or inactive session is 401 and clears the cookie. |
+| `POST /api/auth/password` | Signed-in user. `{ current_password, new_password }` replaces the password, revokes that user’s other sessions, and sets a fresh cookie. |
 | `POST /api/auth/bootstrap` | Optional HTTP first admin on an **empty** `users` table. Fail closed: `403 bootstrap_disabled` unless `BOOTSTRAP_TOKEN` is at least 32 characters, then `403 bootstrap_token_invalid` without a matching `X-Bootstrap-Token` (constant-time compare; the value is never logged). A tenant that already has users stays **409**. Not required at boot. The operator path is `npm run bootstrap-admin`, which does not use the token. |
 
 ### SSO (OIDC or SAML)
@@ -546,7 +548,7 @@ Surfaces when present: PR header, sequential approval steps, linked PO branch(es
 **Users** (session admin only to mutate)
 
 - List / create / edit: name, unique email, role (existing CHECK), department, title, `approval_limit` cents, optional password, `status` active/inactive.
-- Set / reset password (`POST /api/users/:id/password`). Soft-deactivate (`PATCH …/status`). Cannot deactivate last admin or self. Unique email → 409. `DELETE` → 405.
+- Set / reset password (`POST /api/users/:id/password`). That bumps `session_version`, so the user’s existing cookies stop working. If the admin resets their own password, the response sets a fresh cookie for this tab. Soft-deactivate (`PATCH …/status`) and a role change do the same bump. Cannot deactivate last admin or self. Unique email → 409. `DELETE` → 405.
 - Empty tenant: `GET /api/auth/config` → `bootstrapNeeded: true`. The login screen says HTTP bootstrap is off unless a setup token is configured, and it has a field for that token. The operator path is `npm run bootstrap-admin` (direct database access, no token). The CLI **refuses** (exit 2) if any users already exist. `POST /api/auth/bootstrap` creates nothing unless `BOOTSTRAP_TOKEN` (≥ 32 characters) is set and the request sends `X-Bootstrap-Token`. `onboard:customer` and `vercel:customer` do not set that variable. Unset is healthy: `/api/health` does not read it, and a database that already has users still answers **409**.
 
 **Department Approvers**

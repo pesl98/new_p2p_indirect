@@ -27,7 +27,7 @@ The git repository is the same for every customer. Isolation is the connection: 
 | Schema | [`server/src/schema.sql`](../server/src/schema.sql), plus additive migrations in [`server/src/db.js`](../server/src/db.js) (`applySchema`). `vercel.json` bundles `schema.sql` with the function (`includeFiles`). |
 | Customer data | One classic libSQL database on Turso, reached over HTTPS `POST /v2/pipeline`. The app does not load a native libsql addon (that crashes Vercel serverless). |
 | Laptop data | SQLite via `better-sqlite3` when both Turso variables are omitted. Default file: `server/data/procurement.db`. |
-| Session | httpOnly cookie `pf_session`, HMAC-SHA256 signed with `SESSION_SECRET` (not a JWT library). Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Path=/`, and `Secure` when `VERCEL` is set or `NODE_ENV=production`. Password login and a successful OIDC or SAML callback both set this cookie. |
+| Session | httpOnly cookie `pf_session`, HMAC-SHA256 signed with `SESSION_SECRET` (not a JWT library). Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Path=/`, and `Secure` when `VERCEL` is set or `NODE_ENV=production`. Password login and a successful OIDC or SAML callback both set this cookie. The payload includes `sv` (`users.session_version`, default 1). A password change, admin password reset, deactivation, or role change bumps that integer and rejects older cookies (401, cookie cleared). A self-service password change, and an admin resetting their own password, set a new cookie so that tab stays signed in. An inactive password login is the same 401 as a wrong password. Inactive SSO does not set a cookie. |
 | Scheduled jobs | None. The app is request-driven. There is no cron. |
 
 Three ways the process picks a database:

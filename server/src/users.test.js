@@ -204,7 +204,8 @@ describe('admin user CRUD', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'new.buyer@example.com', password: 'reset-pass-99' })
       }));
-      assert.equal(inactiveLogin.status, 403);
+      assert.equal(inactiveLogin.status, 401);
+      assert.equal(inactiveLogin.body.error, 'Invalid email or password');
 
       const listed = await json(await fetch(`${base}/api/users?status=active`, {
         headers: { Cookie: cookie }

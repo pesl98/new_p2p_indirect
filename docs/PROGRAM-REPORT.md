@@ -150,7 +150,7 @@ Owner recorded in [SPRINT-LOG.md](SPRINT-LOG.md): Peter (`pesl98`). The program 
 
 **What was built.**
 
-- Cookie `pf_session`, HMAC-SHA256 with `SESSION_SECRET`, not a JWT library. Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Secure` when `VERCEL` is set or `NODE_ENV=production`.
+- Cookie `pf_session`, HMAC-SHA256 with `SESSION_SECRET`, not a JWT library. Lifetime 7 days. `HttpOnly`, `SameSite=Lax`, `Secure` when `VERCEL` is set or `NODE_ENV=production`. As of 2026-11-22 the payload includes `sv` (`users.session_version`). Password change, admin reset, deactivation, and role change bump it and reject older cookies.
 - Public without a session: `GET /api/health`, and `/api/auth/*` (`GET /api/auth/config`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/bootstrap`, `GET /api/auth/me`). `GET /api/auth/me` returns 401 when signed out. As of 2026-11-21, `POST /api/auth/bootstrap` is still on this list (no session) but creates nothing unless `BOOTSTRAP_TOKEN` is configured and presented. See section 5.2.
 - Every other `/api` route requires the cookie (401). Actor fields (`approver_id`, `requester_id`, `received_by`, `created_by`, `actor_name`, and the same kind of field on goods, services, consignment, utilities, bulk, contracts, and delegations) come from `req.user`. A body or query id that names someone else is 403.
 - AP approve, mark paid, exception resolve, duplicate resolve, aging, and payment runs require `finance` or `admin`. User administration and department-head assignment require `admin`.
@@ -159,7 +159,7 @@ Owner recorded in [SPRINT-LOG.md](SPRINT-LOG.md): Peter (`pesl98`). The program 
 
 **Design decisions.** The session is the actor, so a hidden sidebar item is not an authorization boundary (principle 1 and 3 in section 4). The cookie format was chosen so Sprint 2 could call `signSessionToken` without a second identity header. Local development may fall back to the insecure default `procureflow-dev-insecure-session-secret` and log a warning; a customer deploy is supposed to set `SESSION_SECRET`.
 
-**Security.** Unauthenticated business calls are 401. A mismatched persona id is 403. Inactive users cannot log in (403). `DELETE /api/users/:id` is 405. Password hashes are bcrypt and are not returned by the API.
+**Security.** Unauthenticated business calls are 401. A mismatched persona id is 403. An inactive password login is the same 401 as a wrong password (this replaced a 403 that confirmed the password). `DELETE /api/users/:id` is 405. Password hashes are bcrypt and are not returned by the API.
 
 **Tests at merge.** The PR body records `npm test` — 481 passing.
 

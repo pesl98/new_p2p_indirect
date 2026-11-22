@@ -42,7 +42,7 @@ Beta  →  Turso DB procureflow-beta  →  Vercel project procureflow-beta  → 
 
 The application code is the same. Isolation is the **connection string**. Pasting Acme’s `TURSO_DATABASE_URL` into Beta’s Vercel project **merges** those customers. Do not do that.
 
-Auth is **email + password local to that database** (httpOnly `pf_session` cookie), plus optional **OIDC or SAML** on the same cookie. Configure the IdP on this customer’s Vercel project only ([DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer)). Leave `IDENTITY_PROVIDER` unset to keep password login. The header persona switcher is demo-only — leave it off for a live tenant.
+Auth is **email + password local to that database** (httpOnly `pf_session` cookie), plus optional **OIDC or SAML** on the same cookie. The cookie carries `users.session_version`. A password change, admin reset, deactivation, or role change rejects cookies signed before that change. Configure the IdP on this customer’s Vercel project only ([DEPLOYMENT.md §2.1](DEPLOYMENT.md#21-sso-oidc-or-saml-per-customer)). Leave `IDENTITY_PROVIDER` unset to keep password login. The header persona switcher is demo-only — leave it off for a live tenant.
 
 ---
 
