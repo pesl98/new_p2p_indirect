@@ -80,7 +80,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-20 | Refuse the destructive demo seed against a remote database | [#86](https://github.com/pesl98/new_p2p_indirect/pull/86) | Security: refuse the demo seed against a remote database | `0cc06d3e05c1c32b30bebd31ef7e49b8e29af478` | merged |
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | `213855c9208271400b2778ebb818265156803a34` | merged |
 | — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` | merged |
-| — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | | Security: fail-closed Turso env pair + SESSION_SECRET length | | done |
+| — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | [#97](https://github.com/pesl98/new_p2p_indirect/pull/97) | Security: fail-closed Turso env pair + SESSION_SECRET length | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -711,7 +711,7 @@ Server tests cover: a pre-upgrade cookie works until a bump; the old cookie is *
 
 **Goal:** A half-set Turso URL/token pair must refuse to connect, and the customer CLIs must reject a `SESSION_SECRET` shorter than 32 characters.
 
-**PR:** filled in after the pull request is opened.
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/97 (#97).
 
 **Status:** done, waiting on review.
 
