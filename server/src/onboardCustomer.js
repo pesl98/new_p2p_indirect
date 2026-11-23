@@ -14,6 +14,7 @@
  *   npm run onboard:customer -- --slug acme --apply --email admin@acme.test --password '…'
  */
 
+import { reusedSessionSecretError } from './auth.js';
 import { runSmokeCli } from './smoke.js';
 import { runCustomerProvisionCli } from './provisionCustomer.js';
 import {
@@ -78,6 +79,10 @@ Usage:
 Refuses --seed and --tursodb. Never seeds.
 Never invents Turso URL/token, never sets DEMO_PERSONA_SWITCHER, never
 destroys a Turso DB.
+A SESSION_SECRET already set in the shell must be at least 32 characters.
+A shorter value is refused and is not printed.
+Generate: openssl rand -hex 32
+Unset it to let --apply mint a 32-byte hex secret.
 On --apply, vercel:customer creates the project if missing
 (vercel project add; idempotent if it exists) and links this directory
 (vercel link --yes --project …). Already linked to that name: skip.
@@ -600,6 +605,13 @@ export async function runOnboardCustomerCli({
   }
 
   const { slug, dbName, projectName, baseUrl } = identity;
+
+  const shortSecret = reusedSessionSecretError(env);
+  if (shortSecret) {
+    write(stderr, `${shortSecret.message}\n`);
+    return 1;
+  }
+
   const withOrg = args.withOrg;
   const reportOpts = {
     slug,

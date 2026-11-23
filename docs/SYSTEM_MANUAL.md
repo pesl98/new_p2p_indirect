@@ -867,7 +867,7 @@ Invoice numbers are **vendor-assigned** strings, unique per supplier: `UNIQUE(su
 | [`server/src/index.js`](../server/src/index.js) | Local listen on `PORT` (default 5000) |
 | [`vercel.json`](../vercel.json) | `buildCommand`, `includeFiles` for `schema.sql`, rewrite `/api/*` → `/api` |
 
-On Vercel, Turso is **required**. Missing pair (or Turso 401) → HTML/JSON **503** (`TursoConfigError`), not a local SQLite file. Partial Turso credentials (URL xor token) are fail-closed on migrate/status/bootstrap-org.
+On Vercel, Turso is **required**. Missing pair (or Turso 401) → HTML/JSON **503** (`TursoConfigError`), not a local SQLite file. Exactly one of the selected pair (production `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`, or on Preview `TURSO_PREVIEW_DATABASE_URL` / `TURSO_PREVIEW_AUTH_TOKEN`) is fail-closed in the server and on migrate/status/bootstrap-org. The error names the missing variable and does not print the value. Both unset off Vercel is still local SQLite. A `file:` URL is not a tokenless mode.
 
 Full env table: **[DEPLOYMENT.md](DEPLOYMENT.md)**. Keys (no values): [`.env.example`](../.env.example).
 
@@ -921,7 +921,7 @@ npm run turso:customer -- --apply
 
 ### 9.1 Sequence (operator)
 
-1. **Turso DB + token + `SESSION_SECRET`:** prefer `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply`. Or the Turso-only CLI: `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). The orchestrator passes exports to the next step; the Turso-only CLI prints them for you to copy.
+1. **Turso DB + token + `SESSION_SECRET`:** prefer `npm run onboard:customer -- --slug <customer>` (dry-run) then `--apply`. Or the Turso-only CLI: `npm run turso:customer -- --slug <customer>` (dry-run) then `--apply`. Classic libSQL only (not `--tursodb`). Mints a **database token** (`turso db tokens create`, not an org JWT). Reuses an existing DB. Generates `SESSION_SECRET` unless already set in the shell (does not silently rotate). A secret already set must be at least 32 characters (`openssl rand -hex 32`); a shorter one is refused and is not printed. The orchestrator passes exports to the next step; the Turso-only CLI prints them for you to copy.
 2. **New Vercel project** `procureflow-<slug>` (root = repo root; build from `vercel.json`). `vercel:customer --apply` runs `vercel project add` then `vercel link --yes --project` unless this directory is already linked to that name. It does not import GitHub. A directory linked to a different project fails closed.
 3. Export the three secrets in the shell (the Vercel CLI **refuses to invent secrets**), then:
 
@@ -1029,7 +1029,7 @@ Typical of a **legacy seed from before auth** (`users` rows, empty `user_credent
 
 ### HTTP 503 / `TursoConfigError`
 
-`TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are not both visible to **that** deployment. Re-run `npm run vercel:customer -- --slug <customer> --apply` (Production **and** Preview) and Redeploy. Partial credentials are fail-closed (no silent local file).
+The selected pair is not both visible to **that** deployment. Production needs `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`. Preview needs `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN`. Exactly one of that pair names the missing variable in the 503 detail and does not open a local file. Re-run `npm run vercel:customer -- --slug <customer> --apply` (Production **and** Preview) and Redeploy.
 
 ### HTTP 401 from Turso / token rejected
 

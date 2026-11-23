@@ -96,6 +96,11 @@ export function createApp(options = {}) {
   }
 
   const config = options.config || loadDbConfig(options.env || process.env);
+  if (config.credentialError) {
+    return startupErrorApp(new TursoConfigError(config.credentialError.message, {
+      code: config.credentialError.code
+    }));
+  }
   if (config.previewBlocked) {
     return startupErrorApp(new TursoConfigError(config.previewBlocked.message, {
       code: config.previewBlocked.code

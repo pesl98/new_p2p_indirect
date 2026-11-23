@@ -145,7 +145,7 @@ Name pattern: `procureflow-<customer-slug>` (override with `--db <name>`). Lower
 
 Copy the printed `export TURSO_DATABASE_URL=…`, `export TURSO_AUTH_TOKEN=…`, and `export SESSION_SECRET=…` into this shell and a password manager. `--json` redacts the token to its last 4 characters; full export lines are still printed on human stdout after `--apply`.
 
-`SESSION_SECRET` HMAC-signs the httpOnly `pf_session` cookie. `--apply` mints a new 32-byte hex secret **unless** `SESSION_SECRET` is already set in this environment — then it **reuses** it (does not silently rotate). Generate a new one **per customer**. Do not reuse Acme’s secret on Beta.
+`SESSION_SECRET` HMAC-signs the httpOnly `pf_session` cookie. `--apply` mints a new 32-byte hex secret **unless** `SESSION_SECRET` is already set in this environment — then it **reuses** it (does not silently rotate). A value already set must be at least 32 characters. `turso:customer`, `onboard:customer`, and `vercel:customer` refuse a shorter one and do not print it. Generate a new one **per customer** with `openssl rand -hex 32`, or unset it and let `--apply` mint one. Do not reuse Acme’s secret on Beta.
 
 | Right | Wrong |
 | --- | --- |
@@ -467,11 +467,11 @@ Do not paste the demo password onto a live tenant you intend to keep.
 
 ### HTTP 503 / `TursoConfigError` (missing Turso on Vercel)
 
-The HTML setup page or JSON `{ "error": "TursoConfigError" }` means `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are not both visible to that deployment.
+The HTML setup page or JSON `{ "error": "TursoConfigError" }` means the selected Turso pair is not both visible to that deployment. Production uses `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`. Preview uses `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN`.
 
-- Re-run `npm run vercel:customer -- --slug <customer> --apply` (or set both on **Production and Preview** in the dashboard, then **Redeploy**).
+- Re-run `npm run vercel:customer -- --slug <customer> --apply` (or set both of the selected pair, then **Redeploy**).
 - Smoke prints a Production+Preview / Redeploy hint in this case.
-- Partial credentials (URL xor token) are fail-closed — the CLI will not silently open a local SQLite file.
+- Exactly one of the selected pair is fail-closed on the server and on the CLIs. The error names the missing variable and does not print the value. They will not open a local SQLite file. Both unset off Vercel is still local SQLite. A `file:` URL does not replace the token.
 
 ### HTTP 401 from Turso / “token rejected” (org JWT)
 

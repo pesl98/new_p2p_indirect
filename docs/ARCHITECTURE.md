@@ -664,7 +664,7 @@ Customer A  →  TURSO_DATABASE_URL_A + token A  →  Vercel project A  (or PROC
 Customer B  →  TURSO_DATABASE_URL_B + token B  →  Vercel project B  (or PROCUREMENT_DB_PATH=beta.db)
 ```
 
-Pointing two deployments at the same URL merges those customers. Partial Turso credentials (URL xor token) are refused by `npm run db:migrate` / `db:status` (fail-closed; no silent local file).
+Pointing two deployments at the same URL merges those customers. Exactly one of the selected Turso pair (URL xor token) is refused by the server and by `npm run db:migrate` / `db:status` (fail-closed; the error names the missing variable; no silent local file). Preview selects the `TURSO_PREVIEW_*` pair. Both unset off Vercel is still local SQLite.
 
 `db:migrate` runs `applySchema` (schema.sql + existing migrations, including `users.status` and `user_credentials`) and does **not** seed unless `--seed`. `bootstrap-org` then inserts the default five cost centers + FY 2026 budgets (idempotent; never wipes). `db:status` reports mode, table count, and user count without applying schema. Empty customer DBs have 0 users until first-admin bootstrap; the persona demo seed is optional and destructive. After the app is up, `npm run smoke` hits `/api/health`, `/api/auth/config`, and `/api/users` (local or Vercel `BASE_URL`).
 

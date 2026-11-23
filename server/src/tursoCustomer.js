@@ -12,6 +12,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { reusedSessionSecretError } from './auth.js';
 import {
   defaultProjectName,
   normalizeSlug,
@@ -42,6 +43,9 @@ Usage:
   --apply               Create the DB if missing (reuse if it exists), mint a
                         database token, generate SESSION_SECRET unless already
                         set in this shell, and print shell-ready exports.
+                        A SESSION_SECRET already set must be at least 32
+                        characters or this command refuses it (the value is
+                        not printed). Generate: openssl rand -hex 32
                         Requires Turso CLI and turso auth login.
   --json                Machine-readable summary. Tokens are redacted to the
                         last 4 characters in JSON. On --apply, full export
@@ -246,6 +250,8 @@ export function generateSessionSecret({ randomBytesFn = randomBytes } = {}) {
 }
 
 export function resolveSessionSecret(env = {}, { randomBytesFn = randomBytes } = {}) {
+  const tooShort = reusedSessionSecretError(env);
+  if (tooShort) throw tooShort;
   const existing = asTrimmed(env.SESSION_SECRET);
   if (existing) {
     return { value: existing, source: 'reuse-from-env' };
@@ -516,6 +522,12 @@ export async function runTursoCustomerCli({
   }
 
   const { slug, dbName, projectName } = identity;
+
+  const shortSecret = reusedSessionSecretError(env);
+  if (shortSecret) {
+    write(stderr, `${shortSecret.message}\n`);
+    return finish(1);
+  }
 
   if (!args.apply) {
     write(stdout, formatDryRunReport({ slug, dbName, projectName, env }));

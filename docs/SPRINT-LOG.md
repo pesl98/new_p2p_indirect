@@ -80,6 +80,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-20 | Refuse the destructive demo seed against a remote database | [#86](https://github.com/pesl98/new_p2p_indirect/pull/86) | Security: refuse the demo seed against a remote database | `0cc06d3e05c1c32b30bebd31ef7e49b8e29af478` | merged |
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | `213855c9208271400b2778ebb818265156803a34` | merged |
 | — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` | merged |
+| — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | | Security: fail-closed Turso env pair + SESSION_SECRET length | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -703,4 +704,34 @@ Server tests cover: no token configured (refused, no user, health still ok, no s
 Server tests cover: a pre-upgrade cookie works until a bump; the old cookie is **401** and cleared after self-service password change, admin reset, deactivation, and role change; the self-change response cookie and an admin’s own reset cookie keep working; a wrong current password does not revoke; inactive login matches a wrong password and still spends bcrypt time; OIDC rejects an inactive user, including a linked subject, with no `pf_session`; applying the migration twice on an existing `users` table adds `session_version` default 1 and does not clobber a later value.
 
 `npm test`: 792 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Security: fail-closed Turso env pair + SESSION_SECRET length
+
+**Date:** 2026-11-23
+
+**Goal:** A half-set Turso URL/token pair must refuse to connect, and the customer CLIs must reject a `SESSION_SECRET` shorter than 32 characters.
+
+**PR:** filled in after the pull request is opened.
+
+**Status:** done, waiting on review.
+
+### What changed
+
+- The pair that would actually be selected is fail-closed. Production and a laptop select `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`. `VERCEL_ENV=preview` selects `TURSO_PREVIEW_DATABASE_URL` + `TURSO_PREVIEW_AUTH_TOKEN`. Exactly one of that pair set → `TursoConfigError` (`turso_credentials_partial` or `preview_db_partial`) whose message names the missing variable and does not include either value. `createApp` returns that 503 before opening a database, including `/api/health`.
+- Both unset off Vercel is still local SQLite (`PROCUREMENT_DB_PATH` or `server/data/procurement.db`). Both set is still Turso HTTP. Vercel with the production pair entirely unset is still the existing “Turso is required” 503. Preview with the preview pair entirely unset is still `preview_db_unconfigured` and does not open production or SQLite. A complete preview pair still connects to the preview database. Production ignores preview variables, including a half-set preview pair, so a correctly configured production deploy does not fail because a preview variable is present. The `ALLOW_PREVIEW_PRODUCTION_DATABASE=allow` hatch still serves a complete production pair when preview has no valid database of its own.
+- A `file:` URL is not a supported tokenless mode. `file:` without a token is the same half-set refusal. Local SQLite stays “both variables omitted”.
+- `turso:customer`, `onboard:customer`, and `vercel:customer` reject a `SESSION_SECRET` that is already set and shorter than 32 characters (the same threshold as the server). The value is not printed. The message tells the operator to generate one with `openssl rand -hex 32`, or to unset it so `turso:customer` / `onboard:customer` can mint a 32-byte hex secret. The check runs before any Turso or Vercel call. The server boot refusal for a short secret on Production, Preview, and `vercel dev` is unchanged in threshold and now includes the same generator hint.
+
+### Existing deploys
+
+- A Production or Preview deployment that already has both variables of the pair it uses behaves as before. `/api/health` stays ok.
+- On Vercel, a half-set production pair already returned 503 (generic “set both”). The body now names the missing variable. A half-set preview pair already returned 503 (`preview_db_unconfigured`); the code is now `preview_db_partial` and the detail names which preview variable is missing. Neither path opened SQLite on Vercel.
+- Off Vercel, a half-set production pair used to open local SQLite. It now refuses. Both unset is unchanged, which is what dev and the test suite use.
+- No new required environment variable. This change does not write Vercel env or Turso data. An operator shell that already exported a `SESSION_SECRET` shorter than 32 characters cannot pass it through the customer CLIs until it is replaced. A secret already stored on Vercel is not modified.
+
+### Tests
+
+Server tests cover: both production variables unset → local SQLite; both set → Turso; URL only and token only (including on Vercel Production) → error naming the missing variable and not the value; each preview half → `preview_db_partial` naming the missing preview variable; preview both unset unchanged; a complete preview pair still wins when the production pair is half-set; production ignores a half-set preview pair; the escape hatch still serves a complete production database when preview is half-set; a `file:` URL without a token is refused; `/api/health` is 503 for a half-set pair and 200 for a complete production pair and a complete preview pair; `SESSION_SECRET` under 32 characters is rejected by `resolveSessionSecret`, `turso:customer`, `onboard:customer`, and `vercel:customer` without printing the value or calling Turso/Vercel; 32 characters is accepted.
+
+`npm test`: 807 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 

@@ -62,7 +62,8 @@ Flags:
   --help, -h            Show this help
 
 Env (same as db:migrate / bootstrap-admin / provision:customer):
-  TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together)
+  TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together;
+                                          one of the two refuses and names the missing variable)
   PROCUREMENT_DB_PATH                     Local SQLite file
 
 Three tiers:

@@ -8,7 +8,6 @@ import { EventEmitter } from 'events';
 import {
   EXPECTED_TABLES,
   MIGRATE_HELP,
-  PARTIAL_TURSO_MSG,
   TursoConfigError,
   assertCustomerDbConfig,
   collectDbHealth,
@@ -66,14 +65,19 @@ describe('customer provision config (fail-closed Turso)', () => {
     assert.equal(tursoCredentialState({ TURSO_DATABASE_URL: 'libsql://x.turso.io' }), 'partial');
     assert.throws(
       () => assertCustomerDbConfig({ TURSO_DATABASE_URL: 'libsql://x.turso.io' }),
-      (err) => err instanceof TursoConfigError && err.message === PARTIAL_TURSO_MSG
+      (err) => err instanceof TursoConfigError
+        && err.code === 'turso_credentials_partial'
+        && /TURSO_AUTH_TOKEN is missing/.test(err.message)
+        && !err.message.includes('libsql://x.turso.io')
     );
   });
 
   test('token without URL is refused', () => {
     assert.throws(
       () => assertCustomerDbConfig({ TURSO_AUTH_TOKEN: 'tok_only' }),
-      (err) => err instanceof TursoConfigError && /both be set/.test(err.message)
+      (err) => err instanceof TursoConfigError
+        && /TURSO_DATABASE_URL is missing/.test(err.message)
+        && !err.message.includes('tok_only')
     );
   });
 
@@ -294,7 +298,8 @@ describe('db:migrate / db:status against isolated SQLite files', () => {
       stderr
     });
     assert.equal(code, 1);
-    assert.match(stderr.text, /both be set/);
+    assert.match(stderr.text, /TURSO_AUTH_TOKEN is missing/);
+    assert.equal(stderr.text.includes('libsql://should-fail.turso.io'), false);
     assert.equal(fs.existsSync(sqlitePath), false);
   });
 

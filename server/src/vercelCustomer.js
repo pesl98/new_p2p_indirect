@@ -19,6 +19,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { reusedSessionSecretError } from './auth.js';
 import { redactTursoUrl } from './provision.js';
 
 export const CUSTOMER_ENV_KEYS = Object.freeze([
@@ -89,7 +90,8 @@ Usage:
 Required shell env (same values that will go to Vercel; never invented):
   TURSO_DATABASE_URL
   TURSO_AUTH_TOKEN
-  SESSION_SECRET
+  SESSION_SECRET        At least 32 characters. A shorter value is refused
+                        and is not printed. Generate: openssl rand -hex 32
 
 Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
 
@@ -1028,8 +1030,14 @@ export async function runVercelCustomerCli({
         + 'Then re-run this command. Example (if you already have values):\n'
         + `  export TURSO_DATABASE_URL="$(turso db show ${projectName} --url)"\n`
         + `  export TURSO_AUTH_TOKEN="$(turso db tokens create ${projectName})"\n`
-        + '  export SESSION_SECRET="$(node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))")"\n'
+        + '  export SESSION_SECRET="$(openssl rand -hex 32)"\n'
     );
+    return 1;
+  }
+
+  const shortSecret = reusedSessionSecretError(env);
+  if (shortSecret) {
+    write(stderr, `${shortSecret.message}\n`);
     return 1;
   }
 

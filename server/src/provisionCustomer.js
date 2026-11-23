@@ -36,7 +36,8 @@ Usage:
   Admin → Department Approvers after users exist.
 
 Env (same as db:migrate / bootstrap-admin / bootstrap-org):
-  TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together)
+  TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together;
+                                          one of the two refuses and names the missing variable)
   PROCUREMENT_DB_PATH                     Local SQLite file
   SESSION_SECRET                          Customer / Vercel session cookie key
 

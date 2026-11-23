@@ -69,7 +69,12 @@ test('production and preview refuse the development default and a short SESSION_
     assert.throws(() => warnIfInsecureSessionSecret(explicitDefault, env), /SESSION_SECRET/);
     const short = loadAuthConfig({ ...env, SESSION_SECRET: 'x'.repeat(31) });
     assert.equal(sessionSecretProblem(short), 'short');
-    assert.throws(() => warnIfInsecureSessionSecret(short, env), /32/);
+    assert.throws(() => warnIfInsecureSessionSecret(short, env), (error) => {
+      assert.match(error.message, /32/);
+      assert.match(error.message, /openssl rand -hex 32/);
+      assert.equal(error.message.includes('x'.repeat(31)), false);
+      return true;
+    });
     const ok = loadAuthConfig({ ...env, SESSION_SECRET: 'x'.repeat(32) });
     assert.equal(sessionSecretProblem(ok), null);
     assert.doesNotThrow(() => warnIfInsecureSessionSecret(ok, env));
@@ -105,7 +110,7 @@ test('session_secret_insecure names missing, default, or too short and omits the
   const cases = [
     [loadAuthConfig(prod), 'missing', /missing/],
     [loadAuthConfig({ ...prod, SESSION_SECRET: known }), 'default', /development default/],
-    [loadAuthConfig({ ...prod, SESSION_SECRET: 'x'.repeat(31) }), 'short', /too short/]
+    [loadAuthConfig({ ...prod, SESSION_SECRET: 'x'.repeat(31) }), 'short', /too short[\s\S]*openssl rand -hex 32/]
   ];
   for (const [config, reason, pattern] of cases) {
     assert.equal(sessionSecretProblem(config), reason);

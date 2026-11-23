@@ -27,7 +27,7 @@ The application code and schema are identical. Isolation is the **connection str
 | Turso HTTP | **both** URL and token set | `POST /v2/pipeline` (no native libsql `.so`) |
 | Vercel | `VERCEL` / `VERCEL_ENV` | Turso **required**. Missing pair → HTML/JSON 503, not a local file |
 
-Partial Turso credentials (URL xor token) are **fail-closed** on `npm run db:migrate` / `db:status` / `bootstrap-org`. The CLI will not silently create a local SQLite file.
+Exactly one of the **selected** pair is fail-closed everywhere, including the server (`loadDbConfig` / `createApp` / `openDatabase`) and `db:migrate` / `db:status` / `bootstrap-org`. The error names the missing variable and does not print the value. Production and local select `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`. `VERCEL_ENV=preview` selects `TURSO_PREVIEW_DATABASE_URL` + `TURSO_PREVIEW_AUTH_TOKEN`. Both unset still uses local SQLite (and on Vercel, the existing “Turso is required” 503). Both set still uses Turso. A `file:` URL is not a tokenless database; local SQLite is only “both omitted”. Preview with both preview variables unset still refuses with `preview_db_unconfigured` and does not open production or SQLite.
 
 ---
 
@@ -86,7 +86,7 @@ On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Productio
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `SESSION_SECRET` | **Yes in customer / Vercel deploys** | HMAC key for the `pf_session` httpOnly cookie. If unset, local/dev uses an insecure default and production/Vercel logs a warning. |
+| `SESSION_SECRET` | **Yes in customer / Vercel deploys** | HMAC key for the `pf_session` httpOnly cookie. At least 32 characters. `turso:customer`, `onboard:customer`, and `vercel:customer` refuse a shorter value already set in the shell (the value is not printed). Generate with `openssl rand -hex 32`, or unset it so `turso:customer --apply` mints a 32-byte hex secret. Production, Preview, and `vercel dev` refuse to boot when it is missing, shorter than 32 characters, or the development default. |
 | `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Vercel; optional locally | Tenant database. Auth rows live here. |
 | `PROCUREMENT_DB_PATH` | No | Override local SQLite path. |
 | `DEMO_PERSONA_SWITCHER` | No | Set to `1` to show the header persona switcher (demo only). Default **off** — customer deploys use login. |

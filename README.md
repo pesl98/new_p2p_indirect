@@ -258,7 +258,7 @@ npm run turso:customer -- --slug <customer>            # dry-run
 npm run turso:customer -- --slug <customer> --apply    # create/reuse + print exports
 ```
 
-`--apply` runs `turso db create procureflow-<slug>` (never `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, then prints shell-ready `export` lines. Existing DBs are reused. `SESSION_SECRET` is minted unless already set in the shell.
+`--apply` runs `turso db create procureflow-<slug>` (never `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, then prints shell-ready `export` lines. Existing DBs are reused. `SESSION_SECRET` is minted unless already set in the shell. A secret already set must be at least 32 characters (`openssl rand -hex 32`); a shorter one is refused and is not printed.
 
 ### Vercel environment variables
 

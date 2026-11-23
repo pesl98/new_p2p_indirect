@@ -11,7 +11,8 @@ import {
   TURSO_REQUIRED_MSG,
   TursoConfigError,
   assertDeployableConfig,
-  loadDbConfig
+  loadDbConfig,
+  partialTursoPair
 } from './dbConfig.js';
 import { openDatabase } from './db.js';
 
@@ -87,11 +88,6 @@ export const EXPECTED_TABLES = [
   'webhook_outbox'
 ];
 
-export const PARTIAL_TURSO_MSG =
-  'TURSO_DATABASE_URL and TURSO_AUTH_TOKEN must both be set to use Turso, '
-  + 'or both omitted to use local SQLite. Partial credentials are refused '
-  + '(fail-closed: ProcureFlow will not silently open a local SQLite file).';
-
 export const MIGRATE_HELP = `ProcureFlow customer database
 
 Usage:
@@ -104,7 +100,8 @@ Usage:
   --json           Machine-readable health object (no secrets).
 
 Env:
-  TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together)
+  TURSO_DATABASE_URL + TURSO_AUTH_TOKEN   Turso HTTP (both required together;
+                                          one of the two refuses and names the missing variable)
   PROCUREMENT_DB_PATH                     Local SQLite file (default server/data/procurement.db)
 
 Isolation: one Turso database or SQLite file per customer. No org_id row tenancy.
@@ -126,13 +123,19 @@ export function tursoCredentialState(env = process.env) {
 
 /**
  * Fail-closed for customer provision / migrate / status.
- * Does not change laptop demo fallback in loadDbConfig itself: only callers
- * that go through this helper refuse a half-configured Turso pair.
+ * The same half-set production pair is refused by loadDbConfig, so the
+ * server and these CLIs name the missing variable and do not open SQLite.
  */
 export function assertCustomerDbConfig(env = process.env, { requireTurso = false } = {}) {
   const state = tursoCredentialState(env);
   if (state === 'partial') {
-    throw new TursoConfigError(PARTIAL_TURSO_MSG);
+    const partial = partialTursoPair(
+      String(env.TURSO_DATABASE_URL || '').trim(),
+      String(env.TURSO_AUTH_TOKEN || '').trim(),
+      'TURSO_DATABASE_URL',
+      'TURSO_AUTH_TOKEN'
+    );
+    throw new TursoConfigError(partial.message, { code: partial.code });
   }
   if (requireTurso && state !== 'complete') {
     throw new TursoConfigError(TURSO_REQUIRED_MSG);
