@@ -264,6 +264,44 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.doesNotMatch(stderr.text, /tok_/);
   });
 
+  test('refuses a SESSION_SECRET shorter than 32 characters without printing it', async () => {
+    const short = 'short-session-secret';
+    let spawned = false;
+    const { stdout, stderr } = captureStreams();
+    const env = {
+      ...readyEnv(),
+      SESSION_SECRET: short
+    };
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env,
+      stdout,
+      stderr,
+      spawnFn() {
+        spawned = true;
+        throw new Error('should not spawn');
+      }
+    });
+    assert.equal(code, 1);
+    assert.equal(spawned, false);
+    assert.match(stderr.text, /SESSION_SECRET is too short/);
+    assert.match(stderr.text, /openssl rand -hex 32/);
+    assert.equal(stderr.text.includes(short), false);
+    assert.equal(stdout.text.includes(short), false);
+    const accepted = 'b'.repeat(32);
+    const dry = captureStreams();
+    const dryCode = await runVercelCustomerCli({
+      argv: ['--slug', 'acme'],
+      env: { ...readyEnv(), SESSION_SECRET: accepted },
+      stdout: dry.stdout,
+      stderr: dry.stderr,
+      spawnFn() { throw new Error('should not spawn'); }
+    });
+    assert.equal(dryCode, 0, dry.stderr.text);
+    assert.equal(dry.stdout.text.includes(accepted), false);
+    assert.match(dry.stdout.text, /SESSION_SECRET/);
+  });
+
   test('refuses missing env on --apply', async () => {
     const { stderr } = captureStreams();
     const code = await runVercelCustomerCli({

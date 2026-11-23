@@ -198,9 +198,10 @@ describe('turso:customer helpers', () => {
   });
 
   test('resolveSessionSecret reuses env and mints when missing', () => {
-    const reused = resolveSessionSecret({ SESSION_SECRET: 'already-set-secret' });
+    const existing = 's'.repeat(32);
+    const reused = resolveSessionSecret({ SESSION_SECRET: existing });
     assert.equal(reused.source, 'reuse-from-env');
-    assert.equal(reused.value, 'already-set-secret');
+    assert.equal(reused.value, existing);
 
     const minted = resolveSessionSecret({}, {
       randomBytesFn: (n) => {
@@ -210,6 +211,27 @@ describe('turso:customer helpers', () => {
     });
     assert.equal(minted.source, 'minted');
     assert.equal(minted.value, 'ab'.repeat(32));
+  });
+
+  test('resolveSessionSecret rejects a secret shorter than 32 characters', () => {
+    const short = 'too-short-secret';
+    assert.throws(
+      () => resolveSessionSecret({ SESSION_SECRET: short }),
+      (err) => {
+        assert.equal(err.code, 'session_secret_too_short');
+        assert.match(err.message, /SESSION_SECRET is too short/);
+        assert.match(err.message, /openssl rand -hex 32/);
+        assert.equal(err.message.includes(short), false);
+        return true;
+      }
+    );
+    const accepted = resolveSessionSecret({ SESSION_SECRET: 'a'.repeat(32) });
+    assert.equal(accepted.source, 'reuse-from-env');
+    assert.equal(accepted.value.length, 32);
+    const minted = resolveSessionSecret({ SESSION_SECRET: '   ' }, {
+      randomBytesFn: () => Buffer.alloc(32, 0x11)
+    });
+    assert.equal(minted.source, 'minted');
   });
 
   test('dry-run JSON never includes a real token', () => {
@@ -442,6 +464,30 @@ describe('turso:customer CLI (no live Turso)', () => {
     const json = JSON.parse(stdout.text.slice(stdout.text.lastIndexOf('{')));
     assert.equal(json.sessionSecretSource, 'reuse-from-env');
     assert.equal(json.sessionSecret, 'reuse-from-env');
+  });
+
+  test('dry-run and --apply reject a short SESSION_SECRET without printing it or calling Turso', async () => {
+    const short = 'short-session-secret';
+    for (const argv of [['--slug', 'acme'], ['--slug', 'acme', '--apply']]) {
+      let spawned = false;
+      const { stdout, stderr } = captureStreams();
+      const code = await runTursoCustomerCli({
+        argv,
+        env: { SESSION_SECRET: short },
+        stdout,
+        stderr,
+        spawnFn() {
+          spawned = true;
+          throw new Error('should not spawn');
+        }
+      });
+      assert.equal(code, 1);
+      assert.equal(spawned, false);
+      assert.match(stderr.text, /SESSION_SECRET is too short/);
+      assert.match(stderr.text, /openssl rand -hex 32/);
+      assert.equal(stderr.text.includes(short), false);
+      assert.equal(stdout.text.includes(short), false);
+    }
   });
 
   test('--db overrides the default name in dry-run', async () => {

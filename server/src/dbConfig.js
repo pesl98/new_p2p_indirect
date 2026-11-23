@@ -1,6 +1,14 @@
 /**
  * Dual-mode DB settings: local SQLite by default, Turso HTTP when env is set.
  * Vercel (VERCEL / VERCEL_ENV) refuses ephemeral local sqlite.
+ *
+ * The pair that would be selected must be both set or both unset.
+ * Production and local select TURSO_DATABASE_URL + TURSO_AUTH_TOKEN.
+ * VERCEL_ENV=preview selects TURSO_PREVIEW_DATABASE_URL + TURSO_PREVIEW_AUTH_TOKEN.
+ * Exactly one half of that pair is a configuration error (the message names
+ * the missing variable and never includes a value). A file: URL is not a
+ * tokenless mode — local SQLite is only “both unset”, via PROCUREMENT_DB_PATH
+ * or the default file.
  */
 
 import fs from 'fs';
@@ -112,6 +120,29 @@ function nonEmpty(value) {
   return text || null;
 }
 
+/**
+ * Exactly one of `url` / `token` is set.
+ * Returns null when both are set or both are unset.
+ * `file:` and other local schemes are not a tokenless Turso mode.
+ */
+export function partialTursoPair(url, token, urlName, tokenName, { allowLocalFallback = true } = {}) {
+  const hasUrl = Boolean(url);
+  const hasToken = Boolean(token);
+  if (hasUrl === hasToken) return null;
+  const missing = hasUrl ? tokenName : urlName;
+  const present = hasUrl ? urlName : tokenName;
+  const fallback = allowLocalFallback
+    ? `Set both ${urlName} and ${tokenName}, or unset both to use local SQLite. `
+    : `Set both ${urlName} and ${tokenName} on the Vercel Preview environment. `;
+  return {
+    code: allowLocalFallback ? 'turso_credentials_partial' : 'preview_db_partial',
+    missing,
+    message: `${present} is set but ${missing} is missing. `
+      + fallback
+      + 'Refusing to connect with half of the pair configured.'
+  };
+}
+
 export function allowPreviewProductionDatabase(env = process.env) {
   return String(env[PREVIEW_PRODUCTION_DB_ALLOW_ENV] || '').trim() === PREVIEW_PRODUCTION_DB_ALLOW_VALUE;
 }
@@ -155,6 +186,22 @@ export function loadDbConfig(env = process.env, { quiet = false } = {}) {
     return loadPreviewDbConfig(env, base, productionUrl, productionToken, quiet);
   }
 
+  const partial = partialTursoPair(
+    productionUrl,
+    productionToken,
+    'TURSO_DATABASE_URL',
+    'TURSO_AUTH_TOKEN'
+  );
+  if (partial) {
+    return {
+      ...base,
+      tursoUrl: null,
+      tursoAuthToken: null,
+      useTurso: false,
+      credentialError: partial
+    };
+  }
+
   const useTurso = Boolean(productionUrl && productionToken);
   return {
     ...base,
@@ -180,9 +227,18 @@ function loadPreviewDbConfig(env, base, productionUrl, productionToken, quiet) {
   const previewUrl = nonEmpty(env.TURSO_PREVIEW_DATABASE_URL);
   const previewToken = nonEmpty(env.TURSO_PREVIEW_AUTH_TOKEN);
   const pair = Boolean(previewUrl && previewToken);
+  const previewPartial = partialTursoPair(
+    previewUrl,
+    previewToken,
+    'TURSO_PREVIEW_DATABASE_URL',
+    'TURSO_PREVIEW_AUTH_TOKEN',
+    { allowLocalFallback: false }
+  );
   let block = null;
 
-  if (!pair) {
+  if (previewPartial) {
+    block = { code: previewPartial.code, message: previewPartial.message };
+  } else if (!pair) {
     block = {
       code: 'preview_db_unconfigured',
       message: 'Preview database is not configured. Set TURSO_PREVIEW_DATABASE_URL and '
@@ -213,6 +269,23 @@ function loadPreviewDbConfig(env, base, productionUrl, productionToken, quiet) {
   }
 
   if (allowPreviewProductionDatabase(env)) {
+    const productionPartial = partialTursoPair(
+      productionUrl,
+      productionToken,
+      'TURSO_DATABASE_URL',
+      'TURSO_AUTH_TOKEN'
+    );
+    if (productionPartial) {
+      return {
+        ...base,
+        tursoUrl: null,
+        tursoAuthToken: null,
+        useTurso: false,
+        allowPreviewProductionDatabase: true,
+        previewDatabase: false,
+        credentialError: productionPartial
+      };
+    }
     logPreviewEscape(databaseHost(productionUrl), quiet);
     return {
       ...base,
@@ -228,6 +301,9 @@ function loadPreviewDbConfig(env, base, productionUrl, productionToken, quiet) {
 }
 
 export function assertDeployableConfig(config = loadDbConfig()) {
+  if (config.credentialError) {
+    throw new TursoConfigError(config.credentialError.message, { code: config.credentialError.code });
+  }
   if (config.previewBlocked) {
     throw new TursoConfigError(config.previewBlocked.message, { code: config.previewBlocked.code });
   }

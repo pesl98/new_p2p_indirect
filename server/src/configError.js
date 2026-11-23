@@ -40,6 +40,7 @@ export function configErrorHtml(message, { code } = {}) {
     <li>Redeploy after saving — env changes do not apply to an old deploy</li>
   </ol>`
     : (code === 'preview_db_unconfigured'
+      || code === 'preview_db_partial'
       || code === 'preview_db_matches_production'
       || code === 'preview_db_token_matches_production')
     ? previewDbSteps()

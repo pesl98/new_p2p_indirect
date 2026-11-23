@@ -300,6 +300,33 @@ const SESSION_SECRET_PROBLEM_TEXT = {
   short: `SESSION_SECRET is too short (fewer than ${MIN_SESSION_SECRET_LENGTH} characters).`
 };
 
+/** Shared wording for a secret under MIN_SESSION_SECRET_LENGTH. Never includes the value. */
+export function shortSessionSecretMessage({ allowUnsetToMint = false } = {}) {
+  const mint = allowUnsetToMint
+    ? ' Or unset SESSION_SECRET so this command can mint one.'
+    : '';
+  const tail = allowUnsetToMint
+    ? ' Refusing to reuse it. The value was not printed.'
+    : ' Refusing to start.';
+  return `SESSION_SECRET is too short (fewer than ${MIN_SESSION_SECRET_LENGTH} characters). `
+    + `Set SESSION_SECRET to a unique value of at least ${MIN_SESSION_SECRET_LENGTH} characters.`
+    + `${mint} Generate one with: openssl rand -hex 32.`
+    + tail;
+}
+
+/**
+ * A SESSION_SECRET already in the environment that is shorter than
+ * MIN_SESSION_SECRET_LENGTH. Unset (including whitespace) is not an error:
+ * turso:customer mints one. The error message never includes the value.
+ */
+export function reusedSessionSecretError(env = process.env) {
+  const secret = String(env.SESSION_SECRET ?? '').trim();
+  if (!secret || secret.length >= MIN_SESSION_SECRET_LENGTH) return null;
+  const error = new Error(shortSessionSecretMessage({ allowUnsetToMint: true }));
+  error.code = 'session_secret_too_short';
+  return error;
+}
+
 export function sessionSecretProblem(config) {
   const secret = String(config?.sessionSecret || '');
   if (!secret || config?.usingDevSecret) return 'missing';
@@ -313,9 +340,11 @@ export function warnIfInsecureSessionSecret(config, env = process.env) {
   if (!problem) return;
   if (runningOnVercel(env) || env.NODE_ENV === 'production') {
     const error = new Error(
-      `${SESSION_SECRET_PROBLEM_TEXT[problem]} `
-      + `Set SESSION_SECRET to a unique value of at least ${MIN_SESSION_SECRET_LENGTH} characters. `
-      + 'Refusing to start.'
+      problem === 'short'
+        ? shortSessionSecretMessage()
+        : `${SESSION_SECRET_PROBLEM_TEXT[problem]} `
+          + `Set SESSION_SECRET to a unique value of at least ${MIN_SESSION_SECRET_LENGTH} characters. `
+          + 'Refusing to start.'
     );
     error.statusCode = 503;
     error.code = 'session_secret_insecure';

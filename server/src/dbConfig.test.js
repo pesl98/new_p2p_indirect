@@ -9,6 +9,7 @@ import {
   loadDbConfig,
   databaseHostname,
   normalizeDatabaseUrl,
+  partialTursoPair,
   sameDatabaseHost,
   runningOnVercel
 } from './dbConfig.js';
@@ -217,9 +218,12 @@ describe('dual-mode DB selection', () => {
       VERCEL_ENV: 'preview',
       TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-org.turso.io'
     }));
-    assert.equal(missingToken.previewBlocked.code, 'preview_db_unconfigured');
+    assert.equal(missingToken.previewBlocked.code, 'preview_db_partial');
+    assert.match(missingToken.previewBlocked.message, /TURSO_PREVIEW_AUTH_TOKEN is missing/);
+    assert.equal(missingToken.previewBlocked.message.includes('preview-org.turso.io'), false);
     assert.equal(missingToken.useTurso, false);
     assert.equal(missingToken.tursoUrl, null);
+    assert.equal(missingToken.tursoAuthToken, null);
 
     const bare = withMutedError(() => loadDbConfig({
       VERCEL: '1',
@@ -280,6 +284,159 @@ describe('dual-mode DB selection', () => {
       [PREVIEW_PRODUCTION_DB_ALLOW_ENV]: '1'
     }));
     assert.equal(ignored.previewBlocked.code, 'preview_db_unconfigured');
+  });
+
+  test('half-set production pair names the missing variable and does not open SQLite', () => {
+    const urlOnly = 'libsql://half.turso.io';
+    const tokenOnly = 'tok_only_not_printed';
+    const missingToken = loadDbConfig({ TURSO_DATABASE_URL: urlOnly });
+    assert.equal(missingToken.useTurso, false);
+    assert.equal(missingToken.tursoUrl, null);
+    assert.equal(missingToken.tursoAuthToken, null);
+    assert.equal(missingToken.credentialError.missing, 'TURSO_AUTH_TOKEN');
+    assert.throws(
+      () => assertDeployableConfig(missingToken),
+      (err) => {
+        assert.equal(err instanceof TursoConfigError, true);
+        assert.equal(err.code, 'turso_credentials_partial');
+        assert.match(err.message, /TURSO_AUTH_TOKEN is missing/);
+        assert.equal(err.message.includes(urlOnly), false);
+        return true;
+      }
+    );
+
+    const missingUrl = loadDbConfig({ TURSO_AUTH_TOKEN: tokenOnly });
+    assert.equal(missingUrl.credentialError.missing, 'TURSO_DATABASE_URL');
+    assert.throws(
+      () => assertDeployableConfig(missingUrl),
+      (err) => {
+        assert.match(err.message, /TURSO_DATABASE_URL is missing/);
+        assert.equal(err.message.includes(tokenOnly), false);
+        return true;
+      }
+    );
+
+    const onVercel = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      TURSO_DATABASE_URL: urlOnly
+    });
+    assert.equal(onVercel.credentialError.missing, 'TURSO_AUTH_TOKEN');
+    assert.equal(onVercel.useTurso, false);
+  });
+
+  test('whitespace-only production pair counts as unset, not half-set', () => {
+    const config = loadDbConfig({
+      TURSO_DATABASE_URL: '   ',
+      TURSO_AUTH_TOKEN: '\t'
+    });
+    assert.equal(config.credentialError, undefined);
+    assert.equal(config.useTurso, false);
+    assert.equal(assertDeployableConfig(config).useTurso, false);
+  });
+
+  test('a file: URL without a token is not a local SQLite fallback', () => {
+    assert.equal(partialTursoPair('file:procurement.db', null, 'TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN').missing, 'TURSO_AUTH_TOKEN');
+    const config = loadDbConfig({ TURSO_DATABASE_URL: 'file:/tmp/procurement.db' });
+    assert.equal(config.useTurso, false);
+    assert.equal(config.credentialError.missing, 'TURSO_AUTH_TOKEN');
+    assert.throws(
+      () => assertDeployableConfig(config),
+      (err) => err.code === 'turso_credentials_partial'
+        && /TURSO_AUTH_TOKEN is missing/.test(err.message)
+        && !err.message.includes('procurement.db')
+    );
+  });
+
+  test('local dev ignores a half-set preview pair', () => {
+    const config = loadDbConfig({
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.turso.io'
+    });
+    assert.equal(config.useTurso, false);
+    assert.equal(config.credentialError, undefined);
+    assert.equal(config.previewBlocked, null);
+    assert.equal(assertDeployableConfig(config).useTurso, false);
+  });
+
+  test('production ignores a half-set preview pair when its own pair is complete', () => {
+    const config = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      TURSO_DATABASE_URL: 'libsql://prod.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.turso.io'
+    });
+    assert.equal(config.useTurso, true);
+    assert.equal(config.tursoUrl, 'libsql://prod.turso.io');
+    assert.equal(config.credentialError, undefined);
+    assert.equal(config.previewDatabase, false);
+    assert.equal(assertDeployableConfig(config).tursoUrl, 'libsql://prod.turso.io');
+  });
+
+  test('preview half-set names the missing preview variable and does not use production', () => {
+    const previewToken = 'preview-token-not-printed';
+    const missingUrl = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://prod.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      TURSO_PREVIEW_AUTH_TOKEN: previewToken
+    }));
+    assert.equal(missingUrl.previewBlocked.code, 'preview_db_partial');
+    assert.equal(missingUrl.useTurso, false);
+    assert.equal(missingUrl.tursoUrl, null);
+    assert.equal(missingUrl.tursoAuthToken, null);
+    assert.match(missingUrl.previewBlocked.message, /TURSO_PREVIEW_DATABASE_URL is missing/);
+    assert.equal(missingUrl.previewBlocked.message.includes(previewToken), false);
+    assert.equal(missingUrl.previewBlocked.message.includes('prod-token'), false);
+    assert.throws(
+      () => assertDeployableConfig(missingUrl),
+      (err) => err.code === 'preview_db_partial'
+        && /TURSO_PREVIEW_DATABASE_URL is missing/.test(err.message)
+    );
+
+    const missingToken = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview-only.turso.io'
+    }));
+    assert.equal(missingToken.previewBlocked.code, 'preview_db_partial');
+    assert.match(missingToken.previewBlocked.message, /TURSO_PREVIEW_AUTH_TOKEN is missing/);
+    assert.equal(missingToken.previewBlocked.message.includes('preview-only.turso.io'), false);
+  });
+
+  test('a complete preview pair still wins when the production pair is half-set', () => {
+    const config = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://prod.turso.io',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.turso.io',
+      TURSO_PREVIEW_AUTH_TOKEN: 'preview-token'
+    });
+    assert.equal(config.previewDatabase, true);
+    assert.equal(config.useTurso, true);
+    assert.equal(config.tursoUrl, 'libsql://preview.turso.io');
+    assert.equal(config.credentialError, undefined);
+    assert.equal(config.previewBlocked, null);
+  });
+
+  test('escape hatch still serves a complete production pair when preview is half-set', () => {
+    const logs = [];
+    const config = withMutedError(() => loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      TURSO_DATABASE_URL: 'libsql://prod.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token',
+      TURSO_PREVIEW_DATABASE_URL: 'libsql://preview.turso.io',
+      [PREVIEW_PRODUCTION_DB_ALLOW_ENV]: 'allow'
+    }), logs);
+    assert.equal(config.allowPreviewProductionDatabase, true);
+    assert.equal(config.previewBlocked, null);
+    assert.equal(config.credentialError, undefined);
+    assert.equal(config.useTurso, true);
+    assert.equal(config.tursoUrl, 'libsql://prod.turso.io');
+    assert.match(logs.join('\n'), /PREVIEW IS SERVING THE PRODUCTION DATABASE/);
+    assert.equal(logs.join('\n').includes('prod-token'), false);
   });
 });
 
@@ -393,6 +550,72 @@ describe('Vercel config error page', () => {
     const html = configErrorHtml(TURSO_REQUIRED_MSG);
     assert.match(html, /database token/);
     assert.match(html, /turso db tokens create/);
+  });
+
+  test('preview half-set health names the missing preview variable', async () => {
+    const url = 'libsql://preview-half.turso.io';
+    const app = withMutedError(() => createApp({
+      env: {
+        VERCEL: '1',
+        VERCEL_ENV: 'preview',
+        TURSO_PREVIEW_DATABASE_URL: url
+      }
+    }));
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}/api/health`);
+      const body = await response.json();
+      assert.equal(response.status, 503);
+      assert.equal(body.code, 'preview_db_partial');
+      assert.match(body.detail, /TURSO_PREVIEW_AUTH_TOKEN is missing/);
+      assert.equal(body.detail.includes(url), false);
+      assert.equal(body.db, undefined);
+    });
+  });
+
+  test('half-set production pair returns 503 naming the missing variable', async () => {
+    const token = 'tok_not_in_the_body';
+    const app = createApp({
+      env: { TURSO_AUTH_TOKEN: token }
+    });
+    await withServer(app, async (base) => {
+      const response = await fetch(`${base}/api/health`, {
+        headers: { Accept: 'application/json' }
+      });
+      const body = await response.json();
+      assert.equal(response.status, 503);
+      assert.equal(body.error, 'TursoConfigError');
+      assert.equal(body.code, 'turso_credentials_partial');
+      assert.match(body.detail, /TURSO_DATABASE_URL is missing/);
+      assert.equal(body.detail.includes(token), false);
+      assert.equal(body.status, undefined);
+      assert.equal(body.db, undefined);
+    });
+  });
+
+  test('a complete production pair still reports health ok', async () => {
+    const { createMemoryDatabase } = await import('./db.js');
+    const db = await createMemoryDatabase();
+    const config = loadDbConfig({
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      TURSO_DATABASE_URL: 'libsql://prod.turso.io',
+      TURSO_AUTH_TOKEN: 'prod-token'
+    });
+    const app = createApp({
+      db,
+      config,
+      env: { SESSION_SECRET: 'y'.repeat(32), VERCEL: '1', VERCEL_ENV: 'production' }
+    });
+    try {
+      await withServer(app, async (base) => {
+        const response = await fetch(`${base}/api/health`);
+        const body = await response.json();
+        assert.equal(response.status, 200);
+        assert.equal(body.status, 'ok');
+      });
+    } finally {
+      db.close();
+    }
   });
 
   test('wantsJson is true for /api paths', () => {

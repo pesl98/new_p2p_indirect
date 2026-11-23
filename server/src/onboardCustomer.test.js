@@ -293,6 +293,29 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.match(stderr.text, /not both/);
   });
 
+  test('dry-run and --apply reject a short SESSION_SECRET without printing it', async () => {
+    const short = 'short-session-secret';
+    for (const argv of [['--slug', 'acme'], ['--slug', 'acme', '--apply']]) {
+      let called = false;
+      const { stdout, stderr } = captureStreams();
+      const code = await runOnboardCustomerCli({
+        argv,
+        env: { SESSION_SECRET: short },
+        stdout,
+        stderr,
+        async runTursoFn() { called = true; return 0; },
+        async runVercelFn() { called = true; return 0; },
+        async runProvisionFn() { called = true; return 0; }
+      });
+      assert.equal(code, 1);
+      assert.equal(called, false);
+      assert.match(stderr.text, /SESSION_SECRET is too short/);
+      assert.match(stderr.text, /openssl rand -hex 32/);
+      assert.equal(stderr.text.includes(short), false);
+      assert.equal(stdout.text.includes(short), false);
+    }
+  });
+
   test('dry-run prints the full plan without calling children or inventing secrets', async () => {
     let called = false;
     const { stdout, stderr } = captureStreams();
