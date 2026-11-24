@@ -122,7 +122,7 @@ The client address is Express `req.ip`. On Vercel the app trusts one proxy hop, 
 
 The 11th account attempt, and the 301st address attempt, are **429** `{ "error": "Too many requests, try again later", "code": "rate_limited" }` with `Retry-After` set to the seconds left in the window. An unknown email, an inactive user, and a wrong password all increment the account window and return the same **401** `Invalid email or password`. A successful password login deletes every account row for that email, on every address. The address window stays.
 
-The first attempt in a process, and the first attempt after each window, deletes rows whose `reset_at` is already past, so the table cannot grow without bound.
+The first attempt in a process, and the first attempt after each window, deletes rows whose `reset_at` is already past. Active rows are also capped at **50,000** (the old in-memory bound). Past that, the oldest windows are dropped, including when a burst of distinct addresses opens new rows inside one window.
 
 If the table is not there yet (the new server deployed before `db:migrate`), the process logs once and uses an in-memory window until it exits. Login still answers. That memory window is per instance. Run `npm run db:migrate` so the shared table is in place; the next process start uses it.
 

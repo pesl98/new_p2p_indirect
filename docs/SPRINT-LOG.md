@@ -752,12 +752,12 @@ Server tests cover: both production variables unset → local SQLite; both set �
 - The counters are rows in `login_rate_windows`. `schema.sql` creates the table, and `migrateLoginRateWindows` runs it again from `applySchema`, so `npm run db:migrate` adds it on an existing SQLite or Turso/libsql database. No new environment variable and no manual step beyond that migrate.
 - The account key is the client address plus a SHA-256 prefix of the email (trimmed, lower-cased, cut at 254 characters). The address is Express `req.ip`. On Vercel, and when `TRUST_PROXY` is `1`, `true`, or `yes`, that is the `X-Forwarded-For` client. Otherwise the header is ignored. The table stores the hash, not the email.
 - A successful password login deletes that email’s account rows on every address. The address window stays. An unknown email, an inactive user, and a wrong password all increment the account window and return the same **401** `Invalid email or password`.
-- The first attempt in a process, and the first attempt after each window, deletes rows whose window has ended.
+- The first attempt in a process, and the first attempt after each window, deletes rows whose window has ended. Active rows are capped at 50,000, the same bound as the old in-memory table. Past that, the oldest windows are dropped, so a burst of distinct addresses cannot grow the table without limit inside one window.
 - If the table is missing (deploy before migrate), the process logs once and uses an in-memory window until it exits. Login still answers. The next process start tries the table again.
 
 ### Tests
 
-Server tests cover: two limiter instances sharing one database; the window expiring and a later attempt deleting expired rows; success clearing that email on every address while the address cap remains; **429** with `Retry-After` and the same JSON body; unknown, inactive, and wrong-password attempts sharing a bucket and the same 401 body; `X-Forwarded-For` mattering only when trust proxy is on; `applySchema` creating the table on an existing database and running twice; a missing table logging once, falling back per instance, and still answering login.
+Server tests cover: two limiter instances sharing one database; the window expiring and a later attempt deleting expired rows; the 50,000-row cap dropping the oldest windows; success clearing that email on every address while the address cap remains; **429** with `Retry-After` and the same JSON body; unknown, inactive, and wrong-password attempts sharing a bucket and the same 401 body; `X-Forwarded-For` mattering only when trust proxy is on; `applySchema` creating the table on an existing database and running twice; a missing table logging once, falling back per instance, and still answering login.
 
-`npm test`: 817 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+`npm test`: 818 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 
