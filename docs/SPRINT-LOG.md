@@ -81,7 +81,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | `213855c9208271400b2778ebb818265156803a34` | merged |
 | — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` | merged |
 | — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | [#97](https://github.com/pesl98/new_p2p_indirect/pull/97) | Security: fail-closed Turso env pair + SESSION_SECRET length | | done |
-| — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | | Security: database-backed login rate limit | | done |
+| — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | [#98](https://github.com/pesl98/new_p2p_indirect/pull/98) | Security: database-backed login rate limit | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -742,7 +742,7 @@ Server tests cover: both production variables unset → local SQLite; both set �
 
 **Goal:** Replace the in-memory, per-instance login rate limiter with one stored in the customer database, so the limit holds across Vercel serverless instances and cold starts.
 
-**PR:** (opened with this branch)
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/98 (#98).
 
 **Status:** done, waiting on review.
 
