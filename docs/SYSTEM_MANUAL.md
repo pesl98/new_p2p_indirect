@@ -105,6 +105,27 @@ These five values are the only allowed roles. Additional people are created in *
 | `POST /api/auth/password` | Signed-in user. `{ current_password, new_password }` replaces the password, revokes that user’s other sessions, and sets a fresh cookie. |
 | `POST /api/auth/bootstrap` | Optional HTTP first admin on an **empty** `users` table. Fail closed: `403 bootstrap_disabled` unless `BOOTSTRAP_TOKEN` is at least 32 characters, then `403 bootstrap_token_invalid` without a matching `X-Bootstrap-Token` (constant-time compare; the value is never logged). A tenant that already has users stays **409**. Not required at boot. The operator path is `npm run bootstrap-admin`, which does not use the token. |
 
+### Sign-in rate limit
+
+`POST /api/auth/login` and `POST /api/auth/bootstrap` share one limiter. The counters are rows in `login_rate_windows` in this customer’s database (local SQLite and Turso/libsql). `npm run db:migrate` creates the table (`CREATE TABLE IF NOT EXISTS` in `schema.sql`, applied again by `migrateLoginRateWindows` inside `applySchema`). Every function instance reads those rows, so a cold start does not reset the counter. No new environment variable.
+
+Two fixed windows, each **15 minutes**, measured from the first attempt in that window:
+
+| Window | Key | Limit |
+| --- | --- | --- |
+| Address | Client address | 300 |
+| Account | Client address plus a SHA-256 prefix of the normalised email | 10 |
+
+The email is trimmed, lower-cased, and cut at 254 characters before hashing. `subject_key` stores that hash for account rows. The table does not store the email or the password.
+
+The client address is Express `req.ip`. On Vercel the app trusts one proxy hop, so `req.ip` comes from `X-Forwarded-For`. `TRUST_PROXY=1` (also `true` or `yes`) does the same off Vercel. With that flag unset, Express ignores `X-Forwarded-For` and `req.ip` is the socket address. The limiter does not read the header itself. With the flag off, every visitor shares the proxy address, so the address window alone is not the lock.
+
+The 11th account attempt, and the 301st address attempt, are **429** `{ "error": "Too many requests, try again later", "code": "rate_limited" }` with `Retry-After` set to the seconds left in the window. An unknown email, an inactive user, and a wrong password all increment the account window and return the same **401** `Invalid email or password`. A successful password login deletes every account row for that email, on every address. The address window stays.
+
+The first attempt in a process, and the first attempt after each window, deletes rows whose `reset_at` is already past, so the table cannot grow without bound.
+
+If the table is not there yet (the new server deployed before `db:migrate`), the process logs once and uses an in-memory window until it exits. Login still answers. That memory window is per instance. Run `npm run db:migrate` so the shared table is in place; the next process start uses it.
+
 ### SSO (OIDC or SAML)
 
 Optional, per customer. The callback mints the same `pf_session` cookie. It does not add another identity header. `identityProvider` is `local` (default), `oidc`, or `saml`.

@@ -49,6 +49,7 @@ export const EXPECTED_TABLES = [
   'invoice_proposal_upload_attempts',
   'invoice_proposals',
   'invoices',
+  'login_rate_windows',
   'match_results',
   'payment_run_items',
   'payment_runs',

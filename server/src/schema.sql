@@ -45,6 +45,22 @@ CREATE TABLE IF NOT EXISTS user_credentials (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Sign-in rate windows, shared by every serverless instance.
+-- bucket_key is the client address, or that address plus a hash of the
+-- normalised email. subject_key is that hash for account rows and '' for
+-- address rows. The email and password are not stored.
+-- reset_at is unix epoch milliseconds. Expired rows are deleted on a later attempt.
+CREATE TABLE IF NOT EXISTS login_rate_windows (
+  scope TEXT NOT NULL CHECK (scope IN ('address', 'account')),
+  bucket_key TEXT NOT NULL,
+  subject_key TEXT NOT NULL DEFAULT '',
+  attempt_count INTEGER NOT NULL CHECK (attempt_count >= 1),
+  reset_at INTEGER NOT NULL,
+  PRIMARY KEY (scope, bucket_key)
+);
+CREATE INDEX IF NOT EXISTS login_rate_windows_reset_at ON login_rate_windows (reset_at);
+CREATE INDEX IF NOT EXISTS login_rate_windows_subject ON login_rate_windows (scope, subject_key);
+
 CREATE TABLE IF NOT EXISTS budgets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   department_id INTEGER NOT NULL,

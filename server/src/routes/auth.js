@@ -21,6 +21,7 @@ import {
   recordUserChange
 } from '../complianceAudit.js';
 import { bootstrapHttpRefusal } from '../bootstrapToken.js';
+import { clearSuccessfulLoginAccount } from '../loginRateLimit.js';
 import ssoRouter from './sso.js';
 
 const router = express.Router();
@@ -93,6 +94,10 @@ router.post('/login', async (req, res) => {
     });
     await recordLocalLoginSuccess(req.db, user);
     setSessionCookie(req, res, user);
+    // The limiter already counted this request. Drop the account window now,
+    // before the body is sent, so the next attempt on this or another instance
+    // starts clean. A failure here must not turn a good password into a 500.
+    await clearSuccessfulLoginAccount(req);
     res.json({ user });
   } catch (error) {
     const status = error.statusCode || 500;

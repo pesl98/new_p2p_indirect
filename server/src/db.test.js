@@ -22,6 +22,7 @@ import {
   USERS_STATUS_COLUMN_SQL,
   USERS_SESSION_VERSION_COLUMN_SQL,
   USER_CREDENTIALS_TABLE_SQL,
+  LOGIN_RATE_WINDOWS_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_REBUILD_SQL,
   PURCHASE_REQUISITIONS_SKIPPED_CHECK_MIGRATION_SQL,
   purchaseRequisitionsContractUseNeedsSkippedRebuild,
@@ -89,6 +90,10 @@ describe('Turso/SQLite schema migrations', () => {
     const credCols = raw.prepare(`PRAGMA table_info(user_credentials)`).all().map((col) => col.name);
     assert.ok(credCols.includes('password_hash'));
     assert.ok(credCols.includes('user_id'));
+    const rateCols = raw.prepare(`PRAGMA table_info(login_rate_windows)`).all().map((col) => col.name);
+    assert.deepEqual(rateCols, ['scope', 'bucket_key', 'subject_key', 'attempt_count', 'reset_at']);
+    assert.ok(raw.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'login_rate_windows_reset_at'`).get());
+    assert.ok(raw.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'login_rate_windows_subject'`).get());
   });
 
   test('po_change_orders CREATE TABLE is a single Turso-split statement', () => {
@@ -131,6 +136,25 @@ describe('Turso/SQLite schema migrations', () => {
     assert.equal(items.length, 1);
     assert.match(items[0], /CREATE TABLE IF NOT EXISTS payment_run_items/i);
     assert.match(items[0], /UNIQUE\(run_id, invoice_id\)/);
+  });
+
+  test('login_rate_windows CREATE and indexes are idempotent Turso-split statements', () => {
+    const stmts = splitSqlScript(LOGIN_RATE_WINDOWS_SQL);
+    assert.equal(stmts.length, 3);
+    assert.match(stmts[0], /CREATE TABLE IF NOT EXISTS login_rate_windows/i);
+    assert.match(stmts[0], /subject_key TEXT NOT NULL DEFAULT ''/);
+    assert.match(stmts[1], /CREATE INDEX IF NOT EXISTS login_rate_windows_reset_at/i);
+    assert.match(stmts[2], /CREATE INDEX IF NOT EXISTS login_rate_windows_subject/i);
+    const raw = new Database(':memory:');
+    raw.exec(LOGIN_RATE_WINDOWS_SQL);
+    raw.exec(LOGIN_RATE_WINDOWS_SQL);
+    const cols = raw.prepare(`PRAGMA table_info(login_rate_windows)`).all().map((col) => col.name);
+    assert.deepEqual(cols, ['scope', 'bucket_key', 'subject_key', 'attempt_count', 'reset_at']);
+    const indexes = raw.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'login_rate_windows'`
+    ).all().map((row) => row.name);
+    assert.equal(indexes.filter((name) => name === 'login_rate_windows_reset_at').length, 1);
+    assert.equal(indexes.filter((name) => name === 'login_rate_windows_subject').length, 1);
   });
 
   test('user auth ALTER/CREATE statements are each a single Turso-split statement', () => {
