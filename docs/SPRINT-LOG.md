@@ -81,6 +81,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | `213855c9208271400b2778ebb818265156803a34` | merged |
 | — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` | merged |
 | — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | [#97](https://github.com/pesl98/new_p2p_indirect/pull/97) | Security: fail-closed Turso env pair + SESSION_SECRET length | | done |
+| — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | | Security: database-backed login rate limit | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -734,4 +735,29 @@ Server tests cover: a pre-upgrade cookie works until a bump; the old cookie is *
 Server tests cover: both production variables unset → local SQLite; both set → Turso; URL only and token only (including on Vercel Production) → error naming the missing variable and not the value; each preview half → `preview_db_partial` naming the missing preview variable; preview both unset unchanged; a complete preview pair still wins when the production pair is half-set; production ignores a half-set preview pair; the escape hatch still serves a complete production database when preview is half-set; a `file:` URL without a token is refused; `/api/health` is 503 for a half-set pair and 200 for a complete production pair and a complete preview pair; `SESSION_SECRET` under 32 characters is rejected by `resolveSessionSecret`, `turso:customer`, `onboard:customer`, and `vercel:customer` without printing the value or calling Turso/Vercel; 32 characters is accepted.
 
 `npm test`: 807 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Security: database-backed login rate limit
+
+**Date:** 2026-11-24
+
+**Goal:** Replace the in-memory, per-instance login rate limiter with one stored in the customer database, so the limit holds across Vercel serverless instances and cold starts.
+
+**PR:** (opened with this branch)
+
+**Status:** done, waiting on review.
+
+### What changed
+
+- `POST /api/auth/login` and `POST /api/auth/bootstrap` still share one limiter: **10** attempts per 15 minutes for an address plus the normalised email, and **300** per 15 minutes for the address alone. The 429 body is unchanged: `{ "error": "Too many requests, try again later", "code": "rate_limited" }` with `Retry-After`.
+- The counters are rows in `login_rate_windows`. `schema.sql` creates the table, and `migrateLoginRateWindows` runs it again from `applySchema`, so `npm run db:migrate` adds it on an existing SQLite or Turso/libsql database. No new environment variable and no manual step beyond that migrate.
+- The account key is the client address plus a SHA-256 prefix of the email (trimmed, lower-cased, cut at 254 characters). The address is Express `req.ip`. On Vercel, and when `TRUST_PROXY` is `1`, `true`, or `yes`, that is the `X-Forwarded-For` client. Otherwise the header is ignored. The table stores the hash, not the email.
+- A successful password login deletes that email’s account rows on every address. The address window stays. An unknown email, an inactive user, and a wrong password all increment the account window and return the same **401** `Invalid email or password`.
+- The first attempt in a process, and the first attempt after each window, deletes rows whose window has ended.
+- If the table is missing (deploy before migrate), the process logs once and uses an in-memory window until it exits. Login still answers. The next process start tries the table again.
+
+### Tests
+
+Server tests cover: two limiter instances sharing one database; the window expiring and a later attempt deleting expired rows; success clearing that email on every address while the address cap remains; **429** with `Retry-After` and the same JSON body; unknown, inactive, and wrong-password attempts sharing a bucket and the same 401 body; `X-Forwarded-For` mattering only when trust proxy is on; `applySchema` creating the table on an existing database and running twice; a missing table logging once, falling back per instance, and still answering login.
+
+`npm test`: 817 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 

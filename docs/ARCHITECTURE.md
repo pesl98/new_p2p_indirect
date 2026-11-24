@@ -29,6 +29,8 @@ Empty customer DB → `npm run db:migrate` (`applySchema`) → optional `npm run
 
 Existing Turso/SQLite DBs get `ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`, `ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1`, plus `CREATE TABLE IF NOT EXISTS user_credentials` in `db.js` (`migrateUsersAuth`). Each statement runs only when the column or table is missing, so a second migrate leaves an already-bumped version alone. ALTER cannot attach CHECK; new DBs get the CHECK from `schema.sql`. Cookies without `sv` count as version 1, so existing sessions stay valid until the next bump.
 
+`login_rate_windows` is created the same way: `CREATE TABLE IF NOT EXISTS` in `schema.sql`, and `migrateLoginRateWindows` inside `applySchema`, so `npm run db:migrate` adds it on an existing customer database. It holds the sign-in rate windows (client address, and address plus a hash of the normalised email). A successful password login clears that email’s rows. If the table is missing at runtime the process logs once and uses an in-memory limiter instead of refusing login. See the system manual.
+
 The UI **Users** nav sits next to Department Approvers and is shown only for `role=admin`.
 
 ## Lifecycle

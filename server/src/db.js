@@ -490,6 +490,28 @@ export const USER_CREDENTIALS_TABLE_SQL = `
   )
 `;
 
+/**
+ * Sign-in counters. schema.sql creates the same table; this runs again so an
+ * existing customer database gains it on the normal migrate step. The email
+ * is stored only as a hash (subject_key). Keep this DDL in step with schema.sql.
+ */
+export const LOGIN_RATE_WINDOWS_SQL = `
+CREATE TABLE IF NOT EXISTS login_rate_windows (
+  scope TEXT NOT NULL CHECK (scope IN ('address', 'account')),
+  bucket_key TEXT NOT NULL,
+  subject_key TEXT NOT NULL DEFAULT '',
+  attempt_count INTEGER NOT NULL CHECK (attempt_count >= 1),
+  reset_at INTEGER NOT NULL,
+  PRIMARY KEY (scope, bucket_key)
+);
+CREATE INDEX IF NOT EXISTS login_rate_windows_reset_at ON login_rate_windows (reset_at);
+CREATE INDEX IF NOT EXISTS login_rate_windows_subject ON login_rate_windows (scope, subject_key);
+`;
+
+async function migrateLoginRateWindows(database) {
+  await maybe(database.exec(LOGIN_RATE_WINDOWS_SQL));
+}
+
 async function migrateUsersAuth(database) {
   const tables = (await maybe(
     database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all()
@@ -718,6 +740,7 @@ export async function applySchema(database) {
   await migratePurchaseRequisitionContractLink(database);
   await migratePaymentRuns(database);
   await migrateUsersAuth(database);
+  await migrateLoginRateWindows(database);
   await migrateConsignmentStock(database);
   await migrateMeasuredSettlement(database);
   return database;

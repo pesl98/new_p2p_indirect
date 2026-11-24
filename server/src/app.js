@@ -42,7 +42,8 @@ import { warnIfDemoPersonaSwitcher } from './demoCredentials.js';
 import { requireApiSession } from './requestActor.js';
 import { warnIfBadAppBaseUrl } from './sourcingConfig.js';
 import tickRouter from './routes/tick.js';
-import { corsDelegate, loginAttemptKey, originCheck, rateLimit, securityHeaders } from './security.js';
+import { corsDelegate, originCheck, rateLimit, securityHeaders } from './security.js';
+import { loginRateLimit } from './loginRateLimit.js';
 import { warnIfShortBootstrapToken } from './bootstrapToken.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -161,16 +162,14 @@ export function createApp(options = {}) {
   app.use('/api', originCheck(runtimeEnv));
   app.use(requireApiSession);
 
-  // Per account and address (10 tries), plus a generous cap per address. With TRUST_PROXY off
-  // every visitor shares the proxy's address, so the address alone must not be the lock.
-  // Bootstrap uses the same limiters so a missing or wrong X-Bootstrap-Token is rate-limited.
-  const loginLimiters = options.loginRateLimit
-    ? [options.loginRateLimit]
-    : [rateLimit({ max: 300 }), rateLimit({ max: 10, key: loginAttemptKey })];
-  for (const limiter of loginLimiters) {
-    app.use('/api/auth/login', limiter);
-    app.use('/api/auth/bootstrap', limiter);
-  }
+  // Per account and address (10 tries / 15 min), plus a generous cap per address (300).
+  // Counts live in login_rate_windows so they hold across instances and cold starts.
+  // With TRUST_PROXY off every visitor shares the proxy's address, so the address
+  // alone must not be the lock. Bootstrap uses the same limiter so a missing or
+  // wrong X-Bootstrap-Token is rate-limited. A missing table falls back to memory.
+  const loginLimiter = options.loginRateLimit || loginRateLimit({ now: options.loginRateNow });
+  app.use('/api/auth/login', loginLimiter);
+  app.use('/api/auth/bootstrap', loginLimiter);
   app.use('/api/auth', authRouter);
   app.use('/api/users', usersRouter);
   app.use('/api/departments', departmentsRouter);

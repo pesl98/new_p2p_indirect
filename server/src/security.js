@@ -101,20 +101,30 @@ export function clientAddress(req) {
 }
 
 /**
- * Key for sign-in attempts: the address plus a hash of the normalised e-mail. X-Forwarded-For is
- * never read here (Express only honours it when trust proxy is on), and the e-mail is hashed so
- * an attacker cannot grow the table with long strings. Attempts against one account share a
- * bucket, other accounts behind the same proxy do not.
+ * Hash of the normalised sign-in email (trim, lower case, 254 characters).
+ * The raw email is not a rate-limit key and is not written to login_rate_windows.
  */
-export function loginAttemptKey(req) {
-  const email = String(req.body?.email ?? '').trim().toLowerCase().slice(0, 254);
-  return `${clientAddress(req)}|${createHash('sha256').update(email).digest('hex').slice(0, 32)}`;
+export function loginEmailHash(email) {
+  const normalized = String(email ?? '').trim().toLowerCase().slice(0, 254);
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 32);
 }
 
 /**
- * Fixed-window in-memory limiter (per instance). `key` defaults to the client address;
- * pass loginAttemptKey for sign-in. The table is bounded: expired entries go first, and past
- * the hard cap the oldest window is dropped.
+ * Key for sign-in attempts: the address plus a hash of the normalised e-mail. X-Forwarded-For is
+ * never read here (Express only honours it when trust proxy is on, and then it is already in
+ * `req.ip`). The e-mail is hashed so an attacker cannot grow the table with long strings.
+ * Attempts against one account share a bucket. Other accounts behind the same proxy do not.
+ */
+export function loginAttemptKey(req) {
+  return `${clientAddress(req)}|${loginEmailHash(req.body?.email)}`;
+}
+
+/**
+ * Fixed-window in-memory limiter (per instance). The portal still uses this.
+ * Sign-in uses loginRateLimit.js, which keeps its own memory window only when
+ * `login_rate_windows` is missing. `key` defaults to the client address. The
+ * table is bounded: expired entries go first, and past the hard cap the oldest
+ * window is dropped.
  */
 export function rateLimit({ windowMs = 15 * 60 * 1000, max = 20, now = () => Date.now(), key = clientAddress } = {}) {
   const hits = new Map();

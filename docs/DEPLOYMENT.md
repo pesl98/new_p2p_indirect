@@ -240,7 +240,7 @@ Omit `--with-org` if you only want schema + first admin.
 
 Leave `BOOTSTRAP_TOKEN` unset on a normal customer. The route then returns **403** `bootstrap_disabled` and writes nothing. It is not required for the process to boot, and `/api/health` does not read it. A deployment that already has users keeps answering **409** whether or not the variable is set.
 
-To use the route on an empty database, set `BOOTSTRAP_TOKEN` to at least 32 characters (shorter values are ignored, with a startup warning that does not print the value) and send the same value in `X-Bootstrap-Token`. A missing or wrong token is **403** `bootstrap_token_invalid` and is covered by the login rate limiter. The comparison is SHA-256 digests with `timingSafeEqual`. The token is never logged. A successful call still hashes the password, writes `users` + `user_credentials`, sets the httpOnly session cookie, and appends `BOOTSTRAP_ADMIN` attributed to the new user. The login screen has a setup-token field for this path.
+To use the route on an empty database, set `BOOTSTRAP_TOKEN` to at least 32 characters (shorter values are ignored, with a startup warning that does not print the value) and send the same value in `X-Bootstrap-Token`. A missing or wrong token is **403** `bootstrap_token_invalid` and is covered by the login rate limiter (rows in `login_rate_windows`, shared across instances; see the system manual). The comparison is SHA-256 digests with `timingSafeEqual`. The token is never logged. A successful call still hashes the password, writes `users` + `user_credentials`, sets the httpOnly session cookie, and appends `BOOTSTRAP_ADMIN` attributed to the new user. The login screen has a setup-token field for this path.
 
 ---
 
