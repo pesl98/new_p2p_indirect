@@ -80,8 +80,9 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-20 | Refuse the destructive demo seed against a remote database | [#86](https://github.com/pesl98/new_p2p_indirect/pull/86) | Security: refuse the demo seed against a remote database | `0cc06d3e05c1c32b30bebd31ef7e49b8e29af478` | merged |
 | — | 2026-11-21 | Close the unauthenticated first-admin HTTP bootstrap | [#87](https://github.com/pesl98/new_p2p_indirect/pull/87) | Security: fail-closed first-admin bootstrap | `213855c9208271400b2778ebb818265156803a34` | merged |
 | — | 2026-11-22 | Revoke sessions on credential and role changes; stop confirming passwords of inactive users | [#95](https://github.com/pesl98/new_p2p_indirect/pull/95) | Security: session revocation and inactive login | `ab68bbca15e50b9c2abce3c5b5ff83f26250ce86` | merged |
-| — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | [#97](https://github.com/pesl98/new_p2p_indirect/pull/97) | Security: fail-closed Turso env pair + SESSION_SECRET length | | done |
+| — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | [#97](https://github.com/pesl98/new_p2p_indirect/pull/97) | Security: fail-closed Turso env pair + SESSION_SECRET length | `baf21e0d8ff7ffb1d9b983034f49a95ba1678bb5` (merged 2026-11-23 08:40 Europe/Amsterdam) | merged |
 | — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | [#98](https://github.com/pesl98/new_p2p_indirect/pull/98) | Security: database-backed login rate limit | `c93bcecfacf717ab6cd6a6ed867905ca8369b01f` | merged |
+| — | 2026-11-24 | Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window | [#99](https://github.com/pesl98/new_p2p_indirect/pull/99) | Cap active login rate windows at 50,000 rows | pending | open |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -714,7 +715,9 @@ Server tests cover: a pre-upgrade cookie works until a bump; the old cookie is *
 
 **PR:** https://github.com/pesl98/new_p2p_indirect/pull/97 (#97).
 
-**Status:** done, waiting on review.
+**Merge SHA:** `baf21e0d8ff7ffb1d9b983034f49a95ba1678bb5` (merged 2026-11-23 08:40 Europe/Amsterdam).
+
+**Status:** merged.
 
 ### What changed
 
@@ -754,12 +757,32 @@ Server tests cover: both production variables unset → local SQLite; both set �
 - The counters are rows in `login_rate_windows`. `schema.sql` creates the table, and `migrateLoginRateWindows` runs it again from `applySchema`, so `npm run db:migrate` adds it on an existing SQLite or Turso/libsql database. No new environment variable and no manual step beyond that migrate.
 - The account key is the client address plus a SHA-256 prefix of the email (trimmed, lower-cased, cut at 254 characters). The address is Express `req.ip`. On Vercel, and when `TRUST_PROXY` is `1`, `true`, or `yes`, that is the `X-Forwarded-For` client. Otherwise the header is ignored. The table stores the hash, not the email.
 - A successful password login deletes that email’s account rows on every address. The address window stays. An unknown email, an inactive user, and a wrong password all increment the account window and return the same **401** `Invalid email or password`.
-- The first attempt in a process, and the first attempt after each window, deletes rows whose window has ended. Active rows are capped at 50,000, the same bound as the old in-memory table. Past that, the oldest windows are dropped, so a burst of distinct addresses cannot grow the table without limit inside one window. The squash of #98 landed before this cap. The cap is [#99](https://github.com/pesl98/new_p2p_indirect/pull/99).
+- The first attempt in a process, and the first attempt after each window, deletes rows whose window has ended.
 - If the table is missing (deploy before migrate), the process logs once and uses an in-memory window until it exits. Login still answers. The next process start tries the table again.
 
 ### Tests
 
-Server tests cover: two limiter instances sharing one database; the window expiring and a later attempt deleting expired rows; the 50,000-row cap dropping the oldest windows; success clearing that email on every address while the address cap remains; **429** with `Retry-After` and the same JSON body; unknown, inactive, and wrong-password attempts sharing a bucket and the same 401 body; `X-Forwarded-For` mattering only when trust proxy is on; `applySchema` creating the table on an existing database and running twice; a missing table logging once, falling back per instance, and still answering login.
+Server tests cover: two limiter instances sharing one database; the window expiring and a later attempt deleting expired rows; success clearing that email on every address while the address cap remains; **429** with `Retry-After` and the same JSON body; unknown, inactive, and wrong-password attempts sharing a bucket and the same 401 body; `X-Forwarded-For` mattering only when trust proxy is on; `applySchema` creating the table on an existing database and running twice; a missing table logging once, falling back per instance, and still answering login.
+
+`npm test`: 817 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Cap active login rate windows at 50,000 rows
+
+**Date:** 2026-11-24
+
+**Goal:** Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/99 (#99).
+
+**Status:** open.
+
+### What changed
+
+- Active rows are capped at 50,000, the same bound as the old in-memory table. Past that, the oldest windows are dropped, so a burst of distinct addresses cannot grow the table without limit inside one window. The squash of #98 landed before this cap.
+
+### Tests
+
+Server tests cover: the 50,000-row cap dropping the oldest windows.
 
 `npm test` on #98: 817 passing. With the active-row cap: 818 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 
