@@ -766,3 +766,23 @@ Server tests cover: two limiter instances sharing one database; the window expir
 
 `npm test`: 817 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 
+## Cap active login rate windows at 50,000 rows
+
+**Date:** 2026-11-24
+
+**Goal:** Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/99 (#99).
+
+**Status:** open.
+
+### What changed
+
+- Active rows are capped at 50,000, the same bound as the old in-memory table. Past that, the oldest windows are dropped, so a burst of distinct addresses cannot grow the table without limit inside one window. The squash of #98 landed before this cap.
+
+### Tests
+
+Server tests cover: the 50,000-row cap dropping the oldest windows.
+
+`npm test` on #98: 817 passing. With the active-row cap: 818 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+

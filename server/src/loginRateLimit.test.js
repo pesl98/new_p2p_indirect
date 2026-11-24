@@ -9,6 +9,7 @@ import { hashPassword } from './auth.js';
 import {
   LOGIN_ACCOUNT_MAX,
   LOGIN_ADDRESS_MAX,
+  LOGIN_RATE_MAX_TRACKED,
   LOGIN_WINDOW_MS,
   clearSuccessfulLoginAccount,
   loginRateLimit
@@ -115,6 +116,7 @@ describe('persisted login rate limit', () => {
     assert.equal(LOGIN_ACCOUNT_MAX, 10);
     assert.equal(LOGIN_ADDRESS_MAX, 300);
     assert.equal(LOGIN_WINDOW_MS, 15 * 60 * 1000);
+    assert.equal(LOGIN_RATE_MAX_TRACKED, 50_000);
   });
 
   test('applySchema adds login_rate_windows to an existing database and can run twice', async () => {
@@ -242,6 +244,40 @@ describe('persisted login rate limit', () => {
       assert.equal(String(row.bucket_key).includes('@'), false);
       assert.equal(String(row.subject_key).includes('@'), false);
     }
+  });
+
+  test('active rows stay within the tracked-key cap', async () => {
+    const db = await createMemoryDatabase();
+    const now = 20_000;
+    const limiter = loginRateLimit({
+      now: () => now,
+      accountMax: 100,
+      addressMax: 100,
+      windowMs: 60_000,
+      maxTrackedKeys: 2
+    });
+    await db.prepare(`
+      INSERT INTO login_rate_windows (scope, bucket_key, subject_key, attempt_count, reset_at) VALUES
+        ('address', '198.51.100.1', '', 1, 21000),
+        ('address', '198.51.100.2', '', 1, 22000),
+        ('address', '198.51.100.3', '', 1, 23000),
+        ('account', '198.51.100.3|old', 'old', 1, 24000)
+    `).run();
+
+    assert.equal((await invoke(limiter, requestFor({
+      email: 'capped@example.com',
+      ip: '198.51.100.9',
+      db
+    }))).nexted, true);
+
+    const rows = await db.prepare(
+      `SELECT scope, bucket_key, reset_at FROM login_rate_windows ORDER BY reset_at DESC`
+    ).all();
+    assert.equal(rows.length, 2);
+    assert.equal(rows.every((row) => Number(row.reset_at) === now + 60_000), true);
+    const keys = rows.map((row) => row.bucket_key);
+    assert.ok(keys.includes('198.51.100.9'));
+    assert.ok(keys.some((key) => key.startsWith('198.51.100.9|')));
   });
 
   test('a missing table logs once and falls back per instance, without crashing', async () => {

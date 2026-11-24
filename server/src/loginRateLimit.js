@@ -20,7 +20,8 @@ export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 export const LOGIN_ACCOUNT_MAX = 10;
 export const LOGIN_ADDRESS_MAX = 300;
 
-const MAX_TRACKED_KEYS = 50_000;
+/** Same hard cap the in-memory limiter used. Oldest windows are dropped past this. */
+export const LOGIN_RATE_MAX_TRACKED = 50_000;
 
 const UPSERT_SQL = `
   INSERT INTO login_rate_windows (scope, bucket_key, subject_key, attempt_count, reset_at)
@@ -52,19 +53,56 @@ function block(res, resetAt, now) {
   res.status(429).json({ error: 'Too many requests, try again later', code: 'rate_limited' });
 }
 
-function hitMemory(memory, scope, bucketKey, subjectKey, now, windowMs) {
+function hitMemory(memory, scope, bucketKey, subjectKey, now, windowMs, maxTracked) {
   const id = `${scope}\0${bucketKey}`;
   let entry = memory.get(id);
   if (!entry || entry.resetAt <= now) {
     entry = { count: 0, resetAt: now + windowMs, scope, subjectKey };
     memory.set(id, entry);
-    if (memory.size > 10000) {
+    if (memory.size > 10000 || memory.size > maxTracked) {
       for (const [key, value] of memory) if (value.resetAt <= now) memory.delete(key);
-      while (memory.size > MAX_TRACKED_KEYS) memory.delete(memory.keys().next().value);
+      while (memory.size > maxTracked) memory.delete(memory.keys().next().value);
     }
   }
   entry.count += 1;
   return entry;
+}
+
+/**
+ * Drop the oldest windows once the table is past `maxTracked`. The count
+ * runs first, so a table under the cap does not scan and delete. After a
+ * count shows slack, this process skips further counts for a fraction of
+ * that slack (at most 64 new keys). The periodic prune always counts.
+ * A failure must not fail the sign-in; the caller still has a count.
+ */
+function createTrim(maxTracked, log) {
+  let keysUntilCheck = 0;
+  return async function maybeTrim(db, force) {
+    if (!force && keysUntilCheck > 0) {
+      keysUntilCheck -= 1;
+      return;
+    }
+    try {
+      const row = await db.prepare(`SELECT COUNT(*) AS n FROM login_rate_windows`).get();
+      const n = Number(row?.n || 0);
+      if (n <= maxTracked) {
+        keysUntilCheck = Math.min(64, Math.floor((maxTracked - n) / 4));
+        return;
+      }
+      keysUntilCheck = 0;
+      await db.prepare(`
+        DELETE FROM login_rate_windows
+        WHERE rowid NOT IN (
+          SELECT rowid FROM login_rate_windows
+          ORDER BY reset_at DESC, rowid DESC
+          LIMIT ?
+        )
+      `).run(maxTracked);
+    } catch (error) {
+      if (isMissingLoginRateTable(error)) throw error;
+      log.error?.(`login rate limit: could not cap login_rate_windows (${error.message})`);
+    }
+  };
 }
 
 async function upsert(db, scope, bucketKey, subjectKey, now, windowMs) {
@@ -96,8 +134,13 @@ export function loginRateLimit({
   log = console,
   windowMs = LOGIN_WINDOW_MS,
   accountMax = LOGIN_ACCOUNT_MAX,
-  addressMax = LOGIN_ADDRESS_MAX
+  addressMax = LOGIN_ADDRESS_MAX,
+  maxTrackedKeys = LOGIN_RATE_MAX_TRACKED
 } = {}) {
+  const maxTracked = Number.isInteger(maxTrackedKeys) && maxTrackedKeys > 0
+    ? maxTrackedKeys
+    : LOGIN_RATE_MAX_TRACKED;
+  const maybeTrim = createTrim(maxTracked, log);
   const clock = typeof now === 'function' ? now : Date.now;
   const memory = new Map();
   accountMemories.add(memory);
@@ -117,13 +160,23 @@ export function loginRateLimit({
           // Once per window per process. The upsert below still resets this
           // key when its own row has expired, so a skipped prune cannot
           // keep a live counter open.
+          let didPrune = false;
           if (t >= prunedThrough) {
             await req.db.prepare(`DELETE FROM login_rate_windows WHERE reset_at <= ?`).run(t);
             prunedThrough = t + windowMs;
+            didPrune = true;
           }
           const addressHit = await upsert(req.db, 'address', address, '', t, windowMs);
-          if (addressHit.count > addressMax) return block(res, addressHit.resetAt, t);
+          if (addressHit.count > addressMax) {
+            if (didPrune || addressHit.count === 1) await maybeTrim(req.db, didPrune);
+            return block(res, addressHit.resetAt, t);
+          }
           const accountHit = await upsert(req.db, 'account', accountKey, subject, t, windowMs);
+          // New windows add rows. Count, and delete only past the cap. The
+          // periodic prune always counts, so a burst cannot skip the check.
+          if (didPrune || addressHit.count === 1 || accountHit.count === 1) {
+            await maybeTrim(req.db, didPrune);
+          }
           if (accountHit.count > accountMax) return block(res, accountHit.resetAt, t);
           return next();
         } catch (error) {
@@ -138,9 +191,9 @@ export function loginRateLimit({
         }
       }
 
-      const addressHit = hitMemory(memory, 'address', address, '', t, windowMs);
+      const addressHit = hitMemory(memory, 'address', address, '', t, windowMs, maxTracked);
       if (addressHit.count > addressMax) return block(res, addressHit.resetAt, t);
-      const accountHit = hitMemory(memory, 'account', accountKey, subject, t, windowMs);
+      const accountHit = hitMemory(memory, 'account', accountKey, subject, t, windowMs, maxTracked);
       if (accountHit.count > accountMax) return block(res, accountHit.resetAt, t);
       return next();
     } catch (error) {
