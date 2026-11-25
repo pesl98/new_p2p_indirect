@@ -143,9 +143,9 @@ turso db tokens create procureflow-acme
 
 Name pattern: `procureflow-<customer-slug>` (override with `--db <name>`). Lowercase, no spaces. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL). If the DB already exists, `--apply` **reuses** it — it never destroys.
 
-Copy the printed `export TURSO_DATABASE_URL=…`, `export TURSO_AUTH_TOKEN=…`, and `export SESSION_SECRET=…` into this shell and a password manager. `--json` redacts the token to its last 4 characters; full export lines are still printed on human stdout after `--apply`.
+Copy the printed `export TURSO_DATABASE_URL=…`, `export TURSO_AUTH_TOKEN=…`, `export SESSION_SECRET=…`, and `export PROCUREFLOW_SECRET_SLUG=acme` into this shell and a password manager. `--json` redacts the token to its last 4 characters; full export lines are still printed on human stdout after `--apply`. `PROCUREFLOW_SECRET_SLUG` is the slug, not a secret, and it is not written to Vercel.
 
-`SESSION_SECRET` HMAC-signs the httpOnly `pf_session` cookie. `--apply` mints a new 32-byte hex secret **unless** `SESSION_SECRET` is already set in this environment — then it **reuses** it (does not silently rotate). A value already set must be at least 32 characters. `turso:customer`, `onboard:customer`, and `vercel:customer` refuse a shorter one and do not print it. Generate a new one **per customer** with `openssl rand -hex 32`, or unset it and let `--apply` mint one. Do not reuse Acme’s secret on Beta.
+`SESSION_SECRET` HMAC-signs the httpOnly `pf_session` cookie. `--apply` mints a new 32-byte hex secret **unless** `SESSION_SECRET` is already set in this environment — then it **reuses** it (does not silently rotate). A value already set must be at least 32 characters, and `PROCUREFLOW_SECRET_SLUG` must equal this slug. The same label is required for `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `TURSO_AUTH_TOKEN`, and `TURSO_PREVIEW_AUTH_TOKEN` when those are already exported. `turso:customer`, `onboard:customer`, and `vercel:customer` refuse a shorter `SESSION_SECRET`, and they refuse another customer’s Turso host (a `procureflow-beta…` URL with `--slug acme`, including `TURSO_PREVIEW_DATABASE_URL` when it is set). The error names the variable and the slug and does not print the value. Nothing is spawned. Generate a new secret **per customer** with `openssl rand -hex 32`, or unset it and let `--apply` mint one. Do not reuse Acme’s secret on Beta.
 
 | Right | Wrong |
 | --- | --- |
@@ -194,17 +194,20 @@ There is **no cron**.
 
 ## 6. Set environment variables (Production **and** Preview)
 
-Keep the **same** `TURSO_*` / `SESSION_SECRET` already exported in this shell (from `turso:customer --apply`). The script **refuses to invent secrets**.
+Keep the **same** `TURSO_*` / `SESSION_SECRET` already exported in this shell (from `turso:customer --apply`), and keep `PROCUREFLOW_SECRET_SLUG` equal to this slug. The script **refuses to invent secrets**.
 
 ```bash
 # See the Production+Preview checklist + exact commands (no Vercel network, no mutation)
 npm run vercel:customer -- --slug acme
 
-# Set/update the three vars on Production and Preview, then redeploy
+# Set the three vars on Production and Preview when they are absent, then redeploy
 npm run vercel:customer -- --slug acme --apply
+
+# Replace keys that are already set (vercel env add --force). Omit this on a first install.
+npm run vercel:customer -- --slug acme --apply --rotate
 ```
 
-`--slug acme` targets project `procureflow-acme` (override with `--project <name>`). `--apply` requires the Vercel CLI and `vercel login`. It ensures the project and link (step 5) before setting env. Help: `npm run vercel:customer -- --help`.
+`--slug acme` targets project `procureflow-acme` (override with `--project <name>`). `--apply` requires the Vercel CLI and `vercel login`. It ensures the project and link (step 5) before setting env. It lists existing names with `vercel env ls` and does not print that output or read values. A key that is already present is left untouched. `--rotate` is the only way `vercel env add` receives `--force`. Help: `npm run vercel:customer -- --help`.
 
 | Variable | Value | Production | Preview |
 | --- | --- | --- | --- |
@@ -384,8 +387,11 @@ Skip the UI mapping if you are only proving login + admin user CRUD. Skip `boots
 Never share a URL.
 
 ```bash
+# unset Acme’s TURSO_* , SESSION_SECRET, and any other generated secret first,
+# or the shell guard refuses --slug beta before Turso or Vercel starts
 npm run turso:customer -- --slug beta --apply
 # copy the printed exports into this shell (new SESSION_SECRET — do not reuse Acme’s)
+# that includes PROCUREFLOW_SECRET_SLUG=beta
 
 # vercel:customer --apply creates/links procureflow-beta if this clone is not already linked to it
 npm run vercel:customer -- --slug beta --apply
@@ -394,7 +400,7 @@ npm run provision:customer -- --with-org \
   --password 'choose-a-long-password'
 ```
 
-Smoke `BASE_URL=https://procureflow-beta.vercel.app`. `vercel:customer --apply` replaces Turso URL/token + `SESSION_SECRET` on Production + Preview and redeploys.
+Smoke `BASE_URL=https://procureflow-beta.vercel.app`. `vercel:customer --apply` sets Turso URL/token + `SESSION_SECRET` on Production + Preview when those names are absent, and redeploys. A key that is already there stays until you pass `--rotate`.
 
 Leaving Acme’s URL in place would serve Acme’s data as Beta.
 

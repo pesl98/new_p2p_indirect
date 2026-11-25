@@ -52,7 +52,7 @@ npm run turso:customer -- --slug acme --apply    # create/reuse + print exports
 npm run turso:customer -- --slug beta --apply
 ```
 
-`--apply` is equivalent to `turso db create procureflow-<slug>` (no `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, plus a new `SESSION_SECRET` unless one is already exported. Copy the printed `export` lines into the shell. `--json` redacts the token to last 4 characters; full exports stay on human stdout.
+`--apply` is equivalent to `turso db create procureflow-<slug>` (no `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, plus a new `SESSION_SECRET` unless one is already exported. Copy the printed `export` lines into the shell, including `PROCUREFLOW_SECRET_SLUG` (the slug, not a secret). A shell that still holds another customer’s Turso host or an unlabeled secret is refused before Turso or Vercel starts. `--json` redacts the token to last 4 characters; full exports stay on human stdout.
 
 ### Local SQLite (laptop, air-gapped, or a file-per-customer VM)
 
@@ -78,11 +78,12 @@ Do not commit `*.db` files (`server/data/` is gitignored).
 export TURSO_DATABASE_URL='libsql://…'   # from `turso db show … --url`
 export TURSO_AUTH_TOKEN='…'              # from `turso db tokens create …`
 export SESSION_SECRET='…'                # minted unless already set in this shell
+export PROCUREFLOW_SECRET_SLUG='<customer>'  # shell label, not a Vercel variable
 ```
 
 **SQLite** — omit both Turso variables; optionally set `PROCUREMENT_DB_PATH`.
 
-On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Production and Preview** (or All Environments) with `npm run vercel:customer -- --slug <customer> --apply` (dry-run first; secrets stay in the shell). Preview URLs stay broken if the vars are Production-only. Env changes do not apply to an already-built Preview — Redeploy.
+On Vercel, set **both** Turso variables **and** `SESSION_SECRET` for **Production and Preview** (or All Environments) with `npm run vercel:customer -- --slug <customer> --apply` (dry-run first; secrets stay in the shell). `PROCUREFLOW_SECRET_SLUG` must equal that slug when the shell already has a token or a generated secret (`SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`). A Turso host for a different customer, including `TURSO_PREVIEW_*` when set, exits before any Turso or Vercel process. The error names the variable and the slug and does not print the value. An existing Vercel key is left untouched unless you pass `--rotate` (`vercel env add` gets `--force` only then). Preview URLs stay broken if the vars are Production-only. Env changes do not apply to an already-built Preview — Redeploy.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -283,7 +284,7 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 
 - [ ] **New Vercel project** `procureflow-<customer>` (one project per customer). `vercel:customer --apply` / `onboard:customer --apply` run `vercel project add` (idempotent if it already exists) then `vercel link --yes --project`. Root directory = repo root when you deploy from this checkout. Build command is already `npm run build` in [`vercel.json`](../vercel.json). If this directory is linked to a different project, the command **stops** and does not retarget.
 - [ ] **Dedicated Turso DB** via `npm run onboard:customer -- --slug <customer> --apply` (or `npm run turso:customer -- --slug <customer> --apply` — classic libSQL `turso db create procureflow-<customer>`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
-- [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` already exported from `turso:customer` (the Vercel script **refuses to invent secrets**):
+- [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, and `PROCUREFLOW_SECRET_SLUG` already exported from `turso:customer` (the Vercel script **refuses to invent secrets**, and it does not overwrite a key that is already set unless you pass `--rotate`):
 
   ```bash
   vercel login                                          # once; vercel switch if you have multiple teams

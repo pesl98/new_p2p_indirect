@@ -15,6 +15,7 @@
  */
 
 import { reusedSessionSecretError } from './auth.js';
+import { customerShellGuardError, SECRET_SLUG_ENV } from './customerShellGuard.js';
 import { runSmokeCli } from './smoke.js';
 import { runCustomerProvisionCli } from './provisionCustomer.js';
 import {
@@ -71,6 +72,9 @@ Usage:
                         Production Ready before it returns, so smoke is not
                         racing a still-building hostname.
   --base-url <url>      Override smoke / provision next-step URL.
+  --rotate              Forwarded to vercel:customer. Replaces Vercel env keys
+                        that already exist. Without it, an existing key is
+                        left untouched (vercel env add does not pass --force).
   --json                Machine summary. Tokens redacted to last 4 chars.
                         Full Turso export lines may still appear on human
                         stdout from turso:customer --apply.
@@ -83,6 +87,14 @@ A SESSION_SECRET already set in the shell must be at least 32 characters.
 A shorter value is refused and is not printed.
 Generate: openssl rand -hex 32
 Unset it to let --apply mint a 32-byte hex secret.
+Shell guard (before any Turso or Vercel process): TURSO_DATABASE_URL must
+name this customer's database. TURSO_PREVIEW_DATABASE_URL, when set, must
+name the preview database. A token or generated secret already in the shell
+(SESSION_SECRET, PORTAL_TOKEN_SECRET, CRON_SECRET, WEBHOOK_SIGNING_SECRET,
+TURSO_AUTH_TOKEN, TURSO_PREVIEW_AUTH_TOKEN) requires ${SECRET_SLUG_ENV}
+equal to --slug. A host such as procureflow-beta with --slug acme exits
+non-zero. The message names the variable and the slug and does not print
+the value. ${SECRET_SLUG_ENV} is not written to Vercel.
 On --apply, vercel:customer creates the project if missing
 (vercel project add; idempotent if it exists) and links this directory
 (vercel link --yes --project …). Already linked to that name: skip.
@@ -144,6 +156,10 @@ export function parseOnboardCustomerArgs(argv = []) {
       flags.add('apply');
       continue;
     }
+    if (arg === '--rotate') {
+      flags.add('rotate');
+      continue;
+    }
     if (arg === '--seed') {
       flags.add('seed');
       continue;
@@ -198,6 +214,7 @@ export function parseOnboardCustomerArgs(argv = []) {
     json: flags.has('json'),
     tursodb: flags.has('tursodb'),
     smoke: flags.has('smoke'),
+    rotate: flags.has('rotate'),
     withOrg: !noOrg,
     withOrgFlag: flags.has('withOrg'),
     noOrg,
@@ -230,8 +247,9 @@ export function buildTursoArgv({ slug, db } = {}) {
   return argv;
 }
 
-export function buildVercelArgv({ slug, project } = {}) {
+export function buildVercelArgv({ slug, project, rotate = false } = {}) {
   const argv = ['--slug', slug, '--apply'];
+  if (rotate) argv.push('--rotate');
   if (asTrimmed(project)) argv.push('--project', asTrimmed(project));
   return argv;
 }
@@ -265,13 +283,15 @@ export function buildSmokeArgv({
   return argv;
 }
 
-export function enrichEnvWithTursoExports(env = {}, exports = null) {
+export function enrichEnvWithTursoExports(env = {}, exports = null, { slug } = {}) {
   const next = { ...env };
   const minted = exports && typeof exports === 'object' ? exports : {};
   for (const key of CUSTOMER_ENV_KEYS) {
     const value = asTrimmed(minted[key]) || asTrimmed(next[key]);
     if (value) next[key] = value;
   }
+  const labeled = asTrimmed(slug);
+  if (labeled) next[SECRET_SLUG_ENV] = labeled;
   return next;
 }
 
@@ -359,12 +379,13 @@ export function formatOnboardDryRun({
   smoke = false,
   email = null,
   name = null,
-  env = process.env
+  env = process.env,
+  rotate = false
 } = {}) {
   const steps = plannedOnboardSteps({
     slug, dbName, projectName, withOrg, smoke, email, name, baseUrl
   });
-  const vercelPlan = buildApplyPlan({ slug, projectName });
+  const vercelPlan = buildApplyPlan({ slug, projectName, rotate });
   const provision = steps.find((step) => step.name === 'provision:customer');
   const smokeStep = steps.find((step) => step.name === 'smoke');
   const sessionSet = Boolean(asTrimmed(env.SESSION_SECRET));
@@ -397,6 +418,12 @@ export function formatOnboardDryRun({
     sessionSet
       ? '  export SESSION_SECRET=\'<reuse existing SESSION_SECRET from this environment — not printed>\''
       : `  export SESSION_SECRET='${WILL_MINT_PLACEHOLDER}'`,
+    `  export ${SECRET_SLUG_ENV}='${slug}'`,
+    '',
+    `${SECRET_SLUG_ENV} labels this shell. It is not a secret and is not written to Vercel.`,
+    rotate
+      ? '--rotate replaces Vercel env keys that already exist (vercel env add --force).'
+      : 'A Vercel env key that is already set is left untouched unless you pass --rotate.',
     '',
     'Step B — ensure Vercel project + link (no secrets; part of vercel:customer --apply):',
     `  ${vercelPlan.whoami.display}`,
@@ -407,6 +434,7 @@ export function formatOnboardDryRun({
     `  ${VERCEL_GITHUB_LIMIT}`,
     '',
     'Step C — vercel:customer env + redeploy (uses Step A secrets; no manual export):',
+    ...vercelPlan.listEnv.map((cmd) => `  ${cmd.display}`),
     ...vercelPlan.envCommands.map((cmd) => `  ${cmd.display}`),
     `  ${vercelPlan.listProduction.display}`,
     `  ${vercelPlan.redeployDisplay}`,
@@ -612,6 +640,12 @@ export async function runOnboardCustomerCli({
     return 1;
   }
 
+  const shellGuard = customerShellGuardError({ env, slug, dbName });
+  if (shellGuard) {
+    write(stderr, `${shellGuard.message}\n`);
+    return 1;
+  }
+
   const withOrg = args.withOrg;
   const reportOpts = {
     slug,
@@ -622,7 +656,8 @@ export async function runOnboardCustomerCli({
     smoke: args.smoke,
     email: args.email,
     name: args.name,
-    env
+    env,
+    rotate: args.rotate
   };
 
   if (!args.apply) {
@@ -653,7 +688,7 @@ export async function runOnboardCustomerCli({
   if (tursoCode !== 0) return tursoCode;
 
   const minted = tursoCustomerExports(tursoResult);
-  const enrichedEnv = enrichEnvWithTursoExports(env, minted);
+  const enrichedEnv = enrichEnvWithTursoExports(env, minted, { slug });
   const missing = missingMintedEnvKeys(enrichedEnv);
   if (missing.length) {
     write(
@@ -666,7 +701,11 @@ export async function runOnboardCustomerCli({
     return 1;
   }
 
-  const vercelArgv = buildVercelArgv({ slug, project: args.project || projectName });
+  const vercelArgv = buildVercelArgv({
+    slug,
+    project: args.project || projectName,
+    rotate: args.rotate
+  });
   const vercelCode = await runVercelFn({
     argv: vercelArgv,
     env: enrichedEnv,

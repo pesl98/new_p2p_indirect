@@ -83,6 +83,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-23 | Refuse a half-set Turso URL/token pair, and reject a SESSION_SECRET shorter than 32 characters in the customer CLIs | [#97](https://github.com/pesl98/new_p2p_indirect/pull/97) | Security: fail-closed Turso env pair + SESSION_SECRET length | `baf21e0d8ff7ffb1d9b983034f49a95ba1678bb5` (merged 2026-11-23 08:40 Europe/Amsterdam) | merged |
 | — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | [#98](https://github.com/pesl98/new_p2p_indirect/pull/98) | Security: database-backed login rate limit | `c93bcecfacf717ab6cd6a6ed867905ca8369b01f` | merged |
 | — | 2026-11-24 | Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window | [#99](https://github.com/pesl98/new_p2p_indirect/pull/99) | Cap active login rate windows at 50,000 rows | `2d4cac07d642705a91733b95898542142b8aab4e` | merged |
+| — | 2026-11-25 | Stop a shell that still holds another customer's Turso URL or generated secret from writing it into a different customer, and stop `vercel env add` from overwriting a key unless `--rotate` is passed | pending | Deploy safety: cross-customer shell guard | pending | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -787,4 +788,33 @@ Server tests cover: two limiter instances sharing one database; the window expir
 Server tests cover: the 50,000-row cap dropping the oldest windows.
 
 `npm test` on #98: 817 passing. With the active-row cap: 818 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Deploy safety: cross-customer shell guard
+
+**Date:** 2026-11-25
+
+**Goal:** A shell that still holds another customer's Turso URL or a generated secret must not be able to write those values into a different customer, and `vercel env add` must not overwrite a key that is already set unless the operator passes `--rotate`.
+
+**PR:** pending
+
+**Merge SHA:** pending
+
+**Status:** done (waiting on review).
+
+### What changed
+
+- `onboard:customer`, `turso:customer`, and `vercel:customer` check the shell before they start a Turso or Vercel process. A `TURSO_DATABASE_URL` whose host is another customer (for example `procureflow-beta…` with `--slug acme`) exits non-zero. The same check applies to `TURSO_PREVIEW_DATABASE_URL` when that variable is set: the host must be `procureflow-<slug>-preview` (or that name plus the Turso organization suffix). Host comparison uses `sameDatabaseHost`, so a regional `*.turso.io` host is the same database. The preview database is not accepted as the production URL.
+- `TURSO_AUTH_TOKEN` and `TURSO_PREVIEW_AUTH_TOKEN`, when set, require the matching URL to already belong to this slug and `PROCUREFLOW_SECRET_SLUG` to equal the slug. `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, and `WEBHOOK_SIGNING_SECRET`, when set, require the same label. The error names the variable and the slug. It does not print the secret, the token, or the URL.
+- `PROCUREFLOW_SECRET_SLUG` is an operator-shell label. It is not a deployment variable. The commands do not write it to Vercel. `turso:customer --apply` prints `export PROCUREFLOW_SECRET_SLUG='<slug>'` with the other export lines. `onboard:customer` sets that label on the in-process environment it passes to `vercel:customer` after the shell check has passed, so a first install from an empty shell still proceeds.
+- `vercel env add` no longer receives `--force` unless the operator passes `--rotate`. Without `--rotate`, `vercel env ls` is used for names only (the listing is not printed, and values are not read). A key that is already present is reported and left untouched. A missing key is added. If the name listing fails, the command adds nothing.
+
+### Existing deploys
+
+No new required deployment environment variable. The running app on Vercel is unchanged. An operator shell that still has another customer's URL or an unlabeled secret cannot run these three commands until the shell is cleared or `PROCUREFLOW_SECRET_SLUG` matches the slug. Re-running `vercel:customer --apply` no longer replaces a key that is already set. Replacing a database token or `SESSION_SECRET` is `vercel:customer --apply --rotate`.
+
+### Tests
+
+`server/src/customerShellGuard.test.js` checks the host rule, the preview pair, and `SESSION_SECRET` / `PORTAL_TOKEN_SECRET` / `CRON_SECRET` / `WEBHOOK_SIGNING_SECRET` without printing values. The beta URL and the unlabeled secrets exit non-zero before spawn for `onboard:customer`, `turso:customer`, and `vercel:customer`. `server/src/vercelCustomer.test.js` checks that `vercel env add` has no `--force` unless `--rotate` is passed, that an already-present key is skipped, and that a failed name listing does not add or print the fixture secret.
+
+`npm test`: 828 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 
