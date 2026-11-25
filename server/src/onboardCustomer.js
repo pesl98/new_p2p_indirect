@@ -247,9 +247,10 @@ export function buildTursoArgv({ slug, db } = {}) {
   return argv;
 }
 
-export function buildVercelArgv({ slug, project, rotate = false } = {}) {
+export function buildVercelArgv({ slug, project, rotate = false, db } = {}) {
   const argv = ['--slug', slug, '--apply'];
   if (rotate) argv.push('--rotate');
+  if (asTrimmed(db)) argv.push('--db', asTrimmed(db));
   if (asTrimmed(project)) argv.push('--project', asTrimmed(project));
   return argv;
 }
@@ -704,7 +705,8 @@ export async function runOnboardCustomerCli({
   const vercelArgv = buildVercelArgv({
     slug,
     project: args.project || projectName,
-    rotate: args.rotate
+    rotate: args.rotate,
+    db: dbName
   });
   const vercelCode = await runVercelFn({
     argv: vercelArgv,

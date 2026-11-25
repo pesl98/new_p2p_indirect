@@ -200,7 +200,7 @@ Changing any of the three customer variables on Vercel does nothing to a deploym
 
 ## 4. Turso
 
-One classic libSQL database per customer. Name: `procureflow-<slug>` (lowercase). Override with `--db` if you must. Do not pass `--tursodb`. That flag selects a different Turso engine. ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL only. `turso:customer` and `onboard:customer` exit with an error if you pass `--tursodb`.
+One classic libSQL database per customer. Name: `procureflow-<slug>` (lowercase). Override with `--db` if you must. Pass that same `--db` to `vercel:customer` when you run it by itself. `onboard:customer` passes it through. `--db` is the Turso database the shell URL must name. It does not rename the Vercel project. Do not pass `--tursodb`. That flag selects a different Turso engine. ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL only. `turso:customer` and `onboard:customer` exit with an error if you pass `--tursodb`.
 
 Slug rules (the CLIs normalize to lowercase): letters, numbers, and hyphens; cannot start or end with a hyphen; at most 48 characters. Example: `acme`. The database name is at most 64 characters.
 
@@ -515,7 +515,7 @@ Dry-run is the default. It prints the plan and does not call Turso, Vercel, or t
 | Flag | Meaning |
 | --- | --- |
 | `--slug <customer>` | Required. Default database and project `procureflow-<slug>`. |
-| `--db <name>` | Override the Turso database name. |
+| `--db <name>` | Override the Turso database name. `onboard:customer` passes it to `vercel:customer`, which then requires the shell URL to name that database. |
 | `--project <name>` | Override the Vercel project name. |
 | `--apply` | Do the work. Without it, dry-run. |
 | `--email` and `--password` | First admin. Both or neither. Password must be at least 8 characters. |

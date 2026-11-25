@@ -141,7 +141,7 @@ turso db show procureflow-acme --url
 turso db tokens create procureflow-acme
 ```
 
-Name pattern: `procureflow-<customer-slug>` (override with `--db <name>`). Lowercase, no spaces. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL). If the DB already exists, `--apply` **reuses** it — it never destroys.
+Name pattern: `procureflow-<customer-slug>` (override with `--db <name>`). Lowercase, no spaces. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL). If the DB already exists, `--apply` **reuses** it — it never destroys. When you override the name, pass the same `--db` to `vercel:customer`. `onboard:customer` does that for you. `--db` is the Turso database the shell URL must name. It does not change the Vercel project.
 
 Copy the printed `export TURSO_DATABASE_URL=…`, `export TURSO_AUTH_TOKEN=…`, `export SESSION_SECRET=…`, and `export PROCUREFLOW_SECRET_SLUG=acme` into this shell and a password manager. `--json` redacts the token to its last 4 characters; full export lines are still printed on human stdout after `--apply`. `PROCUREFLOW_SECRET_SLUG` is the slug, not a secret, and it is not written to Vercel.
 

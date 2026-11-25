@@ -72,9 +72,14 @@ Usage:
   npm run vercel:customer -- --slug acme --dry-run
   npm run vercel:customer -- --slug acme --apply
   npm run vercel:customer -- --slug acme --project procureflow-acme --apply
+  npm run vercel:customer -- --slug acme --db pf-acme-prod --apply
 
   --slug <customer>     Required. Default project name is procureflow-<slug>
   --project <name>      Override Vercel project name
+  --db <name>           Turso database this shell's URL must name. Default
+                        procureflow-<slug>. Use the same --db as turso:customer
+                        when that command did not use the default name. Does
+                        not change the Vercel project.
   --dry-run             Print the operator checklist + exact commands (default).
                         Exit 0. Never calls Vercel. No network required.
   --apply               Ensure the Vercel project exists and this directory is
@@ -105,8 +110,9 @@ Required shell env (same values that will go to Vercel; never invented):
                         to Vercel. Not a secret.
 
 Shell guard (before any Vercel process): TURSO_DATABASE_URL must name
-procureflow-<slug> (host procureflow-<slug> or procureflow-<slug>-<org>).
-TURSO_PREVIEW_DATABASE_URL, when set, must name procureflow-<slug>-preview.
+the database from --db, or procureflow-<slug> (host <database> or
+<database>-<org>). TURSO_PREVIEW_DATABASE_URL, when set, must name that
+database plus -preview.
 A host such as procureflow-beta with --slug acme exits non-zero. The message
 names the variable and the slug and does not print the value.
 
@@ -164,6 +170,15 @@ export function defaultProjectName(slug) {
   if (!normalized) return null;
   if (normalized.startsWith(DEFAULT_PROJECT_PREFIX)) return normalized;
   return `${DEFAULT_PROJECT_PREFIX}${normalized}`;
+}
+
+/** Same shape as turso:customer's database names. Empty or invalid is null. */
+export function normalizeCustomerDatabaseName(raw) {
+  const name = asTrimmed(raw).toLowerCase();
+  if (!name) return null;
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(name)) return null;
+  if (name.length > 64) return null;
+  return name;
 }
 
 export function suggestedBaseUrl(projectName) {
@@ -224,6 +239,7 @@ export function parseVercelCustomerArgs(argv = []) {
     if (
       arg === '--slug' || arg.startsWith('--slug=')
       || arg === '--project' || arg.startsWith('--project=')
+      || arg === '--db' || arg.startsWith('--db=')
     ) {
       const key = arg.replace(/^--/, '').split('=')[0];
       const taken = takeFlagValue(argv, i, arg);
@@ -246,6 +262,7 @@ export function parseVercelCustomerArgs(argv = []) {
     rotate: flags.has('rotate'),
     slug: values.slug != null ? String(values.slug).trim() : null,
     project: values.project != null ? String(values.project).trim() : null,
+    db: values.db != null ? String(values.db).trim() : null,
     unknown
   };
 }
@@ -1119,6 +1136,18 @@ export async function runVercelCustomerCli({
     return 1;
   }
 
+  let dbName = defaultProjectName(slug);
+  if (args.db != null) {
+    dbName = normalizeCustomerDatabaseName(args.db);
+    if (!dbName) {
+      write(
+        stderr,
+        `Invalid --db "${args.db}". Use a lowercase Turso database name (letters, numbers, hyphens), e.g. procureflow-acme.\n`
+      );
+      return 1;
+    }
+  }
+
   const shortSecret = reusedSessionSecretError(env);
   if (shortSecret) {
     write(stderr, `${shortSecret.message}\n`);
@@ -1128,7 +1157,7 @@ export async function runVercelCustomerCli({
   const shellGuard = customerShellGuardError({
     env,
     slug,
-    dbName: defaultProjectName(slug)
+    dbName
   });
   if (shellGuard) {
     write(stderr, `${shellGuard.message}\n`);
