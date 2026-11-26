@@ -559,7 +559,7 @@ What that `--apply` does, in order:
    | Production | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT` |
    | Preview | `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT` |
 
-4. Writes a SQL dump of `procureflow-acme` to a file outside this git checkout. The file is customer data. The command does not print it. If the dump fails, the file is empty, or the dump cannot be started, the database is not destroyed. The exact dump command is in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md#9-offboarding).
+4. Writes a SQL dump of `procureflow-acme` to a file outside this git checkout. The file is customer data and is readable only by the account that ran the command. The command does not print it. If the database is already gone, that is success and destroy is not run again. If the dump fails for another reason, the file is empty, or the dump cannot be started, the database is not destroyed. The exact dump command is in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md#9-offboarding).
 5. Then `turso db destroy procureflow-acme --yes`, only after that dump file is non-empty. If the database is already gone, that is success. The preview database is not destroyed.
 6. Leaves the Vercel project in place. It does not run a group-wide token invalidation. Databases that already share Turso’s default group stay there until a person recreates them.
 

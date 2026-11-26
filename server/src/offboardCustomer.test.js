@@ -502,6 +502,7 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
       const dumpFile = path.join(dumpDir, 'acme-20261126T072700Z.sql');
       const dumpBody = fs.readFileSync(dumpFile, 'utf8');
       assert.match(dumpBody, /PF_DUMP_SENTINEL_do_not_echo/);
+      assert.equal(fs.statSync(dumpFile).mode & 0o777, 0o600);
       assert.match(stdout.text, /Already linked to procureflow-acme/);
       assert.match(stdout.text, /Turso database: destroyed/);
       assert.match(stdout.text, /left in place/);
@@ -709,6 +710,98 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
     assert.deepEqual(calls, []);
     assert.match(stderr.text, /could not be read/);
     assert.match(stderr.text, /was not destroyed/);
+  });
+
+  test('a dump that reports the database is already gone does not destroy and exits 0', async () => {
+    const fsStub = unlinkedFs();
+    const calls = [];
+    const dumpDir = makeDumpDir();
+    const { stdout, stderr } = captureStreams();
+    try {
+      const code = await runOffboardCustomerCli({
+        argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
+        cwd: '/tmp/unlinked-acme',
+        stdout,
+        stderr,
+        existsSync: fsStub.existsSync,
+        readFileSync: fsStub.readFileSync,
+        spawnFn(command, args) {
+          calls.push([command, ...args]);
+          if (args[0] === 'whoami' || (args[0] === 'auth' && args[1] === 'whoami')) {
+            return fakeChild({ stdout: 'operator\n' });
+          }
+          if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+          if (args[0] === 'db' && args[1] === 'shell') {
+            return fakeChild({
+              exitCode: 1,
+              stdout: `${DUMP_SENTINEL}\n`,
+              stderr: 'Error: could not find database with name procureflow-acme: record not found\n'
+            });
+          }
+          if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
+          throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
+        }
+      });
+      assert.equal(code, 0, stderr.text);
+      assert.match(stdout.text, /already gone, so there was nothing to dump/);
+      assert.match(stdout.text, /turso db destroy was not run/);
+      assert.match(stdout.text, /Turso database: already gone/);
+      assert.equal(calls.some((args) => args[2] === 'shell'), true);
+      assert.equal(calls.some((args) => args[2] === 'destroy'), false);
+      assert.equal(argvHasInvalidate(calls), false);
+      const shown = `${stdout.text}\n${stderr.text}`;
+      assert.doesNotMatch(shown, /PF_DUMP_SENTINEL_do_not_echo/);
+      assert.equal(fs.readdirSync(dumpDir).length, 0);
+    } finally {
+      removeDumpDir(dumpDir);
+    }
+  });
+
+  test('dump stdout is streamed to the file in chunks and is not echoed', async () => {
+    const fsStub = unlinkedFs();
+    const dumpDir = makeDumpDir();
+    const { stdout, stderr } = captureStreams();
+    try {
+      const code = await runOffboardCustomerCli({
+        argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
+        cwd: '/tmp/unlinked-acme',
+        stdout,
+        stderr,
+        now: new Date('2026-11-26T07:27:00.000Z'),
+        existsSync: fsStub.existsSync,
+        readFileSync: fsStub.readFileSync,
+        spawnFn(command, args) {
+          if (args[0] === 'whoami' || (args[0] === 'auth' && args[1] === 'whoami')) {
+            return fakeChild({ stdout: 'operator\n' });
+          }
+          if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+          if (args[0] === 'db' && args[1] === 'shell') {
+            const child = new EventEmitter();
+            child.stdout = new EventEmitter();
+            child.stderr = new EventEmitter();
+            child.stdin = { end() {} };
+            queueMicrotask(() => {
+              child.stdout.emit('data', 'CREATE TABLE streamed_dump (id);\n');
+              child.stdout.emit('data', `${DUMP_SENTINEL}\n`);
+              child.emit('close', 0);
+            });
+            return child;
+          }
+          if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
+          throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
+        }
+      });
+      assert.equal(code, 0, stderr.text);
+      const dumpFile = path.join(dumpDir, 'acme-20261126T072700Z.sql');
+      const body = fs.readFileSync(dumpFile, 'utf8');
+      assert.equal(body, `CREATE TABLE streamed_dump (id);\n${DUMP_SENTINEL}\n`);
+      assert.equal(fs.statSync(dumpFile).mode & 0o777, 0o600);
+      const shown = `${stdout.text}\n${stderr.text}`;
+      assert.doesNotMatch(shown, /streamed_dump/);
+      assert.doesNotMatch(shown, /PF_DUMP_SENTINEL_do_not_echo/);
+    } finally {
+      removeDumpDir(dumpDir);
+    }
   });
 
   test('a failing dump does not spawn turso db destroy and does not echo the dump', async () => {

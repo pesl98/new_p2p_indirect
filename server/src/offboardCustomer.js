@@ -127,12 +127,15 @@ On --apply --confirm-slug <slug>, in order:
      vercel link). A missing Vercel project stops before the dump and
      before Turso destroy (switch team with vercel switch, or destroy the
      DB yourself if you already deleted the project — take your own dump first).
-  5. turso db shell <db> .dump, written only to the dump file. The dump text
-     is not printed. A non-zero exit, an empty file, or a spawn error stops
-     the command. turso db destroy is not run.
+  5. turso db shell <db> .dump. Stdout is streamed to the dump file and is
+     not printed. The file mode is 0600 (owner read/write only). If the
+     command reports that the database is already gone, that is success:
+     no dump file is kept and turso db destroy is not run. Any other
+     non-zero exit, an empty file, or a spawn error stops the command.
+     turso db destroy is not run.
   6. turso db destroy <db> --yes
-     Only after a non-empty dump file was written. If the database is
-     already gone, that is success. The preview database is not destroyed.
+     Only after a non-empty dump file was written. The preview database
+     is not destroyed.
 
 The Vercel project is left in place. vercel project rm (CLI 59.26.0) has no
 --yes, so this command does not delete it. Dashboard: Settings → General →
@@ -491,7 +494,7 @@ export function formatDryRunReport({
   const dumpPlan = dump || resolveOffboardDumpPath({ slug });
   const dumpNote = dumpPlan.refused
     ? `    REFUSED: that path is inside this git checkout${dumpPlan.workTree ? ` (${dumpPlan.workTree})` : ''}. --apply will not remove env or destroy.`
-    : '    (SQL is written only to that file and is not printed; a failed or empty dump does not destroy)';
+    : '    (SQL is streamed to that file, mode 0600, and is not printed; a failed or empty dump does not destroy; a database that is already gone is success)';
   const lines = [
     'ProcureFlow customer offboard (dry-run — no Vercel or Turso mutation)',
     '',
@@ -518,7 +521,7 @@ export function formatDryRunReport({
     `    → ${dumpPlan.filePath}`,
     dumpNote,
     `  ${plan.destroy.display}`,
-    '    (only after a non-empty dump; if the database is already gone, that is success)',
+    '    (only after a non-empty dump; a database that is already gone does not reach this command)',
     '',
     'Env keys removed, per target (a key that is already absent is success):',
     `  Production: ${OFFBOARD_ENV_KEYS_BY_TARGET.production.join(', ')}`,
@@ -597,71 +600,214 @@ function printCommandOutput(stream, text, env) {
   if (redacted) write(stream, `${redacted}\n`);
 }
 
+/** Owner read/write. Group and other have no access to the customer dump. */
+export const DUMP_FILE_MODE = 0o600;
+
+const DUMP_CLASSIFY_TAIL = 8192;
+
+function chunkText(chunk) {
+  return Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+}
+
+function rememberTail(previous, chunk) {
+  const next = previous + chunkText(chunk);
+  return next.length > DUMP_CLASSIFY_TAIL ? next.slice(-DUMP_CLASSIFY_TAIL) : next;
+}
+
+function safeUnlink(unlinkSync, file) {
+  try { unlinkSync(file); } catch { /* a missing partial is not a dump */ }
+}
+
+function safeClose(fd) {
+  if (fd == null) return;
+  try { fs.closeSync(fd); } catch { /* already closed */ }
+}
+
 /**
- * Run `turso db shell <db> .dump` and write stdout to filePath.
- * The SQL body is not returned and must not be written to a log stream.
- * A non-zero exit, a spawn error, or an empty file leaves no successful dump.
+ * Stream `turso db shell <db> .dump` stdout to filePath.
+ * The SQL is not accumulated and is not returned. A non-zero exit, a spawn
+ * error, or an empty file leaves no dump file. A missing database is
+ * `already-gone` and also leaves no file.
  */
-export async function captureDumpToFile({
+export function captureDumpToFile({
   tursoBin,
   dbName,
   filePath,
   spawnFn = spawn,
   cwd,
   env,
-  run = runProcess,
   workTrees,
   mkdirSync = fs.mkdirSync,
-  writeFileSync = fs.writeFileSync,
+  openSync = fs.openSync,
+  writeSync = fs.writeSync,
+  chmodSync = fs.chmodSync,
   statSync = fs.statSync,
   renameSync = fs.renameSync,
   unlinkSync = fs.unlinkSync,
   existsSync = fs.existsSync,
   realpathSync = fs.realpathSync
 } = {}) {
-  const result = await run(tursoBin, tursoDumpArgv(dbName), { spawnFn, cwd, env });
-  const code = result && result.code != null ? result.code : 1;
-  if (!result || result.error || code === 127) {
-    return { ok: false, reason: 'spawn-error', code };
-  }
-  if (code !== 0) {
-    return { ok: false, reason: 'exit', code };
-  }
-  const body = typeof result.stdout === 'string' ? result.stdout : '';
-  if (!body.trim()) {
-    return { ok: false, reason: 'empty', code: 0 };
-  }
   const canon = canonicalPath(filePath, existsSync, realpathSync);
   const trees = workTrees || offboardWorkTrees({ cwd, existsSync, realpathSync });
   for (const tree of trees) {
     if (pathInsideDir(canon, tree)) {
-      return { ok: false, reason: 'inside-work-tree', code: 1 };
+      return Promise.resolve({ ok: false, reason: 'inside-work-tree', code: 1 });
     }
   }
-  const partial = `${filePath}.partial`;
-  try {
-    mkdirSync(path.dirname(filePath), { recursive: true });
-    writeFileSync(partial, body, { encoding: 'utf8', flag: 'wx' });
-    const size = statSync(partial).size;
-    if (!size) {
-      try { unlinkSync(partial); } catch { /* empty partial is not a dump */ }
-      return { ok: false, reason: 'empty', code: 0 };
-    }
-    renameSync(partial, filePath);
-    const finalSize = statSync(filePath).size;
-    if (!finalSize) {
-      return { ok: false, reason: 'empty', code: 0 };
-    }
-    return { ok: true, bytes: finalSize };
-  } catch (error) {
-    try { unlinkSync(partial); } catch { /* do not report the SQL */ }
-    return {
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+    const failWrite = (error) => finish({
       ok: false,
       reason: 'write',
       code: 1,
       errorCode: error && error.code ? error.code : null
+    });
+
+    const partial = `${filePath}.partial`;
+    const dir = path.dirname(filePath);
+    let fd = null;
+    try {
+      const dirExisted = existsSync(dir);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      if (!dirExisted) chmodSync(dir, 0o700);
+      fd = openSync(partial, 'wx', DUMP_FILE_MODE);
+      chmodSync(partial, DUMP_FILE_MODE);
+    } catch (error) {
+      safeClose(fd);
+      safeUnlink(unlinkSync, partial);
+      failWrite(error);
+      return;
+    }
+
+    let child;
+    try {
+      child = spawnFn(tursoBin, tursoDumpArgv(dbName), {
+        cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+    } catch (error) {
+      safeClose(fd);
+      safeUnlink(unlinkSync, partial);
+      finish({
+        ok: false,
+        reason: 'spawn-error',
+        code: error && error.code === 'ENOENT' ? 127 : 1
+      });
+      return;
+    }
+
+    if (!child || typeof child.on !== 'function') {
+      safeClose(fd);
+      safeUnlink(unlinkSync, partial);
+      finish({ ok: false, reason: 'spawn-error', code: 1 });
+      return;
+    }
+
+    let stderrTail = '';
+    let stdoutTail = '';
+    let bytes = 0;
+    let sawContent = false;
+    let writeError = null;
+
+    const onStdout = (chunk) => {
+      if (writeError) return;
+      try {
+        writeSync(fd, chunk);
+      } catch (error) {
+        writeError = error;
+        return;
+      }
+      const text = chunkText(chunk);
+      bytes += Buffer.byteLength(text);
+      if (!sawContent && /[^\s]/.test(text)) sawContent = true;
+      stdoutTail = rememberTail(stdoutTail, chunk);
     };
-  }
+    if (child.stdout && typeof child.stdout.on === 'function') {
+      child.stdout.on('data', onStdout);
+    }
+    if (child.stderr && typeof child.stderr.on === 'function') {
+      child.stderr.on('data', (chunk) => {
+        stderrTail = rememberTail(stderrTail, chunk);
+      });
+    }
+    if (child.stdin && typeof child.stdin.end === 'function') {
+      child.stdin.end();
+    }
+
+    const discardPartial = () => {
+      safeClose(fd);
+      fd = null;
+      safeUnlink(unlinkSync, partial);
+    };
+
+    child.on('error', (error) => {
+      discardPartial();
+      finish({
+        ok: false,
+        reason: 'spawn-error',
+        code: error && error.code === 'ENOENT' ? 127 : 1
+      });
+    });
+
+    child.on('close', (code) => {
+      const exitCode = code == null ? 1 : code;
+      if (writeError) {
+        discardPartial();
+        failWrite(writeError);
+        return;
+      }
+      safeClose(fd);
+      fd = null;
+      if (exitCode !== 0) {
+        const alreadyGone = looksLikeMissingDatabase(stdoutTail, stderrTail);
+        discardPartial();
+        if (alreadyGone) {
+          finish({ ok: false, reason: 'already-gone', code: exitCode });
+          return;
+        }
+        finish({
+          ok: false,
+          reason: exitCode === 127 ? 'spawn-error' : 'exit',
+          code: exitCode
+        });
+        return;
+      }
+      if (!bytes || !sawContent) {
+        discardPartial();
+        finish({ ok: false, reason: 'empty', code: 0 });
+        return;
+      }
+      try {
+        chmodSync(partial, DUMP_FILE_MODE);
+        renameSync(partial, filePath);
+        chmodSync(filePath, DUMP_FILE_MODE);
+        const finalSize = statSync(filePath).size;
+        const mode = statSync(filePath).mode & 0o777;
+        if (!finalSize) {
+          safeUnlink(unlinkSync, filePath);
+          finish({ ok: false, reason: 'empty', code: 0 });
+          return;
+        }
+        if (mode !== DUMP_FILE_MODE) {
+          safeUnlink(unlinkSync, filePath);
+          finish({ ok: false, reason: 'write', code: 1, errorCode: 'EPERM' });
+          return;
+        }
+        finish({ ok: true, bytes: finalSize });
+      } catch (error) {
+        safeUnlink(unlinkSync, partial);
+        safeUnlink(unlinkSync, filePath);
+        failWrite(error);
+      }
+    });
+  });
 }
 
 export function formatDumpFailure({ dbName, filePath, outcome } = {}) {
@@ -899,34 +1045,40 @@ export async function runOffboardCustomerCli({
     cwd,
     env: childEnv
   });
-  if (!dumped.ok) {
+  let dbState = 'destroyed';
+  let dumpNote = `Dump file:      ${dumpPlan.filePath} (${dumped.bytes} bytes; mode 0600; contents not printed)`;
+  if (dumped.reason === 'already-gone') {
+    dbState = 'already-gone';
+    dumpNote = 'Dump file:      not written (database already gone)';
+    write(stdout, `Database ${dbName} is already gone, so there was nothing to dump.\n`);
+    write(stdout, 'turso db destroy was not run.\n');
+  } else if (!dumped.ok) {
     write(stderr, `${formatDumpFailure({
       dbName,
       filePath: dumpPlan.filePath,
       outcome: dumped
     })}\n`);
     return 1;
-  }
-  write(stdout, `Dump written (${dumped.bytes} bytes). The SQL was not printed.\n`);
-
-  write(stdout, `Destroying Turso database ${dbName}…\n`);
-  const destroyed = await runTurso(plan.destroy.argv);
-  printCommandOutput(stdout, destroyed.stdout, env);
-  let dbState = 'destroyed';
-  if (destroyed.code !== 0) {
-    if (looksLikeMissingDatabase(destroyed.stdout, destroyed.stderr)) {
-      dbState = 'already-gone';
-      write(stdout, `Database ${dbName} is already gone — treating destroy as success.\n`);
-    } else {
-      write(
-        stderr,
-        `Failed to destroy Turso database ${dbName} (turso exit ${destroyed.code}).\n`
-          + `A dump was written to ${dumpPlan.filePath}. Its contents were not printed.\n`
-          + 'Customer env keys were already removed from Production and Preview.\n'
-          + 'Re-run this command after fixing Turso (already-absent env keys are success).\n'
-      );
-      printCommandOutput(stderr, destroyed.stderr || destroyed.stdout, env);
-      return 1;
+  } else {
+    write(stdout, `Dump written (${dumped.bytes} bytes, mode 0600). The SQL was not printed.\n`);
+    write(stdout, `Destroying Turso database ${dbName}…\n`);
+    const destroyed = await runTurso(plan.destroy.argv);
+    printCommandOutput(stdout, destroyed.stdout, env);
+    if (destroyed.code !== 0) {
+      if (looksLikeMissingDatabase(destroyed.stdout, destroyed.stderr)) {
+        dbState = 'already-gone';
+        write(stdout, `Database ${dbName} is already gone — treating destroy as success.\n`);
+      } else {
+        write(
+          stderr,
+          `Failed to destroy Turso database ${dbName} (turso exit ${destroyed.code}).\n`
+            + `A dump was written to ${dumpPlan.filePath}. Its contents were not printed.\n`
+            + 'Customer env keys were already removed from Production and Preview.\n'
+            + 'Re-run this command after fixing Turso (already-absent env keys are success).\n'
+        );
+        printCommandOutput(stderr, destroyed.stderr || destroyed.stdout, env);
+        return 1;
+      }
     }
   }
 
@@ -941,14 +1093,14 @@ export async function runOffboardCustomerCli({
     absentKeys
       ? `Already absent:  ${absentKeys} key/target pair(s) (counted as success)`
       : 'Already absent:  none',
-    `Dump file:      ${dumpPlan.filePath} (${dumped.bytes} bytes; contents not printed)`,
+    dumpNote,
     `Turso database: ${dbState === 'already-gone' ? 'already gone' : 'destroyed'}`,
     'Preview database: left in place (not destroyed)',
     'Vercel project: left in place (not deleted)',
     'turso db tokens invalidate was not run.',
     `${DEMO_PERSONA_SWITCHER_KEY} was not set.`,
     '',
-    'The dump file is customer data. Keep it outside this git checkout and restrict who can read it.',
+    'The dump file is customer data, mode 0600. Keep it outside this git checkout.',
     'Rotate or delete the stored URL, database token, SESSION_SECRET, and the other removed secrets in the password manager.',
     'Removing them from Vercel does not revoke the Turso token. This command does not call tokens invalidate.',
     '',

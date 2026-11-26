@@ -833,7 +833,7 @@ No new required deployment environment variable. The running app on Vercel is un
 
 ### What changed
 
-- Before `turso db destroy`, offboard runs `turso db shell <db> .dump` and writes stdout only to a file outside the git work tree. The default directory is `$HOME/tmp`. `--dump-dir` overrides it. The file name is `<slug>-<UTC timestamp>.sql`. A path inside the checkout is refused before any Vercel or Turso process starts. The dump text is never printed. A non-zero exit, an empty file, or a spawn error does not spawn `turso db destroy` and the command exits non-zero.
+- Before `turso db destroy`, offboard runs `turso db shell <db> .dump` and streams stdout to a file outside the git work tree. The file mode is `0600`. The default directory is `$HOME/tmp`. `--dump-dir` overrides it. The file name is `<slug>-<UTC timestamp>.sql`. A path inside the checkout is refused before any Vercel or Turso process starts. The dump text is never printed and is not held as one string. A non-zero exit, an empty file, or a spawn error does not spawn `turso db destroy` and the command exits non-zero. If the dump reports that the database is already gone, that is success: no dump file is kept and destroy is not run.
 - Env removal is the Deploy 1 list, per target. Production: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT`. Preview: `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT`. A missing key is success. SSO and SMTP keys stay.
 - `turso db tokens invalidate` is not called. The preview database is not destroyed. The Vercel project is not deleted. Databases that already share Turso’s default group stay there.
 - Without `--confirm-slug` equal to the normalized slug, the command prints the dry-run plan and spawns nothing. The cross-customer shell guard still covers `onboard:customer`, `turso:customer`, and `vercel:customer`, which write secrets. Offboard does not place shell secrets on an argument list. Command output still goes through `redactSecrets`.
@@ -844,7 +844,7 @@ No new required deployment environment variable. The running app is unchanged. T
 
 ### Tests
 
-`server/src/offboardCustomer.test.js` covers a failing, empty, or unstarted dump (destroy is not spawned and the dump text is not echoed), a dump path inside the work tree (refused, no spawn), an env rm list equal to the per-target table, a missing key counted as success, no `tokens invalidate` argv, and no spawn when `--confirm-slug` is omitted. `server/src/provision.test.js` doc-phrase locks still pass.
+`server/src/offboardCustomer.test.js` covers a failing, empty, or unstarted dump (destroy is not spawned and the dump text is not echoed), a dump that reports the database is already gone (exit 0, destroy is not spawned), stdout streamed to a mode `0600` file, a dump path inside the work tree (refused, no spawn), an env rm list equal to the per-target table, a missing key counted as success, no `tokens invalidate` argv, and no spawn when `--confirm-slug` is omitted. `server/src/provision.test.js` doc-phrase locks still pass.
 
-`npm test`: 837 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+`npm test`: 839 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 
