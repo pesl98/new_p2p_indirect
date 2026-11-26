@@ -84,6 +84,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | [#98](https://github.com/pesl98/new_p2p_indirect/pull/98) | Security: database-backed login rate limit | `c93bcecfacf717ab6cd6a6ed867905ca8369b01f` | merged |
 | — | 2026-11-24 | Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window | [#99](https://github.com/pesl98/new_p2p_indirect/pull/99) | Cap active login rate windows at 50,000 rows | `2d4cac07d642705a91733b95898542142b8aab4e` | merged |
 | — | 2026-11-25 | Stop a shell that still holds another customer's Turso URL or generated secret from writing it into a different customer, and stop `vercel env add` from overwriting a key unless `--rotate` is passed | [#103](https://github.com/pesl98/new_p2p_indirect/pull/103) | Deploy safety: cross-customer shell guard | `f61a11afcd0fb438c9de6a0a380c528c0a1aa3c6` | merged |
+| — | 2026-11-26 | Dump the customer database outside the git checkout before offboard destroys it, and remove the full per-environment secret list | [#105](https://github.com/pesl98/new_p2p_indirect/pull/105) | Deploy 1 offboard safety: dump before destroy | | done |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -817,4 +818,33 @@ No new required deployment environment variable. The running app on Vercel is un
 `server/src/customerShellGuard.test.js` checks the host rule, the preview pair, and `SESSION_SECRET` / `PORTAL_TOKEN_SECRET` / `CRON_SECRET` / `WEBHOOK_SIGNING_SECRET` without printing values. The beta URL and the unlabeled secrets exit non-zero before spawn for `onboard:customer`, `turso:customer`, and `vercel:customer`. `server/src/vercelCustomer.test.js` checks that `vercel env add` has no `--force` unless `--rotate` is passed, that an already-present key is skipped, and that a failed name listing does not add or print the fixture secret.
 
 `npm test`: 830 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Deploy 1 offboard safety: dump before destroy
+
+**Date:** 2026-11-26
+
+**Goal:** `offboard:customer` dumps the production database to a file outside the git checkout before `turso db destroy`, removes the full per-environment secret list, and does not mutate without `--confirm-slug`.
+
+**PR:** https://github.com/pesl98/new_p2p_indirect/pull/105 (#105).
+
+**Merge SHA:**
+
+**Status:** done (waiting on review).
+
+### What changed
+
+- Before `turso db destroy`, offboard runs `turso db shell <db> .dump` and streams stdout to a file outside the git work tree. The file mode is `0600`. The default directory is `$HOME/tmp`. `--dump-dir` overrides it. The file name is `<slug>-<UTC timestamp>.sql`. A path inside the checkout is refused before any Vercel or Turso process starts. The dump text is never printed and is not held as one string. A non-zero exit, an empty file, or a spawn error does not spawn `turso db destroy` and the command exits non-zero. If the dump reports that the database is already gone, that is success: no dump file is kept and destroy is not run.
+- Env removal is the Deploy 1 list, per target. Production: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT`. Preview: `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT`. A missing key is success. SSO and SMTP keys stay.
+- `turso db tokens invalidate` is not called. The preview database is not destroyed. The Vercel project is not deleted. Databases that already share Turso’s default group stay there.
+- Without `--confirm-slug` equal to the normalized slug, the command prints the dry-run plan and spawns nothing. The cross-customer shell guard still covers `onboard:customer`, `turso:customer`, and `vercel:customer`, which write secrets. Offboard does not place shell secrets on an argument list. Command output still goes through `redactSecrets`.
+
+### Existing deploys
+
+No new required deployment environment variable. The running app is unchanged. This change is the operator CLI and the runbooks.
+
+### Tests
+
+`server/src/offboardCustomer.test.js` covers a failing, empty, or unstarted dump (destroy is not spawned and the dump text is not echoed), a dump that reports the database is already gone (exit 0, destroy is not spawned), stdout streamed to a mode `0600` file, a dump path inside the work tree (refused, no spawn), an env rm list equal to the per-target table, a missing key counted as success, no `tokens invalidate` argv, and no spawn when `--confirm-slug` is omitted. `server/src/provision.test.js` doc-phrase locks still pass.
+
+`npm test`: 839 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 

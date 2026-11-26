@@ -118,10 +118,12 @@ npm run offboard:customer -- --help
 rm -f "$PROCUREMENT_DB_PATH" "$PROCUREMENT_DB_PATH"-wal "$PROCUREMENT_DB_PATH"-shm
 npm run db:migrate
 
-# Deprovision (preferred): dry-run, then strip Production+Preview customer env and destroy the DB.
-# --apply does nothing destructive unless --confirm-slug matches the normalized slug.
-# Does not delete the Vercel project. Does not seed. Fails closed if this checkout
-# is linked to a different Vercel project.
+# Deprovision (preferred): dry-run, then strip the per-target env list, dump outside
+# this git checkout, and destroy the production DB. A failed or empty dump does not
+# destroy. --apply does nothing destructive unless --confirm-slug matches the slug.
+# Does not delete the Vercel project, does not destroy the preview database, and
+# does not invalidate tokens. Does not seed. Fails closed if this checkout is
+# linked to a different Vercel project or the dump path is inside the checkout.
 npm run offboard:customer -- --slug acme
 npm run offboard:customer -- --slug acme --apply --confirm-slug acme
 

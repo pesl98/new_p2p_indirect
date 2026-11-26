@@ -551,13 +551,21 @@ npm run offboard:customer -- --slug acme --apply --confirm-slug acme
 What that `--apply` does, in order:
 
 1. Stops if this checkout is linked to a **different** Vercel project. It does not retarget, does not run `vercel link`, and does not destroy the database.
-2. Removes only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` from **Production** and **Preview** (`vercel env rm <key> <production|preview> --yes --project procureflow-acme`). It does not set `DEMO_PERSONA_SWITCHER` and does not touch other env keys. A key that is already absent is success. If the Vercel project is not in the current team, the command stops **before** Turso destroy (`vercel switch`, then retry).
-3. Then `turso db destroy procureflow-acme --yes`. If the database is already gone, that is success.
-4. Leaves the Vercel project in place.
+2. Stops if the dump directory is inside this git checkout. The default directory is the home directory’s `tmp` folder. `--dump-dir` overrides it. No env changes and no database destroy in that case.
+3. Removes the list below (`vercel env rm <key> <production|preview> --yes --project procureflow-acme`). It does not set `DEMO_PERSONA_SWITCHER`. SSO and SMTP keys stay. A key that is already absent is success. If the Vercel project is not in the current team, the command stops **before** the dump and **before** Turso destroy (`vercel switch`, then retry).
 
-Never seeds. Never prints full tokens. `--db` / `--project` override the names (defaults `procureflow-<slug>`). Help: `npm run offboard:customer -- --help`.
+   | Target | Keys |
+   | --- | --- |
+   | Production | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT` |
+   | Preview | `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT` |
 
-Rotate or delete the URL, database token, and `SESSION_SECRET` in the password manager afterward. Removing them from Vercel does not revoke the Turso token. Leaving the Turso database alive after deleting the Vercel project still holds all P2P data — if you already deleted the project by hand, run `turso db destroy procureflow-acme --yes` yourself.
+4. Writes a SQL dump of `procureflow-acme` to a file outside this git checkout. The file is customer data and is readable only by the account that ran the command. The command does not print it. If the database is already gone, that is success and destroy is not run again. If the dump fails for another reason, the file is empty, or the dump cannot be started, the database is not destroyed. The exact dump command is in [DEPLOY_MANUAL.md](DEPLOY_MANUAL.md#9-offboarding).
+5. Then `turso db destroy procureflow-acme --yes`, only after that dump file is non-empty. If the database is already gone, that is success. The preview database is not destroyed.
+6. Leaves the Vercel project in place. It does not run a group-wide token invalidation. Databases that already share Turso’s default group stay there until a person recreates them.
+
+Never seeds. Never prints secret values, tokens, database URLs, or the dump. `--db` / `--project` override the names (defaults `procureflow-<slug>`). Help: `npm run offboard:customer -- --help`.
+
+Rotate or delete the URL, database token, `SESSION_SECRET`, and the other removed secrets in the password manager afterward. Removing them from Vercel does not revoke the Turso token. Leaving the Turso database alive after deleting the Vercel project still holds all P2P data — if you already deleted the project by hand, take your own dump, then run `turso db destroy procureflow-acme --yes` yourself.
 
 ---
 
