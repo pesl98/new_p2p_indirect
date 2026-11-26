@@ -84,7 +84,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-24 | Persist the login rate limit in the customer database so it holds across Vercel instances and cold starts | [#98](https://github.com/pesl98/new_p2p_indirect/pull/98) | Security: database-backed login rate limit | `c93bcecfacf717ab6cd6a6ed867905ca8369b01f` | merged |
 | — | 2026-11-24 | Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window | [#99](https://github.com/pesl98/new_p2p_indirect/pull/99) | Cap active login rate windows at 50,000 rows | `2d4cac07d642705a91733b95898542142b8aab4e` | merged |
 | — | 2026-11-25 | Stop a shell that still holds another customer's Turso URL or generated secret from writing it into a different customer, and stop `vercel env add` from overwriting a key unless `--rotate` is passed | [#103](https://github.com/pesl98/new_p2p_indirect/pull/103) | Deploy safety: cross-customer shell guard | `f61a11afcd0fb438c9de6a0a380c528c0a1aa3c6` | merged |
-| — | 2026-11-26 | Dump the customer database outside the git checkout before offboard destroys it, and remove the full per-environment secret list | [#105](https://github.com/pesl98/new_p2p_indirect/pull/105) | Deploy 1 offboard safety: dump before destroy | | done |
+| — | 2026-11-26 | Dump the customer database outside the git checkout before offboard destroys it, and remove the full per-environment secret list | [#105](https://github.com/pesl98/new_p2p_indirect/pull/105) | Deploy 1 offboard safety: dump before destroy | `e9ec33c59b8e95ef2e4ecc43c707767253e36112` | merged |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -827,9 +827,9 @@ No new required deployment environment variable. The running app on Vercel is un
 
 **PR:** https://github.com/pesl98/new_p2p_indirect/pull/105 (#105).
 
-**Merge SHA:**
+**Merge SHA:** `e9ec33c59b8e95ef2e4ecc43c707767253e36112` (squash-merged).
 
-**Status:** done (waiting on review).
+**Status:** merged.
 
 ### What changed
 
