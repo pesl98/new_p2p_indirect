@@ -99,7 +99,7 @@ Versions these scripts were written and checked against (comments in the CLI sou
 | Vercel CLI **59.24.0** | `vercel project add` exits 0 when the project already exists (HTTP 409). |
 | Vercel CLI **59.25.4** | `vercel inspect <deployment> --json` returns `readyState`. The scripts poll that. They do not use `inspect --wait`. |
 | Vercel CLI **59.26.0** | `vercel env rm <name> <production\|preview> --yes` works. `vercel project rm` has **no** `--yes`, so offboard does not delete the project. |
-| Turso CLI **v1.0.32** | `turso db destroy <name> --yes` deletes the database. That command does not take `--location` or `--instance` (those flags, when present, target one replica). |
+| Turso CLI **v1.0.32** | `turso db destroy <name> --yes` deletes the database. That command does not take `--location` or `--instance` (those flags, when present, target one replica). Offboard dumps with `turso db shell <name> .dump` before that destroy. `turso db tokens invalidate` is group-wide and offboard does not call it. |
 
 If a newer CLI rejects a flag, run `vercel <command> --help` or `turso <command> --help` and compare it with the commands in this manual before you improvise.
 
@@ -348,7 +348,7 @@ After the new deployment is Ready, revoke the old token in Turso if `turso db to
 
 ### 4.5 Backups, restore, and point-in-time
 
-These scripts do not take backups and do not restore them.
+These scripts do not restore a dump, and they do not schedule backups. `offboard:customer --apply` is the exception: it writes one SQL dump outside this git checkout immediately before it destroys the production database (section 9). It does not restore that file.
 
 What you can do with the tools this repo actually calls:
 
@@ -358,7 +358,7 @@ What you can do with the tools this repo actually calls:
 
 Point-in-time restore, extra replicas, and scheduled backups are Turso product features. They are not in `package.json`. If your Turso plan includes them, enable them in the Turso dashboard for **each** customer database and confirm the commands with `turso --help`. A database created by `turso:customer` does not turn those features on for you.
 
-Take a dump or snapshot before `offboard:customer --apply` or a manual `turso db destroy` if you might need the data. After destroy, ProcureFlow cannot reconstruct it.
+`offboard:customer --apply` writes that dump itself, outside the git checkout, and does not print it. If the dump fails, the database is not destroyed. A manual `turso db destroy` does not write a dump: take one yourself first. After destroy, ProcureFlow cannot reconstruct the database.
 
 ### 4.6 Destroy
 
@@ -366,7 +366,7 @@ Take a dump or snapshot before `offboard:customer --apply` or a manual `turso db
 turso db destroy procureflow-acme --yes
 ```
 
-Prefer `npm run offboard:customer` (section 9) when the customer is leaving. That removes the Vercel env vars first, then destroys the database. A bare `turso db destroy` leaves the Vercel project and its env pointing at a database that no longer exists.
+Prefer `npm run offboard:customer` (section 9) when the customer is leaving. That removes the per-target env list, writes a SQL dump outside this checkout, then destroys the production database. It does not destroy the preview database and it does not invalidate tokens. A bare `turso db destroy` leaves the Vercel project and its env pointing at a database that no longer exists.
 
 ### 4.7 Costs and limits
 
@@ -1008,36 +1008,35 @@ npm run offboard:customer -- --slug acme --apply --confirm-slug acme
 
 What `--apply` does, in order:
 
-1. If this checkout is linked to a **different** Vercel project, it stops. It does not run `vercel link`, does not change env, and does not destroy the database.
-2. `vercel whoami`, then `turso auth whoami`. A login failure stops before any delete. If the Vercel project is not in the current team, the command stops **before** Turso destroy. `vercel switch`, then retry. If you already deleted the project by hand, destroy the database yourself with `turso db destroy procureflow-acme --yes`.
-3. Removes only `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET` from Production and Preview:
+1. If this checkout is linked to a **different** Vercel project, it stops. It does not run `vercel link`, does not change env, does not dump, and does not destroy the database.
+2. If the dump path is inside this git checkout, it stops before any CLI call. No env changes and no destroy. The default directory is `$HOME/tmp`. `--dump-dir <dir>` overrides it. The file name is `<slug>-<UTC timestamp>.sql`.
+3. `vercel whoami`, then `turso auth whoami`. A login failure stops before any delete. If the Vercel project is not in the current team, the command stops **before** the dump and **before** Turso destroy. `vercel switch`, then retry. If you already deleted the project by hand, dump the database yourself, then `turso db destroy procureflow-acme --yes`.
+4. Removes this list. A key that is already absent counts as success. The same name is not removed from both targets when the targets differ.
 
-   ```bash
-   vercel env rm TURSO_DATABASE_URL production --yes --project procureflow-acme
-   vercel env rm TURSO_DATABASE_URL preview --yes --project procureflow-acme
-   vercel env rm TURSO_AUTH_TOKEN production --yes --project procureflow-acme
-   vercel env rm TURSO_AUTH_TOKEN preview --yes --project procureflow-acme
-   vercel env rm SESSION_SECRET production --yes --project procureflow-acme
-   vercel env rm SESSION_SECRET preview --yes --project procureflow-acme
-   ```
+   | Target | Keys |
+   | --- | --- |
+   | Production | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT` |
+   | Preview | `TURSO_PREVIEW_DATABASE_URL`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`, `PROCUREFLOW_TENANT` |
 
-   Other keys are left alone, including `IDENTITY_PROVIDER`, `APP_BASE_URL`, `LOCAL_LOGIN`, `OIDC_*`, `SAML_*`, `SSO_*`, and `DEMO_PERSONA_SWITCHER`. A key that is already absent counts as success. Remove IdP secrets from the project yourself before you delete the project, or they remain in Vercel until the project is gone. The script does not copy them into the database.
-4. `turso db destroy procureflow-acme --yes`. If the database is already gone, that counts as success.
+   Each removal is `vercel env rm <key> <production|preview> --yes --project procureflow-acme`. Other keys are left alone, including `IDENTITY_PROVIDER`, `APP_BASE_URL`, `LOCAL_LOGIN`, `OIDC_*`, `SAML_*`, `SSO_*`, and `DEMO_PERSONA_SWITCHER`. Remove IdP secrets from the project yourself before you delete the project, or they remain in Vercel until the project is gone. The script does not copy them into the database. If a removal fails for a reason other than “already absent”, the command stops. The dump is not taken and the database is not destroyed.
+5. `turso db shell procureflow-acme .dump`. Stdout is written only to the dump file. The SQL is not printed. The file is customer data: keep it outside this checkout and restrict who can read it. A non-zero exit, an empty file, or a failure to start the command stops the command. `turso db destroy` is not run. Env keys already removed stay removed; a re-run treats an absent key as success and tries the dump again.
+6. `turso db destroy procureflow-acme --yes`, only after that dump file is non-empty. If the database is already gone, that counts as success. The preview database is not destroyed.
 
-It never seeds and never prints full tokens.
+It never seeds and never prints secret values, tokens, database URLs, or the dump.
 
 What it does **not** remove:
 
+- The preview database (`procureflow-<slug>-preview`). Destroying it is a later step.
+- Tokens in Turso. `turso db tokens invalidate` is group-wide. Databases that already share the org’s default group stay there until a person recreates them in a group of their own. This command does not call `tokens invalidate` on that group. Deleting the env var does not revoke the token either.
 - The Vercel project, its domains, and its GitHub connection. `vercel project rm` on CLI 59.26.0 has no `--yes`, so the script will not delete the project.
 - Deployments and Instant Rollback history (rollback still will not bring the database back).
-- The token inside Turso. Deleting the env var does not revoke it.
-- Password-manager copies. Delete or rotate those yourself.
+- Password-manager copies. Delete or rotate those yourself, including `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, and `WEBHOOK_SIGNING_SECRET`.
 - A SQLite file on a laptop. Offboard only talks to Vercel and Turso.
 - Individual audit rows. `UPDATE` and `DELETE` on `audit_logs`, `sso_login_events`, `sso_assertion_uses`, and `compliance_audit_events` abort. Do not plan a SQL cleanup of those tables before destroy. `turso db destroy` removes the whole database, which is how that customer’s evidence goes away. Deleting a local SQLite file does the same for a laptop database. `npm run seed` also removes them, by `DROP TABLE`, and then loads demo data — that is a wipe, not an offboard, and it is not for a customer you are keeping.
 
-Delete the empty Vercel project in the dashboard: Settings → General → Delete Project. Do that after offboard, or accept that an empty project remains. If you delete the project first, the next offboard cannot strip env (the project is missing) and will not reach Turso destroy. In that case run `turso db destroy` yourself. IdP secrets that offboard left on the project are deleted with the project.
+Delete the empty Vercel project in the dashboard: Settings → General → Delete Project. Do that after offboard, or accept that an empty project remains. If you delete the project first, the next offboard cannot strip env (the project is missing) and will not reach the dump or Turso destroy. In that case dump and `turso db destroy` yourself. IdP secrets that offboard left on the project are deleted with the project.
 
-`--db` and `--project` override the names. Help: `npm run offboard:customer -- --help`.
+`--db` and `--project` override the names. `--dump-dir` overrides the dump directory. Help: `npm run offboard:customer -- --help`.
 
 ### Wipe data but keep the install
 
@@ -1195,8 +1194,8 @@ What to do: compare the project env with section 3.1. `APP_BASE_URL` must be the
 - [ ] Extra people were created in Administration → Users with their own passwords, or they sign in through the IdP against accounts you created.
 - [ ] An admin or finance user can open **Audit & Compliance → Verification** and the findings list is empty (section 8.7). CSV export is expected to append a `COMPLIANCE_EXPORT` row.
 - [ ] You have not planned a SQL `DELETE` of audit rows. Offboard destroys the database instead.
-- [ ] Offboard, when you use it, is followed by deleting the password-manager copies, removing leftover IdP env vars (or deleting the Vercel project), and revoking the Turso token in Turso. The script does not revoke the token, does not remove SSO env vars, and does not delete the Vercel project.
-- [ ] A Turso dump or platform snapshot exists before any `turso db destroy`.
+- [ ] Offboard, when you use it, is followed by deleting the password-manager copies, removing leftover IdP env vars (or deleting the Vercel project), and revoking the Turso token in Turso yourself. The script removes the section 9 list (a missing key is success), writes a dump outside the git checkout, and does not print that dump. It does not revoke the token, does not call `turso db tokens invalidate`, does not destroy the preview database, does not remove SSO env vars, and does not delete the Vercel project.
+- [ ] `offboard:customer --apply` has written its dump outside this git checkout before destroy, or a manual `turso db destroy` was preceded by a dump you took. The dump file is not in git.
 
 ---
 
@@ -1216,7 +1215,7 @@ Dry-run is the default only for the customer CLIs `onboard:customer`, `turso:cus
 | `npm run bootstrap-org` | Five cost centers and FY 2026 budgets. |
 | `npm run bootstrap-admin -- --email … --password '…'` | First admin only. No token. Exit 2 if users exist. Optional `--name` and `--title`. `POST /api/auth/bootstrap` is optional and off unless `BOOTSTRAP_TOKEN` is set. |
 | `npm run smoke` | HTTP checks. Set `BASE_URL`. Optional `--email` and `--password` together. |
-| `npm run offboard:customer -- --slug <slug> --apply --confirm-slug <slug>` | Strip the three env vars, then `turso db destroy`. Leaves the Vercel project and any SSO env vars. |
+| `npm run offboard:customer -- --slug <slug> --apply --confirm-slug <slug>` | Strip the section 9 env list, dump outside the git checkout, then `turso db destroy`. Does not call `tokens invalidate`. Leaves the preview database, the Vercel project, and any SSO env vars. |
 | `npm run seed` | Destructive demo. Drops application tables and loads personas. Not for a live customer. |
 
 There is no npm script for SSO settings or compliance reports. Those are environment variables (section 3.1) and `GET /api/compliance/…` for an admin or finance session (section 8.7).

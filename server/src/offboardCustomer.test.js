@@ -2,10 +2,10 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import {
-  CUSTOMER_ENV_KEYS,
   DEMO_PERSONA_SWITCHER_KEY,
   VERCEL_ENV_TARGETS
 } from './vercelCustomer.js';
@@ -14,6 +14,7 @@ import { looksLikeMissingDatabase } from './tursoCustomer.js';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 import {
   OFFBOARD_CUSTOMER_HELP,
+  OFFBOARD_ENV_KEYS_BY_TARGET,
   confirmSlugMatches,
   envRmArgv,
   formatDryRunReport,
@@ -22,10 +23,34 @@ import {
   parseOffboardCustomerArgs,
   plannedEnvRemovals,
   plannedOffboardCommands,
+  resolveOffboardDumpPath,
   resolveOffboardIdentity,
   runOffboardCustomerCli,
-  tursoDestroyArgv
+  tursoDestroyArgv,
+  tursoDumpArgv
 } from './offboardCustomer.js';
+
+const PRODUCTION_OFFBOARD_KEYS = [
+  'TURSO_DATABASE_URL',
+  'TURSO_AUTH_TOKEN',
+  'SESSION_SECRET',
+  'PORTAL_TOKEN_SECRET',
+  'CRON_SECRET',
+  'WEBHOOK_SIGNING_SECRET',
+  'PROCUREFLOW_TENANT'
+];
+
+const PREVIEW_OFFBOARD_KEYS = [
+  'TURSO_PREVIEW_DATABASE_URL',
+  'TURSO_PREVIEW_AUTH_TOKEN',
+  'SESSION_SECRET',
+  'PORTAL_TOKEN_SECRET',
+  'CRON_SECRET',
+  'WEBHOOK_SIGNING_SECRET',
+  'PROCUREFLOW_TENANT'
+];
+
+const DUMP_SENTINEL = 'PF_DUMP_SENTINEL_do_not_echo CREATE TABLE offboard_dump_sentinel (id);';
 
 function captureStreams() {
   const stdout = { text: '', write(chunk) { this.text += chunk; } };
@@ -87,6 +112,28 @@ function unlinkedFs() {
   };
 }
 
+function expectedEnvCalls(project = 'procureflow-acme') {
+  const calls = [];
+  for (const target of VERCEL_ENV_TARGETS) {
+    for (const key of OFFBOARD_ENV_KEYS_BY_TARGET[target]) {
+      calls.push(['vercel', 'env', 'rm', key, target, '--yes', '--project', project]);
+    }
+  }
+  return calls;
+}
+
+function makeDumpDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'pf-offboard-'));
+}
+
+function removeDumpDir(dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+function argvHasInvalidate(calls) {
+  return calls.some((args) => args.includes('invalidate') || args.includes('tokens'));
+}
+
 const SECRET_ENV = {
   TURSO_DATABASE_URL: 'libsql://procureflow-acme.turso.io',
   TURSO_AUTH_TOKEN: 'tok_test_secret_value',
@@ -109,6 +156,19 @@ describe('offboard:customer arg parsing', () => {
     assert.equal(args.dryRun, false);
     assert.equal(args.confirmSlug, 'acme');
     assert.equal(args.seed, false);
+    assert.equal(args.dumpDir, null);
+  });
+
+  test('parses --dump-dir and does not treat it as unknown', () => {
+    const args = parseOffboardCustomerArgs([
+      '--slug', 'acme',
+      '--dump-dir', '/var/tmp/procureflow-dumps'
+    ]);
+    assert.equal(args.dumpDir, '/var/tmp/procureflow-dumps');
+    assert.equal(args.dryRun, true);
+    assert.deepEqual(args.unknown, []);
+    const eq = parseOffboardCustomerArgs(['--dump-dir=/var/tmp/procureflow-dumps']);
+    assert.equal(eq.dumpDir, '/var/tmp/procureflow-dumps');
   });
 
   test('dry-run is the default; --seed is tracked', () => {
@@ -146,24 +206,71 @@ describe('offboard:customer arg parsing', () => {
 });
 
 describe('offboard:customer plan', () => {
-  test('env remove covers three keys on production and preview, then destroy', () => {
+  test('env remove is the §3.1 list per target, then dump, then destroy', () => {
+    assert.deepEqual(OFFBOARD_ENV_KEYS_BY_TARGET.production, PRODUCTION_OFFBOARD_KEYS);
+    assert.deepEqual(OFFBOARD_ENV_KEYS_BY_TARGET.preview, PREVIEW_OFFBOARD_KEYS);
     const plan = plannedOffboardCommands('procureflow-acme', 'procureflow-acme');
     assert.deepEqual(plan.whoami.argv, ['whoami']);
     assert.deepEqual(plan.tursoWhoami.argv, ['auth', 'whoami']);
-    assert.equal(plan.envRemovals.length, 6);
+    assert.equal(plan.envRemovals.length, 14);
     assert.deepEqual(
       plan.envRemovals.map((cmd) => [cmd.key, cmd.target]),
-      CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map((target) => [key, target]))
+      VERCEL_ENV_TARGETS.flatMap((target) => (
+        OFFBOARD_ENV_KEYS_BY_TARGET[target].map((key) => [key, target])
+      ))
     );
-    assert.deepEqual(envRmArgv('TURSO_AUTH_TOKEN', 'preview', 'procureflow-acme'), [
-      'env', 'rm', 'TURSO_AUTH_TOKEN', 'preview', '--yes', '--project', 'procureflow-acme'
+    const productionKeys = plan.envRemovals.filter((cmd) => cmd.target === 'production').map((cmd) => cmd.key);
+    const previewKeys = plan.envRemovals.filter((cmd) => cmd.target === 'preview').map((cmd) => cmd.key);
+    assert.deepEqual(productionKeys, PRODUCTION_OFFBOARD_KEYS);
+    assert.deepEqual(previewKeys, PREVIEW_OFFBOARD_KEYS);
+    assert.equal(productionKeys.includes('TURSO_PREVIEW_DATABASE_URL'), false);
+    assert.equal(productionKeys.includes('TURSO_PREVIEW_AUTH_TOKEN'), false);
+    assert.equal(previewKeys.includes('TURSO_DATABASE_URL'), false);
+    assert.equal(previewKeys.includes('TURSO_AUTH_TOKEN'), false);
+    assert.deepEqual(envRmArgv('TURSO_PREVIEW_AUTH_TOKEN', 'preview', 'procureflow-acme'), [
+      'env', 'rm', 'TURSO_PREVIEW_AUTH_TOKEN', 'preview', '--yes', '--project', 'procureflow-acme'
+    ]);
+    assert.deepEqual(tursoDumpArgv('procureflow-acme'), [
+      'db', 'shell', 'procureflow-acme', '.dump'
     ]);
     assert.deepEqual(tursoDestroyArgv('procureflow-acme'), [
       'db', 'destroy', 'procureflow-acme', '--yes'
     ]);
+    const argvs = [
+      plan.whoami.argv,
+      plan.tursoWhoami.argv,
+      plan.dump.argv,
+      plan.destroy.argv,
+      ...plan.envRemovals.map((cmd) => cmd.argv)
+    ];
+    for (const argv of argvs) {
+      assert.equal(argv.includes('invalidate'), false);
+      assert.equal(argv.includes('tokens'), false);
+    }
+    assert.equal(plan.destroy.argv.includes('procureflow-acme-preview'), false);
     const joined = plannedEnvRemovals('procureflow-acme').map((cmd) => cmd.display).join('\n');
     assert.doesNotMatch(joined, new RegExp(DEMO_PERSONA_SWITCHER_KEY));
     assert.doesNotMatch(joined, /seed/);
+    assert.doesNotMatch(joined, /tokens invalidate/);
+  });
+
+  test('the default dump path is under the home tmp dir and outside the work tree', () => {
+    const outside = resolveOffboardDumpPath({
+      slug: 'acme',
+      homedir: os.homedir(),
+      now: new Date('2026-11-26T07:27:00.000Z')
+    });
+    assert.equal(outside.refused, false);
+    assert.equal(outside.fileName, 'acme-20261126T072700Z.sql');
+    assert.equal(outside.dir, path.join(os.homedir(), 'tmp'));
+    const inside = resolveOffboardDumpPath({
+      slug: 'acme',
+      dumpDir: repoRoot,
+      cwd: os.tmpdir(),
+      now: new Date('2026-11-26T07:27:00.000Z')
+    });
+    assert.equal(inside.refused, true);
+    assert.equal(inside.reason, 'inside-work-tree');
   });
 
   test('classifies absent env separately from a missing Vercel project', () => {
@@ -197,6 +304,7 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
     assert.equal(code, 0);
     assert.equal(spawned, false);
     assert.match(stdout.text, /--confirm-slug/);
+    assert.match(stdout.text, /--dump-dir/);
     assert.match(stdout.text, /docs\/CUSTOMER_ONBOARDING\.md/);
     assert.equal(stdout.text, OFFBOARD_CUSTOMER_HELP);
     assert.doesNotMatch(stdout.text, /tok_test_secret_value/);
@@ -216,10 +324,19 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
     assert.equal(spawned, false);
     assert.match(stdout.text, /dry-run — no Vercel or Turso mutation/);
     assert.match(stdout.text, /Customer slug:  acme/);
+    assert.match(stdout.text, /turso db shell procureflow-acme \.dump/);
     assert.match(stdout.text, /turso db destroy procureflow-acme --yes/);
     assert.match(stdout.text, /vercel env rm TURSO_DATABASE_URL production --yes --project procureflow-acme/);
-    assert.match(stdout.text, /vercel env rm TURSO_AUTH_TOKEN preview --yes --project procureflow-acme/);
+    assert.match(stdout.text, /vercel env rm TURSO_PREVIEW_AUTH_TOKEN preview --yes --project procureflow-acme/);
     assert.match(stdout.text, /vercel env rm SESSION_SECRET preview --yes --project procureflow-acme/);
+    assert.match(stdout.text, /vercel env rm PORTAL_TOKEN_SECRET production --yes --project procureflow-acme/);
+    assert.match(stdout.text, /vercel env rm CRON_SECRET preview --yes --project procureflow-acme/);
+    assert.match(stdout.text, /vercel env rm WEBHOOK_SIGNING_SECRET production --yes --project procureflow-acme/);
+    assert.match(stdout.text, /vercel env rm PROCUREFLOW_TENANT preview --yes --project procureflow-acme/);
+    assert.doesNotMatch(stdout.text, /vercel env rm TURSO_AUTH_TOKEN preview/);
+    assert.doesNotMatch(stdout.text, /vercel env rm TURSO_DATABASE_URL preview/);
+    assert.match(stdout.text, /tokens invalidate/);
+    assert.match(stdout.text, /not printed/);
     assert.match(stdout.text, /docs\/CUSTOMER_ONBOARDING\.md/);
     assert.match(stdout.text, /does not delete the project/);
     assert.match(stdout.text, /--apply --confirm-slug acme/);
@@ -320,70 +437,95 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
     assert.doesNotMatch(stderr.text, /tok_test_secret_value/);
   });
 
-  test('--apply strips Production+Preview env, then destroys, and redacts secrets', async () => {
+  test('--apply strips the §3.1 env list, dumps outside the repo, then destroys, and redacts secrets', async () => {
     const link = linkedProjectFs('procureflow-acme');
     const calls = [];
     const stdins = [];
+    const dumpDir = makeDumpDir();
     const { stdout, stderr } = captureStreams();
-    const code = await runOffboardCustomerCli({
-      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme'],
-      env: SECRET_ENV,
-      cwd: '/tmp/linked-acme',
-      stdout,
-      stderr,
-      existsSync: link.existsSync,
-      readFileSync: link.readFileSync,
-      spawnFn(command, args) {
-        calls.push({ command, args: [...args] });
-        const onStdin = (data) => stdins.push(String(data));
-        if (command === 'vercel' && args[0] === 'whoami') {
-          return fakeChild({ stdout: 'operator\n', onStdin });
+    try {
+      const code = await runOffboardCustomerCli({
+        argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
+        env: SECRET_ENV,
+        cwd: '/tmp/linked-acme',
+        stdout,
+        stderr,
+        existsSync: link.existsSync,
+        readFileSync: link.readFileSync,
+        now: new Date('2026-11-26T07:27:00.000Z'),
+        spawnFn(command, args) {
+          calls.push({ command, args: [...args] });
+          const onStdin = (data) => stdins.push(String(data));
+          if (command === 'vercel' && args[0] === 'whoami') {
+            return fakeChild({ stdout: 'operator\n', onStdin });
+          }
+          if (command === 'turso' && args[0] === 'auth') {
+            return fakeChild({ stdout: 'operator@turso\n', onStdin });
+          }
+          if (command === 'vercel' && args[0] === 'env' && args[1] === 'rm') {
+            return fakeChild({
+              stdout: `Removed ${args[2]} token=${SECRET_ENV.TURSO_AUTH_TOKEN}\n`,
+              onStdin
+            });
+          }
+          if (command === 'turso' && args[0] === 'db' && args[1] === 'shell') {
+            return fakeChild({
+              stdout: `${DUMP_SENTINEL}\n${SECRET_ENV.TURSO_AUTH_TOKEN}\n${SECRET_ENV.TURSO_DATABASE_URL}\n`,
+              onStdin
+            });
+          }
+          if (command === 'turso' && args[0] === 'db' && args[1] === 'destroy') {
+            return fakeChild({ stdout: `Destroyed ${args[2]}\n`, onStdin });
+          }
+          throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
         }
-        if (command === 'turso' && args[0] === 'auth') {
-          return fakeChild({ stdout: 'operator@turso\n', onStdin });
-        }
-        if (command === 'vercel' && args[0] === 'env' && args[1] === 'rm') {
-          return fakeChild({
-            stdout: `Removed ${args[2]} token=${SECRET_ENV.TURSO_AUTH_TOKEN}\n`,
-            onStdin
-          });
-        }
-        if (command === 'turso' && args[0] === 'db' && args[1] === 'destroy') {
-          return fakeChild({ stdout: `Destroyed ${args[2]}\n`, onStdin });
-        }
-        throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
-      }
-    });
-    assert.equal(code, 0, stderr.text);
-    assert.deepEqual(calls.map((call) => [call.command, ...call.args]), [
-      ['vercel', 'whoami'],
-      ['turso', 'auth', 'whoami'],
-      ...CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map(
-        (target) => ['vercel', 'env', 'rm', key, target, '--yes', '--project', 'procureflow-acme']
-      )),
-      ['turso', 'db', 'destroy', 'procureflow-acme', '--yes']
-    ]);
-    const destroyAt = calls.findIndex((call) => call.args[1] === 'destroy');
-    const lastEnv = calls.map((call) => call.args[1]).lastIndexOf('rm');
-    assert.ok(destroyAt > lastEnv);
-    assert.equal(calls.some((call) => call.args.includes('link') || call.args.includes('seed')), false);
-    assert.equal(calls.some((call) => call.args.includes(DEMO_PERSONA_SWITCHER_KEY)), false);
-    assert.deepEqual(stdins, []);
-    assert.match(stdout.text, /Already linked to procureflow-acme/);
-    assert.match(stdout.text, /Turso database: destroyed/);
-    assert.match(stdout.text, /left in place/);
-    assert.match(stdout.text, /docs\/CUSTOMER_ONBOARDING\.md/);
-    assert.doesNotMatch(stdout.text, /tok_test_secret_value/);
-    assert.match(stdout.text, /\$TURSO_AUTH_TOKEN/);
-    assert.doesNotMatch(`${stdout.text}\n${stderr.text}`, new RegExp(SECRET_ENV.SESSION_SECRET));
+      });
+      assert.equal(code, 0, stderr.text);
+      const flat = calls.map((call) => [call.command, ...call.args]);
+      assert.deepEqual(flat, [
+        ['vercel', 'whoami'],
+        ['turso', 'auth', 'whoami'],
+        ...expectedEnvCalls(),
+        ['turso', 'db', 'shell', 'procureflow-acme', '.dump'],
+        ['turso', 'db', 'destroy', 'procureflow-acme', '--yes']
+      ]);
+      const destroyAt = flat.findIndex((args) => args[2] === 'destroy');
+      const dumpAt = flat.findIndex((args) => args[2] === 'shell');
+      const lastEnv = flat.map((args) => args[2]).lastIndexOf('rm');
+      assert.ok(dumpAt > lastEnv);
+      assert.ok(destroyAt > dumpAt);
+      assert.equal(argvHasInvalidate(flat), false);
+      assert.equal(flat.some((args) => args.includes('procureflow-acme-preview')), false);
+      assert.equal(flat.some((args) => args.includes('link') || args.includes('seed')), false);
+      assert.equal(flat.some((args) => args.includes(DEMO_PERSONA_SWITCHER_KEY)), false);
+      assert.deepEqual(stdins, []);
+      const dumpFile = path.join(dumpDir, 'acme-20261126T072700Z.sql');
+      const dumpBody = fs.readFileSync(dumpFile, 'utf8');
+      assert.match(dumpBody, /PF_DUMP_SENTINEL_do_not_echo/);
+      assert.match(stdout.text, /Already linked to procureflow-acme/);
+      assert.match(stdout.text, /Turso database: destroyed/);
+      assert.match(stdout.text, /left in place/);
+      assert.match(stdout.text, /tokens invalidate was not run/);
+      assert.match(stdout.text, /docs\/CUSTOMER_ONBOARDING\.md/);
+      const shown = `${stdout.text}\n${stderr.text}`;
+      assert.doesNotMatch(shown, /PF_DUMP_SENTINEL_do_not_echo/);
+      assert.doesNotMatch(shown, /tok_test_secret_value/);
+      assert.doesNotMatch(shown, /libsql:\/\/procureflow-acme\.turso\.io/);
+      assert.match(stdout.text, /\$TURSO_AUTH_TOKEN/);
+      assert.doesNotMatch(shown, new RegExp(SECRET_ENV.SESSION_SECRET));
+      assert.equal(path.relative(repoRoot, dumpFile).startsWith('..'), true);
+    } finally {
+      removeDumpDir(dumpDir);
+    }
   });
 
   test('an unlinked checkout uses --project and does not link', async () => {
     const fsStub = unlinkedFs();
     const calls = [];
+    const dumpDir = makeDumpDir();
     const { stdout, stderr } = captureStreams();
     const code = await runOffboardCustomerCli({
-      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme'],
+      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
       cwd: '/tmp/unlinked-acme',
       stdout,
       stderr,
@@ -395,6 +537,7 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
           return fakeChild({ stdout: 'operator\n' });
         }
         if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+        if (args[0] === 'db' && args[1] === 'shell') return fakeChild({ stdout: `${DUMP_SENTINEL}\n` });
         if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
         throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
       }
@@ -407,13 +550,16 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
       calls.find((args) => args[2] === 'rm').slice(0, 8),
       ['vercel', 'env', 'rm', 'TURSO_DATABASE_URL', 'production', '--yes', '--project', 'procureflow-acme']
     );
+    assert.equal(argvHasInvalidate(calls), false);
+    removeDumpDir(dumpDir);
   });
 
   test('destroy already missing is success', async () => {
     const fsStub = unlinkedFs();
+    const dumpDir = makeDumpDir();
     const { stdout, stderr } = captureStreams();
     const code = await runOffboardCustomerCli({
-      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme'],
+      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
       cwd: '/tmp/unlinked-acme',
       stdout,
       stderr,
@@ -424,6 +570,7 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
           return fakeChild({ stdout: 'operator\n' });
         }
         if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+        if (args[0] === 'db' && args[1] === 'shell') return fakeChild({ stdout: `${DUMP_SENTINEL}\n` });
         if (args[1] === 'destroy') {
           return fakeChild({
             exitCode: 1,
@@ -436,14 +583,16 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
     assert.equal(code, 0, stderr.text);
     assert.match(stdout.text, /already gone — treating destroy as success/);
     assert.match(stdout.text, /Turso database: already gone/);
+    removeDumpDir(dumpDir);
   });
 
   test('env already absent is success and still destroys', async () => {
     const fsStub = unlinkedFs();
     const calls = [];
+    const dumpDir = makeDumpDir();
     const { stdout, stderr } = captureStreams();
     const code = await runOffboardCustomerCli({
-      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme'],
+      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
       cwd: '/tmp/unlinked-acme',
       stdout,
       stderr,
@@ -457,14 +606,25 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
         if (args[0] === 'env') {
           return fakeChild({ exitCode: 1, stderr: 'Environment Variable was not found.\n' });
         }
+        if (args[0] === 'db' && args[1] === 'shell') return fakeChild({ stdout: `${DUMP_SENTINEL}\n` });
         if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
         throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
       }
     });
     assert.equal(code, 0, stderr.text);
     assert.match(stdout.text, /already absent — continuing/);
+    assert.match(stdout.text, /counted as success/);
     assert.match(stdout.text, /Turso database: destroyed/);
+    assert.equal(calls.filter((args) => args[2] === 'rm').length, 14);
     assert.equal(calls.filter((args) => args[2] === 'destroy').length, 1);
+    assert.equal(argvHasInvalidate(calls), false);
+    assert.deepEqual(
+      calls.filter((args) => args[2] === 'rm').map((args) => [args[3], args[4]]),
+      VERCEL_ENV_TARGETS.flatMap((target) => (
+        OFFBOARD_ENV_KEYS_BY_TARGET[target].map((key) => [key, target])
+      ))
+    );
+    removeDumpDir(dumpDir);
   });
 
   test('a real env remove failure does not destroy the database', async () => {
@@ -549,6 +709,180 @@ describe('offboard:customer CLI (no live Turso/Vercel)', () => {
     assert.deepEqual(calls, []);
     assert.match(stderr.text, /could not be read/);
     assert.match(stderr.text, /was not destroyed/);
+  });
+
+  test('a failing dump does not spawn turso db destroy and does not echo the dump', async () => {
+    const fsStub = unlinkedFs();
+    const calls = [];
+    const dumpDir = makeDumpDir();
+    const { stdout, stderr } = captureStreams();
+    try {
+      const code = await runOffboardCustomerCli({
+        argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
+        cwd: '/tmp/unlinked-acme',
+        stdout,
+        stderr,
+        existsSync: fsStub.existsSync,
+        readFileSync: fsStub.readFileSync,
+        spawnFn(command, args) {
+          calls.push([command, ...args]);
+          if (args[0] === 'whoami' || (args[0] === 'auth' && args[1] === 'whoami')) {
+            return fakeChild({ stdout: 'operator\n' });
+          }
+          if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+          if (args[0] === 'db' && args[1] === 'shell') {
+            return fakeChild({
+              exitCode: 2,
+              stdout: `${DUMP_SENTINEL}\npartial sql that must not be printed\n`,
+              stderr: `${DUMP_SENTINEL} on stderr\n`
+            });
+          }
+          if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
+          throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
+        }
+      });
+      assert.equal(code, 1);
+      assert.match(stderr.text, /turso db destroy was not run/);
+      assert.match(stderr.text, /was not printed/);
+      assert.equal(calls.some((args) => args[2] === 'shell'), true);
+      assert.equal(calls.some((args) => args[2] === 'destroy'), false);
+      assert.equal(argvHasInvalidate(calls), false);
+      const shown = `${stdout.text}\n${stderr.text}`;
+      assert.doesNotMatch(shown, /PF_DUMP_SENTINEL_do_not_echo/);
+      assert.equal(fs.readdirSync(dumpDir).length, 0);
+    } finally {
+      removeDumpDir(dumpDir);
+    }
+  });
+
+  test('an empty dump does not spawn turso db destroy', async () => {
+    const fsStub = unlinkedFs();
+    const calls = [];
+    const dumpDir = makeDumpDir();
+    const { stdout, stderr } = captureStreams();
+    try {
+      const code = await runOffboardCustomerCli({
+        argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
+        cwd: '/tmp/unlinked-acme',
+        stdout,
+        stderr,
+        existsSync: fsStub.existsSync,
+        readFileSync: fsStub.readFileSync,
+        spawnFn(command, args) {
+          calls.push([command, ...args]);
+          if (args[0] === 'whoami' || (args[0] === 'auth' && args[1] === 'whoami')) {
+            return fakeChild({ stdout: 'operator\n' });
+          }
+          if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+          if (args[0] === 'db' && args[1] === 'shell') return fakeChild({ exitCode: 0, stdout: '\n' });
+          if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
+          throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
+        }
+      });
+      assert.equal(code, 1);
+      assert.match(stderr.text, /empty/);
+      assert.match(stderr.text, /turso db destroy was not run/);
+      assert.equal(calls.some((args) => args[2] === 'destroy'), false);
+      assert.equal(fs.readdirSync(dumpDir).length, 0);
+    } finally {
+      removeDumpDir(dumpDir);
+    }
+  });
+
+  test('a dump spawn error does not spawn turso db destroy', async () => {
+    const fsStub = unlinkedFs();
+    const calls = [];
+    const dumpDir = makeDumpDir();
+    const { stderr } = captureStreams();
+    try {
+      const code = await runOffboardCustomerCli({
+        argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', dumpDir],
+        cwd: '/tmp/unlinked-acme',
+        stdout: captureStreams().stdout,
+        stderr,
+        existsSync: fsStub.existsSync,
+        readFileSync: fsStub.readFileSync,
+        spawnFn(command, args) {
+          calls.push([command, ...args]);
+          if (args[0] === 'whoami' || (args[0] === 'auth' && args[1] === 'whoami')) {
+            return fakeChild({ stdout: 'operator\n' });
+          }
+          if (args[0] === 'env') return fakeChild({ stdout: 'Removed\n' });
+          if (args[0] === 'db' && args[1] === 'shell') return fakeChild({ errorCode: 'ENOENT' });
+          if (args[1] === 'destroy') return fakeChild({ stdout: 'Destroyed\n' });
+          throw new Error(`unexpected spawn ${command} ${args.join(' ')}`);
+        }
+      });
+      assert.equal(code, 1);
+      assert.match(stderr.text, /could not be started/);
+      assert.match(stderr.text, /turso db destroy was not run/);
+      assert.equal(calls.some((args) => args[2] === 'destroy'), false);
+      assert.equal(argvHasInvalidate(calls), false);
+    } finally {
+      removeDumpDir(dumpDir);
+    }
+  });
+
+  test('a dump path inside the work tree is refused and does not spawn', async () => {
+    const calls = [];
+    const { stderr } = captureStreams();
+    const inside = path.join(repoRoot, 'server');
+    const code = await runOffboardCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', inside],
+      cwd: '/tmp/unlinked-acme',
+      env: SECRET_ENV,
+      stdout: captureStreams().stdout,
+      stderr,
+      existsSync: unlinkedFs().existsSync,
+      readFileSync: unlinkedFs().readFileSync,
+      spawnFn(command, args) {
+        calls.push([command, ...args]);
+        return fakeChild();
+      }
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(calls, []);
+    assert.match(stderr.text, /inside the git work tree/);
+    assert.match(stderr.text, /was not destroyed/);
+    assert.match(stderr.text, /was not printed/);
+    assert.doesNotMatch(stderr.text, /tok_test_secret_value/);
+    assert.doesNotMatch(stderr.text, /libsql:\/\//);
+
+    const relative = captureStreams();
+    const relativeCalls = [];
+    const relativeCode = await runOffboardCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--confirm-slug', 'acme', '--dump-dir', '.'],
+      cwd: repoRoot,
+      stdout: captureStreams().stdout,
+      stderr: relative.stderr,
+      existsSync: unlinkedFs().existsSync,
+      readFileSync: unlinkedFs().readFileSync,
+      spawnFn(command, args) {
+        relativeCalls.push([command, ...args]);
+        return fakeChild();
+      }
+    });
+    assert.equal(relativeCode, 1);
+    assert.deepEqual(relativeCalls, []);
+    assert.match(relative.stderr.text, /inside the git work tree/);
+  });
+
+  test('without --confirm-slug nothing is spawned, including dump and destroy', async () => {
+    const calls = [];
+    const { stderr } = captureStreams();
+    const code = await runOffboardCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--dump-dir', os.tmpdir()],
+      stdout: captureStreams().stdout,
+      stderr,
+      spawnFn(command, args) {
+        calls.push([command, ...args]);
+        return fakeChild();
+      }
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(calls, []);
+    assert.equal(argvHasInvalidate(calls), false);
+    assert.match(stderr.text, /does not destroy anything by itself/);
   });
 });
 
