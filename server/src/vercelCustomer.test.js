@@ -12,7 +12,9 @@ import {
   buildApplyPlan,
   defaultProjectName,
   envAddArgv,
+  envLsArgv,
   formatDryRunReport,
+  parseEnvLsNames,
   missingCustomerEnvKeys,
   normalizeSlug,
   parseDeploymentTarget,
@@ -46,6 +48,7 @@ function readyEnv(extra = {}) {
     TURSO_DATABASE_URL: 'libsql://procureflow-acme.turso.io',
     TURSO_AUTH_TOKEN: 'tok_test_secret_value',
     SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    PROCUREFLOW_SECRET_SLUG: 'acme',
     ...extra
   };
 }
@@ -180,13 +183,43 @@ describe('vercel:customer env gating', () => {
       CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map((target) => [key, target]))
     );
     assert.deepEqual(envAddArgv('SESSION_SECRET', 'preview'), [
+      'env', 'add', 'SESSION_SECRET', 'preview', '--yes'
+    ]);
+    assert.deepEqual(envAddArgv('SESSION_SECRET', 'preview', { rotate: true }), [
       'env', 'add', 'SESSION_SECRET', 'preview', '--yes', '--force'
     ]);
+    assert.equal(plan.envCommands.every((c) => !c.argv.includes('--force')), true);
+    assert.deepEqual(
+      buildApplyPlan({ slug: 'acme', projectName: 'procureflow-acme', rotate: true })
+        .envCommands.map((c) => c.argv),
+      CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map(
+        (target) => ['env', 'add', key, target, '--yes', '--force']
+      ))
+    );
     assert.deepEqual(plan.skipped, [DEMO_PERSONA_SWITCHER_KEY]);
     assert.doesNotMatch(
       plan.envCommands.map((c) => c.display).join('\n'),
       /DEMO_PERSONA_SWITCHER/
     );
+  });
+
+  test('parseEnvLsNames reads key names and drops values', () => {
+    const secret = 'value-that-must-not-be-a-name';
+    const fromJson = parseEnvLsNames(JSON.stringify([
+      { key: 'TURSO_DATABASE_URL', value: secret, target: ['production'] },
+      { key: 'SESSION_SECRET', value: 'Encrypted' }
+    ]));
+    assert.deepEqual([...fromJson].sort(), ['SESSION_SECRET', 'TURSO_DATABASE_URL']);
+    assert.equal(fromJson.has(secret), false);
+
+    const fromTable = parseEnvLsNames([
+      ' name                       value               environments',
+      ` TURSO_AUTH_TOKEN            ${secret}           Production`,
+      ' SESSION_SECRET              Encrypted           Preview'
+    ].join('\n'));
+    assert.deepEqual([...fromTable].sort(), ['SESSION_SECRET', 'TURSO_AUTH_TOKEN']);
+    assert.equal(fromTable.has(secret), false);
+    assert.equal(parseEnvLsNames('No Environment Variables found\n').size, 0);
   });
 });
 
@@ -248,7 +281,10 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     const { stderr } = captureStreams();
     const code = await runVercelCustomerCli({
       argv: ['--slug', 'acme'],
-      env: { TURSO_DATABASE_URL: 'libsql://x.turso.io' },
+      env: {
+        TURSO_DATABASE_URL: 'libsql://procureflow-acme.turso.io',
+        PROCUREFLOW_SECRET_SLUG: 'acme'
+      },
       stdout: captureStreams().stdout,
       stderr,
       spawnFn() {
@@ -369,7 +405,10 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.match(stdout.text, /Set SESSION_SECRET on production/);
     assert.match(stdout.text, /Set SESSION_SECRET on preview/);
     assert.match(stdout.text, /Leave DEMO_PERSONA_SWITCHER unset/);
-    assert.match(stdout.text, /printf '%s' "\$TURSO_AUTH_TOKEN" \| vercel env add TURSO_AUTH_TOKEN production --yes --force/);
+    assert.match(stdout.text, /printf '%s' "\$TURSO_AUTH_TOKEN" \| vercel env add TURSO_AUTH_TOKEN production --yes/);
+    assert.doesNotMatch(stdout.text, /--force/);
+    assert.match(stdout.text, /left untouched/);
+    assert.match(stdout.text, /vercel env ls production/);
     assert.match(stdout.text, /vercel project add procureflow-acme/);
     assert.match(stdout.text, /vercel link --yes --project procureflow-acme/);
     assert.match(stdout.text, /does not connect GitHub/);
@@ -473,7 +512,9 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.deepEqual(calls[2], projectLinkArgv('procureflow-acme'));
     const envIndex = calls.findIndex((args) => args[0] === 'env');
     assert.ok(envIndex > 2);
-    assert.equal(calls.filter((args) => args[0] === 'env').length, 6);
+    assert.equal(calls.filter((args) => args[0] === 'env' && args[1] === 'add').length, 6);
+    assert.equal(calls.filter((args) => args[0] === 'env' && args[1] === 'ls').length, 2);
+    assert.equal(calls.some((args) => args.includes('--force')), false);
     assert.match(stdout.text, /Ensuring Vercel project procureflow-acme/);
     assert.match(stdout.text, /Linking this directory/);
     assert.equal(stdout.text.includes(env.TURSO_AUTH_TOKEN), false);
@@ -556,6 +597,9 @@ describe('vercel:customer CLI (no live Vercel)', () => {
         if (args[0] === 'whoami') {
           return fakeChild({ stdout: 'operator\n', onStdin });
         }
+        if (args[0] === 'env' && args[1] === 'ls') {
+          return fakeChild({ stdout: 'No Environment Variables found\n', onStdin });
+        }
         if (args[0] === 'env' && args[1] === 'add') {
           return fakeChild({ stdout: `Created ${args[2]}\n`, onStdin });
         }
@@ -582,16 +626,21 @@ describe('vercel:customer CLI (no live Vercel)', () => {
     assert.deepEqual(calls[0].args, ['whoami']);
     assert.equal(calls.some((c) => c.args[0] === 'project' || c.args[0] === 'link'), false);
     assert.match(stdout.text, /Already linked to procureflow-acme — skipping project add and link/);
-    const envCalls = calls.filter((c) => c.args[0] === 'env');
+    const envCalls = calls.filter((c) => c.args[0] === 'env' && c.args[1] === 'add');
     assert.equal(envCalls.length, 6);
     assert.deepEqual(
       envCalls.map((c) => c.args),
       CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map(
-        (target) => ['env', 'add', key, target, '--yes', '--force']
+        (target) => ['env', 'add', key, target, '--yes']
       ))
     );
+    assert.equal(envCalls.some((c) => c.args.includes('--force')), false);
     assert.deepEqual(
-      stdinValues.filter((s) => s.args[0] === 'env').map((s) => s.data),
+      calls.filter((c) => c.args[0] === 'env' && c.args[1] === 'ls').map((c) => c.args),
+      [envLsArgv('production'), envLsArgv('preview')]
+    );
+    assert.deepEqual(
+      stdinValues.filter((s) => s.args[1] === 'add').map((s) => s.data),
       [
         env.TURSO_DATABASE_URL, env.TURSO_DATABASE_URL,
         env.TURSO_AUTH_TOKEN, env.TURSO_AUTH_TOKEN,
@@ -1029,6 +1078,191 @@ describe('helpers', () => {
     assert.equal(parseProjectInspectName('{"name":"procureflow-acme"}'), 'procureflow-acme');
     assert.deepEqual(projectAddArgv('procureflow-acme'), ['project', 'add', 'procureflow-acme']);
     assert.deepEqual(projectLinkArgv('procureflow-acme'), ['link', '--yes', '--project', 'procureflow-acme']);
+  });
+
+  test('--apply leaves an already-present key untouched and does not pass --force', async () => {
+    const env = readyEnv();
+    const calls = [];
+    const link = linkedProjectFs('procureflow-acme');
+    const { stdout, stderr } = captureStreams();
+    const listed = {
+      production: [
+        { key: 'TURSO_DATABASE_URL', value: env.TURSO_DATABASE_URL },
+        { key: 'SESSION_SECRET', value: env.SESSION_SECRET }
+      ],
+      preview: [
+        { key: 'TURSO_AUTH_TOKEN', value: env.TURSO_AUTH_TOKEN }
+      ]
+    };
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env,
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'env' && args[1] === 'ls') {
+          return fakeChild({ stdout: JSON.stringify(listed[args[2]] || []) });
+        }
+        if (args[0] === 'env' && args[1] === 'add') return fakeChild({ stdout: 'Created\n' });
+        if (args[0] === 'ls') {
+          return fakeChild({
+            stdout: JSON.stringify([{ uid: 'dpl_acme123', url: 'procureflow-acme.vercel.app' }])
+          });
+        }
+        if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        if (args[0] === 'inspect') return fakeChild({ stdout: inspectJson('READY') });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    const adds = calls.filter((args) => args[1] === 'add');
+    assert.deepEqual(adds, [
+      ['env', 'add', 'TURSO_DATABASE_URL', 'preview', '--yes'],
+      ['env', 'add', 'TURSO_AUTH_TOKEN', 'production', '--yes'],
+      ['env', 'add', 'SESSION_SECRET', 'preview', '--yes']
+    ]);
+    assert.equal(adds.some((args) => args.includes('--force')), false);
+    assert.match(stdout.text, /TURSO_DATABASE_URL is already set on production — left untouched/);
+    assert.match(stdout.text, /SESSION_SECRET is already set on production — left untouched/);
+    assert.match(stdout.text, /TURSO_AUTH_TOKEN is already set on preview — left untouched/);
+    assert.match(stdout.text, /The value was not read/);
+    assert.equal(stdout.text.includes(env.TURSO_AUTH_TOKEN), false);
+    assert.equal(stdout.text.includes(env.SESSION_SECRET), false);
+    assert.equal(stderr.text.includes(env.TURSO_DATABASE_URL), false);
+    assert.equal(calls.some((args) => args.includes(env.TURSO_AUTH_TOKEN)), false);
+  });
+
+  test('--db selects the Turso database the shell URL must name', async () => {
+    const customUrl = 'libsql://pf-acme-prod-org.aws-eu-west-1.turso.io';
+    const token = 'custom-db-token-do-not-print';
+    const env = {
+      TURSO_DATABASE_URL: customUrl,
+      TURSO_AUTH_TOKEN: token,
+      SESSION_SECRET: 'f'.repeat(64),
+      PROCUREFLOW_SECRET_SLUG: 'acme'
+    };
+    let spawned = false;
+    const accepted = captureStreams();
+    const ok = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--db', 'pf-acme-prod'],
+      env,
+      stdout: accepted.stdout,
+      stderr: accepted.stderr,
+      spawnFn() {
+        spawned = true;
+        throw new Error('should not spawn');
+      }
+    });
+    assert.equal(ok, 0, accepted.stderr.text);
+    assert.equal(spawned, false);
+    assert.equal(accepted.stderr.text.includes(token), false);
+
+    spawned = false;
+    const refused = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env,
+      stdout: refused.stdout,
+      stderr: refused.stderr,
+      spawnFn() {
+        spawned = true;
+        throw new Error('should not spawn');
+      }
+    });
+    assert.notEqual(code, 0);
+    assert.equal(spawned, false);
+    assert.match(refused.stderr.text, /TURSO_DATABASE_URL/);
+    assert.match(refused.stderr.text, /pf-acme-prod/);
+    assert.match(refused.stderr.text, /slug acme/);
+    assert.equal(refused.stderr.text.includes(token), false);
+    assert.equal(refused.stderr.text.includes(customUrl), false);
+
+    const invalid = captureStreams();
+    const bad = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--db', 'Not A Name', '--apply'],
+      env: readyEnv(),
+      stdout: invalid.stdout,
+      stderr: invalid.stderr,
+      spawnFn() { throw new Error('should not spawn'); }
+    });
+    assert.equal(bad, 1);
+    assert.match(invalid.stderr.text, /Invalid --db/);
+  });
+
+  test('--rotate is the only path that puts --force on vercel env add', async () => {
+    const env = readyEnv();
+    const calls = [];
+    const link = linkedProjectFs('procureflow-acme');
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--rotate'],
+      env,
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'env' && args[1] === 'ls') {
+          throw new Error('env ls should not run when --rotate overwrites');
+        }
+        if (args[0] === 'env' && args[1] === 'add') return fakeChild({ stdout: 'Updated\n' });
+        if (args[0] === 'ls') {
+          return fakeChild({
+            stdout: JSON.stringify([{ uid: 'dpl_acme123', url: 'procureflow-acme.vercel.app' }])
+          });
+        }
+        if (args[0] === 'redeploy') return fakeChild({ stdout: 'https://procureflow-acme-abc123.vercel.app\n' });
+        if (args[0] === 'inspect') return fakeChild({ stdout: inspectJson('READY') });
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    const adds = calls.filter((args) => args[1] === 'add');
+    assert.equal(adds.length, 6);
+    assert.equal(adds.every((args) => args.includes('--force')), true);
+    assert.equal(stdout.text.includes(env.TURSO_AUTH_TOKEN), false);
+    assert.equal(stdout.text.includes(env.SESSION_SECRET), false);
+  });
+
+  test('--apply refuses to add when env name listing fails and does not print values', async () => {
+    const env = readyEnv();
+    const calls = [];
+    const link = linkedProjectFs('procureflow-acme');
+    const { stdout, stderr } = captureStreams();
+    const code = await runVercelCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env,
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: link.existsSync,
+      readFileSync: link.readFileSync,
+      spawnFn(_command, args) {
+        calls.push([...args]);
+        if (args[0] === 'whoami') return fakeChild({ stdout: 'operator\n' });
+        if (args[0] === 'env' && args[1] === 'ls') {
+          return fakeChild({
+            exitCode: 1,
+            stderr: `listing failed ${env.TURSO_AUTH_TOKEN}`
+          });
+        }
+        throw new Error(`unexpected spawn ${args.join(' ')}`);
+      }
+    });
+    assert.equal(code, 1);
+    assert.equal(calls.some((args) => args[1] === 'add'), false);
+    assert.match(stderr.text, /Refusing to add or overwrite/);
+    assert.match(stderr.text, /Values were not read/);
+    assert.equal(stderr.text.includes(env.TURSO_AUTH_TOKEN), false);
+    assert.equal(stdout.text.includes(env.SESSION_SECRET), false);
   });
 
   test('runProcess maps ENOENT to exit 127', async () => {

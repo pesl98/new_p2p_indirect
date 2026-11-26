@@ -123,6 +123,8 @@ The application and the operator CLIs read the variables below. Vercel also inje
 
 The customer CLIs write only three variables, and only to **Production** and **Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, and `SESSION_SECRET`. They never set `DEMO_PERSONA_SWITCHER`. They never set Vercel’s **Development** environment (`vercel env pull` / `vercel dev`). Local development uses your shell or a gitignored `.env`. On Preview, those copied Turso values are not the connection: Preview needs the separate database in section 4.2.1. Production is unchanged.
 
+`PROCUREFLOW_SECRET_SLUG` is an operator-shell label, not a Vercel variable and not a deployment requirement. `onboard:customer`, `turso:customer`, and `vercel:customer` do not write it. When the shell already holds `TURSO_AUTH_TOKEN`, `TURSO_PREVIEW_AUTH_TOKEN`, `SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, or `WEBHOOK_SIGNING_SECRET`, the label must equal `--slug` or the command exits before it starts Turso or Vercel. A `TURSO_DATABASE_URL` whose host is another customer (for example `procureflow-beta…` with `--slug acme`) is the same refusal, and the same rule applies to `TURSO_PREVIEW_DATABASE_URL` (`procureflow-<slug>-preview`) when that variable is set. The error names the variable and the slug. It does not print the secret, the token, or the URL.
+
 | Variable | Purpose | Required? | Vercel environments | Secret? | How it is produced |
 | --- | --- | --- | --- | --- | --- |
 | `TURSO_DATABASE_URL` | libSQL URL of this customer’s **production** database (usually `libsql://…`). | Required on Vercel Production. Required locally if you want Turso. Must be set together with the token. | **Production.** The customer CLIs still copy it to Preview. Preview does not connect with that copy. When it is present, its host is compared with the preview host. Not set on Development by the scripts. | Treat as sensitive. It names the database. | `turso db show procureflow-<slug> --url`, printed by `npm run turso:customer -- --apply`. |
@@ -198,7 +200,7 @@ Changing any of the three customer variables on Vercel does nothing to a deploym
 
 ## 4. Turso
 
-One classic libSQL database per customer. Name: `procureflow-<slug>` (lowercase). Override with `--db` if you must. Do not pass `--tursodb`. That flag selects a different Turso engine. ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL only. `turso:customer` and `onboard:customer` exit with an error if you pass `--tursodb`.
+One classic libSQL database per customer. Name: `procureflow-<slug>` (lowercase). Override with `--db` if you must. Pass that same `--db` to `vercel:customer` when you run it by itself. `onboard:customer` passes it through. `--db` is the Turso database the shell URL must name. It does not rename the Vercel project. Do not pass `--tursodb`. That flag selects a different Turso engine. ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL only. `turso:customer` and `onboard:customer` exit with an error if you pass `--tursodb`.
 
 Slug rules (the CLIs normalize to lowercase): letters, numbers, and hyphens; cannot start or end with a hyphen; at most 48 characters. Example: `acme`. The database name is at most 64 characters.
 
@@ -229,11 +231,12 @@ It prints shell exports. Copy them into this shell and into the password manager
 export TURSO_DATABASE_URL='libsql://…'
 export TURSO_AUTH_TOKEN='…'
 export SESSION_SECRET='…'
+export PROCUREFLOW_SECRET_SLUG='acme'
 ```
 
-`--json` redacts the token and `SESSION_SECRET` to the last 4 characters. The full `export` lines are still printed on human stdout after `--apply`.
+`--json` redacts the token and `SESSION_SECRET` to the last 4 characters. The full `export` lines are still printed on human stdout after `--apply`. `PROCUREFLOW_SECRET_SLUG` is the customer slug. It is not a secret. Copy it with the other lines. The next `vercel:customer` or `onboard:customer` for a different slug refuses this shell until you unset the other customer’s URL, token, and generated secrets (`SESSION_SECRET`, `PORTAL_TOKEN_SECRET`, `CRON_SECRET`, `WEBHOOK_SIGNING_SECRET`) or set `PROCUREFLOW_SECRET_SLUG` to that slug. The refusal names the variable and the slug and does not print values. It happens before any Turso or Vercel process starts. A preview URL already in the shell is checked the same way: its host must be `procureflow-<slug>-preview`.
 
-`SESSION_SECRET` is a new 32-byte hex string unless that variable is already set in the environment. If it is set, the command reuses it and says so. It does not silently rotate.
+`SESSION_SECRET` is a new 32-byte hex string unless that variable is already set in the environment. If it is set, the command reuses it and says so. It does not silently rotate. A secret already set must also have `PROCUREFLOW_SECRET_SLUG` equal to this slug.
 
 ### 4.2 Region and group
 
@@ -334,11 +337,12 @@ Mint a new database token. This does not revoke the old one.
 ```bash
 turso db tokens create procureflow-acme
 export TURSO_AUTH_TOKEN='…'          # the new token
+export PROCUREFLOW_SECRET_SLUG='acme'
 # keep the existing TURSO_DATABASE_URL and SESSION_SECRET
-npm run vercel:customer -- --slug acme --apply
+npm run vercel:customer -- --slug acme --apply --rotate
 ```
 
-`--apply` writes the three variables to Production and Preview and redeploys. `npm run turso:customer -- --slug acme --apply` also mints a new token (and reuses `SESSION_SECRET` if it is already exported). You still have to push the new token with `vercel:customer`.
+`--apply` writes a key that is not already set on Production and Preview, then redeploys. An existing key is left untouched. `--rotate` is what replaces it (`vercel env add` receives `--force` only then). `npm run turso:customer -- --slug acme --apply` also mints a new token (and reuses `SESSION_SECRET` if it is already exported and `PROCUREFLOW_SECRET_SLUG` is `acme`). You still have to push the new token with `vercel:customer --rotate`.
 
 After the new deployment is Ready, revoke the old token in Turso if `turso db tokens --help` offers an invalidate or revoke command. These scripts do not run one. Removing the variable from Vercel does not revoke it either.
 
@@ -411,20 +415,23 @@ Export the three secrets first (section 4.1). The Vercel command refuses to inve
 ```bash
 npm run vercel:customer -- --slug acme          # dry-run, no network
 npm run vercel:customer -- --slug acme --apply
+npm run vercel:customer -- --slug acme --apply --rotate   # replace keys that already exist
 ```
 
-`--apply` checks `vercel whoami`, ensures the project and link, then for each of the three keys and for both `production` and `preview` runs:
+The shell must already contain this customer’s URL and token, and `PROCUREFLOW_SECRET_SLUG=acme` when a token or generated secret is set (section 4.1). `--apply` checks `vercel whoami`, ensures the project and link, then lists names with `vercel env ls production` and `vercel env ls preview`. That listing is not printed. Only names are read. Values are not read back.
+
+For each of the three keys and for both `production` and `preview`, a missing name is added without `--force`:
 
 ```bash
-printf '%s' "$TURSO_DATABASE_URL" | vercel env add TURSO_DATABASE_URL production --yes --force
-printf '%s' "$TURSO_DATABASE_URL" | vercel env add TURSO_DATABASE_URL preview --yes --force
-printf '%s' "$TURSO_AUTH_TOKEN"   | vercel env add TURSO_AUTH_TOKEN production --yes --force
-printf '%s' "$TURSO_AUTH_TOKEN"   | vercel env add TURSO_AUTH_TOKEN preview --yes --force
-printf '%s' "$SESSION_SECRET"     | vercel env add SESSION_SECRET production --yes --force
-printf '%s' "$SESSION_SECRET"     | vercel env add SESSION_SECRET preview --yes --force
+printf '%s' "$TURSO_DATABASE_URL" | vercel env add TURSO_DATABASE_URL production --yes
+printf '%s' "$TURSO_DATABASE_URL" | vercel env add TURSO_DATABASE_URL preview --yes
+printf '%s' "$TURSO_AUTH_TOKEN"   | vercel env add TURSO_AUTH_TOKEN production --yes
+printf '%s' "$TURSO_AUTH_TOKEN"   | vercel env add TURSO_AUTH_TOKEN preview --yes
+printf '%s' "$SESSION_SECRET"     | vercel env add SESSION_SECRET production --yes
+printf '%s' "$SESSION_SECRET"     | vercel env add SESSION_SECRET preview --yes
 ```
 
-The secret goes on stdin. It is not placed in the argument list. `--force` updates a key that is already there. The command does not set `DEMO_PERSONA_SWITCHER`, `IDENTITY_PROVIDER`, `APP_BASE_URL`, `LOCAL_LOGIN`, or any `OIDC_*`, `SAML_*`, or `SSO_*` key, and it does not delete keys it does not write. SSO for this customer is section 3.1 and section 8.6.
+The secret goes on stdin. It is not placed in the argument list. A key that is already present is reported and left untouched. `--rotate` is the only flag that adds `--force`, and it is how you replace a token or `SESSION_SECRET` on purpose (section 4.4). The command does not set `DEMO_PERSONA_SWITCHER`, `IDENTITY_PROVIDER`, `APP_BASE_URL`, `LOCAL_LOGIN`, or any `OIDC_*`, `SAML_*`, or `SSO_*` key, and it does not delete keys it does not write. SSO for this customer is section 3.1 and section 8.6.
 
 ### 5.3 Environment variables from the dashboard
 
@@ -508,7 +515,7 @@ Dry-run is the default. It prints the plan and does not call Turso, Vercel, or t
 | Flag | Meaning |
 | --- | --- |
 | `--slug <customer>` | Required. Default database and project `procureflow-<slug>`. |
-| `--db <name>` | Override the Turso database name. |
+| `--db <name>` | Override the Turso database name. `onboard:customer` passes it to `vercel:customer`, which then requires the shell URL to name that database. |
 | `--project <name>` | Override the Vercel project name. |
 | `--apply` | Do the work. Without it, dry-run. |
 | `--email` and `--password` | First admin. Both or neither. Password must be at least 8 characters. |

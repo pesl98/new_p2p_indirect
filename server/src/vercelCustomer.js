@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { reusedSessionSecretError } from './auth.js';
+import { customerShellGuardError, SECRET_SLUG_ENV, SHELL_VALUE_KEYS } from './customerShellGuard.js';
 import { redactTursoUrl } from './provision.js';
 
 export const CUSTOMER_ENV_KEYS = Object.freeze([
@@ -71,20 +72,30 @@ Usage:
   npm run vercel:customer -- --slug acme --dry-run
   npm run vercel:customer -- --slug acme --apply
   npm run vercel:customer -- --slug acme --project procureflow-acme --apply
+  npm run vercel:customer -- --slug acme --db pf-acme-prod --apply
 
   --slug <customer>     Required. Default project name is procureflow-<slug>
   --project <name>      Override Vercel project name
+  --db <name>           Turso database this shell's URL must name. Default
+                        procureflow-<slug>. Use the same --db as turso:customer
+                        when that command did not use the default name. Does
+                        not change the Vercel project.
   --dry-run             Print the operator checklist + exact commands (default).
                         Exit 0. Never calls Vercel. No network required.
   --apply               Ensure the Vercel project exists and this directory is
-                        linked, then set/update the three env vars on Production
-                        and Preview, redeploy, and wait until that Production
-                        deployment is Ready (vercel inspect <url-or-id> --json).
-                        Requires the Vercel CLI and vercel login. Uses the CLI's
-                        current team (vercel switch if you have more than one).
-                        Default wait is ${DEFAULT_VERCEL_READY_TIMEOUT_MS} ms
-                        (override with VERCEL_READY_TIMEOUT_MS). Exits non-zero
-                        on timeout, ERROR, or CANCELED.
+                        linked, then set the three env vars on Production and
+                        Preview when they are not already there, redeploy, and
+                        wait until that Production deployment is Ready
+                        (vercel inspect <url-or-id> --json). Requires the Vercel
+                        CLI and vercel login. Uses the CLI's current team
+                        (vercel switch if you have more than one). Default wait
+                        is ${DEFAULT_VERCEL_READY_TIMEOUT_MS} ms (override with
+                        VERCEL_READY_TIMEOUT_MS). Exits non-zero on timeout,
+                        ERROR, or CANCELED.
+  --rotate              Pass --force to vercel env add so an existing key is
+                        replaced. Without --rotate, a key that is already
+                        present is reported and left untouched. Names come from
+                        vercel env ls. Values are not read and are not printed.
   --help, -h            Show this help
 
 Required shell env (same values that will go to Vercel; never invented):
@@ -92,6 +103,18 @@ Required shell env (same values that will go to Vercel; never invented):
   TURSO_AUTH_TOKEN
   SESSION_SECRET        At least 32 characters. A shorter value is refused
                         and is not printed. Generate: openssl rand -hex 32
+  ${SECRET_SLUG_ENV}    Required when this shell already holds TURSO_AUTH_TOKEN,
+                        TURSO_PREVIEW_AUTH_TOKEN, SESSION_SECRET,
+                        PORTAL_TOKEN_SECRET, CRON_SECRET, or
+                        WEBHOOK_SIGNING_SECRET. Must equal --slug. Not written
+                        to Vercel. Not a secret.
+
+Shell guard (before any Vercel process): TURSO_DATABASE_URL must name
+the database from --db, or procureflow-<slug> (host <database> or
+<database>-<org>). TURSO_PREVIEW_DATABASE_URL, when set, must name that
+database plus -preview.
+A host such as procureflow-beta with --slug acme exits non-zero. The message
+names the variable and the slug and does not print the value.
 
 Does not create a Turso database, migrate, seed, or set DEMO_PERSONA_SWITCHER.
 
@@ -149,6 +172,15 @@ export function defaultProjectName(slug) {
   return `${DEFAULT_PROJECT_PREFIX}${normalized}`;
 }
 
+/** Same shape as turso:customer's database names. Empty or invalid is null. */
+export function normalizeCustomerDatabaseName(raw) {
+  const name = asTrimmed(raw).toLowerCase();
+  if (!name) return null;
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(name)) return null;
+  if (name.length > 64) return null;
+  return name;
+}
+
 export function suggestedBaseUrl(projectName) {
   const name = asTrimmed(projectName);
   if (!name) return null;
@@ -192,6 +224,10 @@ export function parseVercelCustomerArgs(argv = []) {
       flags.add('apply');
       continue;
     }
+    if (arg === '--rotate') {
+      flags.add('rotate');
+      continue;
+    }
     if (arg === '--seed') {
       flags.add('seed');
       continue;
@@ -203,6 +239,7 @@ export function parseVercelCustomerArgs(argv = []) {
     if (
       arg === '--slug' || arg.startsWith('--slug=')
       || arg === '--project' || arg.startsWith('--project=')
+      || arg === '--db' || arg.startsWith('--db=')
     ) {
       const key = arg.replace(/^--/, '').split('=')[0];
       const taken = takeFlagValue(argv, i, arg);
@@ -222,18 +259,71 @@ export function parseVercelCustomerArgs(argv = []) {
     dryRunFlag,
     seed: flags.has('seed'),
     json: flags.has('json'),
+    rotate: flags.has('rotate'),
     slug: values.slug != null ? String(values.slug).trim() : null,
     project: values.project != null ? String(values.project).trim() : null,
+    db: values.db != null ? String(values.db).trim() : null,
     unknown
   };
 }
 
-export function envAddArgv(key, target) {
-  return ['env', 'add', key, target, '--yes', '--force'];
+export function envAddArgv(key, target, { rotate = false } = {}) {
+  const argv = ['env', 'add', key, target, '--yes'];
+  if (rotate) argv.push('--force');
+  return argv;
 }
 
-export function envAddDisplayCommand(key, target) {
-  return `printf '%s' "$${key}" | vercel env add ${key} ${target} --yes --force`;
+export function envAddDisplayCommand(key, target, { rotate = false } = {}) {
+  const force = rotate ? ' --force' : '';
+  return `printf '%s' "$${key}" | vercel env add ${key} ${target} --yes${force}`;
+}
+
+/** Names only. Do not pass a flag that asks the CLI to print values. */
+export function envLsArgv(target) {
+  return ['env', 'ls', target];
+}
+
+/**
+ * Env-var names from `vercel env ls` text or JSON. Reads key/name fields and
+ * the first column of a table. Does not return values.
+ */
+export function parseEnvLsNames(stdout) {
+  const text = String(stdout || '').replace(/\u001b\[[0-9;]*m/g, '').trim();
+  if (!text) return new Set();
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      return keysFromEnvLsJson(JSON.parse(text));
+    } catch {
+      // fall through to the table parser
+    }
+  }
+  const names = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\b/);
+    if (!match) continue;
+    const name = match[1];
+    if (!/^[A-Z][A-Z0-9_]*$/.test(name)) continue;
+    names.add(name);
+  }
+  return names;
+}
+
+function keysFromEnvLsJson(node, into = new Set()) {
+  if (Array.isArray(node)) {
+    for (const item of node) keysFromEnvLsJson(item, into);
+    return into;
+  }
+  if (!node || typeof node !== 'object') return into;
+  const key = typeof node.key === 'string'
+    ? node.key
+    : (typeof node.name === 'string' ? node.name : '');
+  if (/^[A-Z][A-Z0-9_]*$/.test(key)) into.add(key);
+  if (Array.isArray(node.envs)) keysFromEnvLsJson(node.envs, into);
+  if (Array.isArray(node.env)) keysFromEnvLsJson(node.env, into);
+  if (Array.isArray(node.environmentVariables)) {
+    keysFromEnvLsJson(node.environmentVariables, into);
+  }
+  return into;
 }
 
 export function whoamiArgv() {
@@ -649,7 +739,7 @@ export function parseDeploymentTarget(stdout) {
 
 export function redactSecrets(text, env = process.env) {
   let out = String(text || '');
-  for (const key of CUSTOMER_ENV_KEYS) {
+  for (const key of SHELL_VALUE_KEYS) {
     const val = asTrimmed(env[key]);
     if (val.length >= 4) {
       out = out.split(val).join(`$${key}`);
@@ -666,6 +756,11 @@ export function describeReadyEnv(env = process.env) {
   lines.push(`  TURSO_DATABASE_URL     set  ${redactTursoUrl(url) || '(set)'}`);
   lines.push(`  TURSO_AUTH_TOKEN       set  (length ${token.length}, not printed)`);
   lines.push(`  SESSION_SECRET         set  (length ${secret.length}, not printed)`);
+  const slugLabel = asTrimmed(env[SECRET_SLUG_ENV]);
+  const slugShown = slugLabel && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(slugLabel) && slugLabel.length <= 48
+    ? slugLabel.toLowerCase()
+    : (slugLabel ? 'set (value not printed)' : 'unset');
+  lines.push(`  ${SECRET_SLUG_ENV}  ${slugShown} (shell label, not written to Vercel)`);
   if (demoPersonaSwitcherSet(env)) {
     lines.push(
       `  DEMO_PERSONA_SWITCHER  set in this shell — will NOT be copied to Vercel`
@@ -676,7 +771,7 @@ export function describeReadyEnv(env = process.env) {
   return lines.join('\n');
 }
 
-export function buildApplyPlan({ slug, projectName }) {
+export function buildApplyPlan({ slug, projectName, rotate = false }) {
   const envCommands = [];
   for (const key of CUSTOMER_ENV_KEYS) {
     for (const target of VERCEL_ENV_TARGETS) {
@@ -684,18 +779,26 @@ export function buildApplyPlan({ slug, projectName }) {
         kind: 'env-upsert',
         key,
         target,
-        argv: envAddArgv(key, target),
+        argv: envAddArgv(key, target, { rotate }),
         stdinFromEnv: key,
-        display: envAddDisplayCommand(key, target)
+        display: envAddDisplayCommand(key, target, { rotate })
       });
     }
   }
+  const listEnv = rotate
+    ? []
+    : VERCEL_ENV_TARGETS.map((target) => ({
+      argv: envLsArgv(target),
+      display: `vercel env ls ${target}   # names only; existing keys are left untouched`
+    }));
   return {
     slug,
     projectName,
     baseUrl: suggestedBaseUrl(projectName),
     whoami: { argv: whoamiArgv(), display: 'vercel whoami' },
     ensureCommands: plannedEnsureCommands(projectName),
+    rotate: Boolean(rotate),
+    listEnv,
     envCommands,
     listProduction: {
       argv: listProductionArgv(),
@@ -712,9 +815,10 @@ export function buildApplyPlan({ slug, projectName }) {
 export function formatDryRunReport({
   slug,
   projectName,
-  env = process.env
+  env = process.env,
+  rotate = false
 } = {}) {
-  const plan = buildApplyPlan({ slug, projectName });
+  const plan = buildApplyPlan({ slug, projectName, rotate });
   const lines = [
     'ProcureFlow Vercel customer env (dry-run — no Vercel mutation)',
     '',
@@ -730,8 +834,11 @@ export function formatDryRunReport({
     `  [ ] Link this directory to ${projectName} (skip if already linked to that name)`,
     '  [ ] Stop if this directory is linked to a different project (do not retarget)',
     ...CUSTOMER_ENV_KEYS.flatMap((key) => VERCEL_ENV_TARGETS.map(
-      (target) => `  [ ] Set ${key} on ${target}`
+      (target) => `  [ ] Set ${key} on ${target} if absent`
     )),
+    rotate
+      ? '  [ ] --rotate: replace keys that are already set (vercel env add --force)'
+      : '  [ ] Leave a key that is already set untouched (pass --rotate to replace it)',
     `  [ ] Leave ${DEMO_PERSONA_SWITCHER_KEY} unset`,
     '  [ ] Redeploy so env takes effect',
     '  [ ] Wait until that Production deployment is Ready',
@@ -741,6 +848,7 @@ export function formatDryRunReport({
     ...plan.ensureCommands.flatMap((cmd) => (
       cmd.note ? [`  ${cmd.display}`, `    (${cmd.note})`] : [`  ${cmd.display}`]
     )),
+    ...plan.listEnv.map((cmd) => `  ${cmd.display}`),
     ...plan.envCommands.map((cmd) => `  ${cmd.display}`),
     `  ${plan.listProduction.display}`,
     `  ${plan.redeployDisplay}`,
@@ -763,15 +871,25 @@ export function formatApplyReport({
   slug,
   projectName,
   baseUrl,
-  redeployed
+  redeployed,
+  skippedKeys = [],
+  wroteEnv = true
 } = {}) {
   const url = baseUrl || suggestedBaseUrl(projectName);
+  let envLine;
+  if (!skippedKeys.length) {
+    envLine = `Production+Preview env set: ${CUSTOMER_ENV_KEYS.join(', ')}`;
+  } else if (!wroteEnv) {
+    envLine = 'Production+Preview env left untouched (already set). Pass --rotate to replace.';
+  } else {
+    envLine = 'Production+Preview env set where missing; already-present keys were left untouched. Pass --rotate to replace.';
+  }
   const lines = [
     'ProcureFlow Vercel customer env applied',
     '',
     `Customer slug:  ${slug}`,
     `Project name:   ${projectName}`,
-    `Production+Preview env set: ${CUSTOMER_ENV_KEYS.join(', ')}`,
+    envLine,
     `Redeploy:       ${redeployed || 'triggered'}`,
     'Production:     Ready',
     'DEMO_PERSONA_SWITCHER left unset',
@@ -1018,6 +1136,34 @@ export async function runVercelCustomerCli({
     return 1;
   }
 
+  let dbName = defaultProjectName(slug);
+  if (args.db != null) {
+    dbName = normalizeCustomerDatabaseName(args.db);
+    if (!dbName) {
+      write(
+        stderr,
+        `Invalid --db "${args.db}". Use a lowercase Turso database name (letters, numbers, hyphens), e.g. procureflow-acme.\n`
+      );
+      return 1;
+    }
+  }
+
+  const shortSecret = reusedSessionSecretError(env);
+  if (shortSecret) {
+    write(stderr, `${shortSecret.message}\n`);
+    return 1;
+  }
+
+  const shellGuard = customerShellGuardError({
+    env,
+    slug,
+    dbName
+  });
+  if (shellGuard) {
+    write(stderr, `${shellGuard.message}\n`);
+    return 1;
+  }
+
   const missing = missingCustomerEnvKeys(env);
   if (missing.length) {
     write(
@@ -1031,18 +1177,13 @@ export async function runVercelCustomerCli({
         + `  export TURSO_DATABASE_URL="$(turso db show ${projectName} --url)"\n`
         + `  export TURSO_AUTH_TOKEN="$(turso db tokens create ${projectName})"\n`
         + '  export SESSION_SECRET="$(openssl rand -hex 32)"\n'
+        + `  export ${SECRET_SLUG_ENV}=${slug}\n`
     );
     return 1;
   }
 
-  const shortSecret = reusedSessionSecretError(env);
-  if (shortSecret) {
-    write(stderr, `${shortSecret.message}\n`);
-    return 1;
-  }
-
   if (!args.apply) {
-    write(stdout, formatDryRunReport({ slug, projectName, env }));
+    write(stdout, formatDryRunReport({ slug, projectName, env, rotate: args.rotate }));
     return 0;
   }
 
@@ -1088,8 +1229,37 @@ export async function runVercelCustomerCli({
   });
   if (!ensured.ok) return ensured.code || 1;
 
-  const plan = buildApplyPlan({ slug, projectName });
+  const plan = buildApplyPlan({ slug, projectName, rotate: args.rotate });
+  const presentByTarget = new Map();
+  if (!args.rotate) {
+    for (const target of VERCEL_ENV_TARGETS) {
+      const listed = await runVercelCommand(envLsArgv(target), runOpts);
+      if (listed.code !== 0) {
+        write(
+          stderr,
+          `Could not list ${target} environment names (vercel env ls ${target}, exit ${listed.code}). `
+            + 'Refusing to add or overwrite. Values were not read.\n'
+        );
+        printCommandOutput(stderr, listed.stderr, env);
+        return 1;
+      }
+      presentByTarget.set(target, parseEnvLsNames(listed.stdout));
+    }
+  }
+
+  const skippedKeys = [];
+  let wroteEnv = false;
   for (const cmd of plan.envCommands) {
+    const present = presentByTarget.get(cmd.target);
+    if (present && present.has(cmd.key)) {
+      skippedKeys.push(`${cmd.key} on ${cmd.target}`);
+      write(
+        stdout,
+        `${cmd.key} is already set on ${cmd.target} — left untouched. `
+          + 'Pass --rotate to replace it. The value was not read.\n'
+      );
+      continue;
+    }
     const value = asTrimmed(env[cmd.stdinFromEnv]);
     write(stdout, `Setting ${cmd.key} on ${cmd.target}…\n`);
     const result = await runVercelCommand(cmd.argv, {
@@ -1105,6 +1275,7 @@ export async function runVercelCustomerCli({
       printCommandOutput(stderr, result.stderr || result.stdout, env);
       return 1;
     }
+    wroteEnv = true;
   }
 
   write(stdout, 'Triggering production redeploy so env takes effect…\n');
@@ -1182,7 +1353,9 @@ export async function runVercelCustomerCli({
     slug,
     projectName,
     baseUrl: suggestedBaseUrl(projectName),
-    redeployed: deploymentRef
+    redeployed: deploymentRef,
+    skippedKeys,
+    wroteEnv
   }));
   return 0;
 }

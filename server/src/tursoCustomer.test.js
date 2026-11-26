@@ -453,7 +453,7 @@ describe('turso:customer CLI (no live Turso)', () => {
     const { stdout } = captureStreams();
     const code = await runTursoCustomerCli({
       argv: ['--slug', 'acme', '--json'],
-      env: { SESSION_SECRET: secret },
+      env: { SESSION_SECRET: secret, PROCUREFLOW_SECRET_SLUG: 'acme' },
       stdout,
       stderr: captureStreams().stderr,
       spawnFn() { throw new Error('should not spawn'); }
@@ -576,7 +576,7 @@ describe('turso:customer CLI (no live Turso)', () => {
     const { stdout, stderr } = captureStreams();
     const code = await runTursoCustomerCli({
       argv: ['--slug', 'acme', '--apply'],
-      env: { SESSION_SECRET: MINTED_SECRET },
+      env: { SESSION_SECRET: MINTED_SECRET, PROCUREFLOW_SECRET_SLUG: 'acme' },
       stdout,
       stderr,
       spawnFn
@@ -653,7 +653,7 @@ describe('turso:customer CLI (no live Turso)', () => {
     const { spawnFn } = applySpawn();
     const code = await runTursoCustomerCli({
       argv: ['--slug', 'acme', '--apply'],
-      env: { SESSION_SECRET: MINTED_SECRET },
+      env: { SESSION_SECRET: MINTED_SECRET, PROCUREFLOW_SECRET_SLUG: 'acme' },
       stdout: captureStreams().stdout,
       stderr: captureStreams().stderr,
       spawnFn

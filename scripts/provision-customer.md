@@ -21,7 +21,7 @@ npm run onboard:customer -- --slug acme --apply \
 # Stepped (same sequence; copy Turso export lines by hand)
 npm run turso:customer -- --slug acme                 # dry-run (no Turso mutation)
 npm run turso:customer -- --slug acme --apply         # create/reuse classic libSQL + print exports
-# copy the printed export TURSO_* / SESSION_SECRET lines into this shell
+# copy the printed export TURSO_* / SESSION_SECRET / PROCUREFLOW_SECRET_SLUG lines into this shell
 
 # vercel:customer --apply runs:
 #   vercel project add procureflow-acme
@@ -49,7 +49,7 @@ npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-pas
 - [ ] Root directory = repo root; build comes from `vercel.json` (`npm run build`)
 - [ ] Linked with `vercel link --yes --project procureflow-acme` (skipped if already linked to that name)
 - [ ] GitHub auto-deploy is a separate dashboard step if you want git-push deploys (`vercel project add` does not connect GitHub; laptop `vercel deploy --prod` / redeploy does)
-- [ ] `npm run vercel:customer -- --slug acme --apply` sets **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET` (this customer’s values only; refuses to invent secrets)
+- [ ] `npm run vercel:customer -- --slug acme --apply` sets **Production and Preview**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET` (this customer’s values only; refuses to invent secrets). A key that is already set is left untouched. Pass `--rotate` to replace it. The shell’s `PROCUREFLOW_SECRET_SLUG` must be `acme` when a token or generated secret is already exported.
 - [ ] Leave `DEMO_PERSONA_SWITCHER` unset (the script will not set it)
 - [ ] Redeploy is part of `--apply`, which then waits until that Production deployment is Ready (`VERCEL_READY_TIMEOUT_MS`, default 4 minutes). Old Previews keep stale env until rebuilt.
 - [ ] Never paste another customer’s Turso URL here
@@ -71,6 +71,7 @@ First login: open the Production URL, sign in as the bootstrap admin, then **Adm
 ```bash
 # Preferred: npm run onboard:customer -- --slug beta --apply --email admin@beta.test --password '…'
 npm run turso:customer -- --slug beta --apply         # separate DB + new SESSION_SECRET
+# Unset Acme’s TURSO_* and generated secrets first. Copy PROCUREFLOW_SECRET_SLUG=beta.
 
 # Second Vercel project. Do not paste Acme’s URL.
 # If this clone is still linked to procureflow-acme, --apply fails closed (does not retarget).

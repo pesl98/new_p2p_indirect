@@ -13,6 +13,7 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { reusedSessionSecretError } from './auth.js';
+import { customerShellGuardError, SECRET_SLUG_ENV } from './customerShellGuard.js';
 import {
   defaultProjectName,
   normalizeSlug,
@@ -55,6 +56,15 @@ Usage:
 Does not migrate, seed, call Vercel, or destroy a database.
 Classic libSQL only — never passes --tursodb.
 Token is turso db tokens create (database token), not an org JWT.
+
+Shell guard (before any Turso process): a TURSO_DATABASE_URL already in
+this shell must name procureflow-<slug> (or --db). TURSO_PREVIEW_DATABASE_URL,
+when set, must name that database plus -preview. TURSO_AUTH_TOKEN,
+TURSO_PREVIEW_AUTH_TOKEN, SESSION_SECRET, PORTAL_TOKEN_SECRET, CRON_SECRET,
+and WEBHOOK_SIGNING_SECRET, when set, require ${SECRET_SLUG_ENV} equal to
+the slug. A host such as procureflow-beta with --slug acme exits non-zero.
+The message names the variable and the slug and does not print the value.
+${SECRET_SLUG_ENV} is not a secret and is not written to Vercel.
 
 Happy path:
   Preferred: npm run onboard:customer -- --slug <slug> [--apply --email … --password …]
@@ -345,6 +355,10 @@ export function formatDryRunReport({
     sessionSet
       ? '  export SESSION_SECRET=\'<reuse existing SESSION_SECRET from this environment — not printed>\''
       : `  export SESSION_SECRET='${WILL_MINT_PLACEHOLDER}'`,
+    `  export ${SECRET_SLUG_ENV}='${slug}'`,
+    '',
+    `${SECRET_SLUG_ENV} labels this shell. It is not a secret and is not written to Vercel.`,
+    'Set it to this slug before reusing a token or a generated secret on the next command.',
     '',
     sessionSet
       ? 'SESSION_SECRET is already set in this environment and will be reused (not rotated).'
@@ -529,6 +543,12 @@ export async function runTursoCustomerCli({
     return finish(1);
   }
 
+  const shellGuard = customerShellGuardError({ env, slug, dbName });
+  if (shellGuard) {
+    write(stderr, `${shellGuard.message}\n`);
+    return finish(1);
+  }
+
   if (!args.apply) {
     write(stdout, formatDryRunReport({ slug, dbName, projectName, env }));
     if (args.json) {
@@ -648,7 +668,8 @@ export async function runTursoCustomerCli({
   write(stdout, '\n# Shell-ready exports (copy into this shell; do not commit)\n');
   write(stdout, `${shellExportLine('TURSO_DATABASE_URL', url)}\n`);
   write(stdout, `${shellExportLine('TURSO_AUTH_TOKEN', token)}\n`);
-  write(stdout, `${shellExportLine('SESSION_SECRET', session.value)}\n\n`);
+  write(stdout, `${shellExportLine('SESSION_SECRET', session.value)}\n`);
+  write(stdout, `${shellExportLine(SECRET_SLUG_ENV, slug)}\n\n`);
 
   write(stdout, formatApplyReport({
     slug,

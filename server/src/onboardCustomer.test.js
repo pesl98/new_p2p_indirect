@@ -134,6 +134,13 @@ describe('onboard:customer arg parsing', () => {
     assert.deepEqual(buildVercelArgv({ slug: 'acme', project: 'procureflow-acme' }), [
       '--slug', 'acme', '--apply', '--project', 'procureflow-acme'
     ]);
+    assert.deepEqual(buildVercelArgv({
+      slug: 'acme',
+      db: 'pf-acme-prod',
+      project: 'procureflow-acme'
+    }), [
+      '--slug', 'acme', '--apply', '--db', 'pf-acme-prod', '--project', 'procureflow-acme'
+    ]);
     assert.deepEqual(buildProvisionArgv({
       withOrg: true,
       email: 'ada@acme.test',
@@ -446,6 +453,7 @@ describe('onboard:customer CLI (no live network)', () => {
       },
       async runVercelFn(opts) {
         calls.vercel = opts;
+        assert.ok(opts.argv.includes('--db'));
         assert.ok(opts.argv.includes('pf-acme-prod'));
         return 0;
       },
@@ -457,6 +465,45 @@ describe('onboard:customer CLI (no live network)', () => {
     });
     assert.equal(code, 0);
     assert.ok(calls.turso && calls.vercel && calls.provision);
+  });
+
+  test('--db pf-acme-prod is the host the in-process vercel step accepts', async () => {
+    const calls = [];
+    const { stdout, stderr } = captureStreams();
+    const customUrl = 'libsql://pf-acme-prod-org.turso.io';
+    const code = await runOnboardCustomerCli({
+      argv: ['--slug', 'acme', '--db', 'pf-acme-prod', '--apply'],
+      env: {},
+      cwd: '/tmp/linked-acme',
+      stdout,
+      stderr,
+      existsSync: (file) => String(file).endsWith(`${path.sep}.vercel${path.sep}project.json`),
+      readFileSync: () => JSON.stringify({
+        projectId: 'prj_acme',
+        orgId: 'team_acme',
+        projectName: 'procureflow-acme'
+      }),
+      spawnFn: vercelSpawn(calls),
+      async runTursoFn() {
+        return {
+          code: 0,
+          exports: {
+            TURSO_DATABASE_URL: customUrl,
+            TURSO_AUTH_TOKEN: 'custom-db-token-value',
+            SESSION_SECRET: 'e'.repeat(64)
+          }
+        };
+      },
+      runVercelFn: runVercelCustomerCli,
+      async runProvisionFn() {
+        return 0;
+      }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(calls.some((args) => args[0] === 'env' && args[1] === 'add'), true);
+    assert.equal(stderr.text.includes(customUrl), false);
+    assert.equal(stderr.text.includes('custom-db-token-value'), false);
+    assert.doesNotMatch(stderr.text, /does not belong to slug acme/);
   });
 
   test('--apply --smoke runs smoke against the suggested BASE_URL after vercel succeeds', async () => {
