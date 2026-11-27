@@ -342,7 +342,16 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.match(stdout.text, /Customer slug:  acme/);
     assert.match(stdout.text, /Database name:  procureflow-acme/);
     assert.match(stdout.text, /Vercel project: procureflow-acme/);
-    assert.match(stdout.text, /turso db create procureflow-acme/);
+    assert.match(stdout.text, /turso group create procureflow-acme/);
+    assert.match(stdout.text, /turso db create procureflow-acme --group procureflow-acme/);
+    assert.match(stdout.text, /turso db create procureflow-acme-preview --group procureflow-acme/);
+    assert.match(stdout.text, /TURSO_PREVIEW_DATABASE_URL/);
+    for (const line of stdout.text.split('\n')) {
+      if (!/^\s+turso\s/.test(line)) continue;
+      assert.equal(line.includes('--tursodb'), false, line);
+      assert.equal(line.includes('invalidate'), false, line);
+      assert.equal(line.includes('destroy'), false, line);
+    }
     assert.match(stdout.text, /vercel project add procureflow-acme/);
     assert.match(stdout.text, /vercel link --yes --project procureflow-acme/);
     assert.match(stdout.text, /does not connect GitHub/);
@@ -431,6 +440,41 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.match(stdout.text, /Onboarding acme/);
     assert.match(stdout.text, /customer onboard applied/);
     assert.doesNotMatch(stdout.text, /DEMO_PERSONA_SWITCHER set/);
+    assert.equal(calls.turso.argv.includes('--location'), false);
+    assert.equal(calls.turso.argv.includes('--max-groups'), false);
+  });
+
+  test('--apply forwards --location and --max-groups only to the Turso step', async () => {
+    let tursoArgv = null;
+    let vercelArgv = null;
+    const { stderr } = captureStreams();
+    const code = await runOnboardCustomerCli({
+      argv: [
+        '--slug', 'acme',
+        '--apply',
+        '--location', 'ams',
+        '--max-groups', '4'
+      ],
+      env: {},
+      stdout: captureStreams().stdout,
+      stderr,
+      async runTursoFn(opts) {
+        tursoArgv = opts.argv;
+        return { code: 0, exports: MINTED };
+      },
+      async runVercelFn(opts) {
+        vercelArgv = opts.argv;
+        return 0;
+      },
+      async runProvisionFn() { return 0; }
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.deepEqual(tursoArgv, [
+      '--slug', 'acme', '--apply', '--db', 'procureflow-acme', '--location', 'ams', '--max-groups', '4'
+    ]);
+    assert.equal(vercelArgv.includes('--location'), false);
+    assert.equal(vercelArgv.includes('--max-groups'), false);
+    assert.equal(vercelArgv.includes('--force'), false);
   });
 
   test('--apply --no-org skips the org skeleton and --db/--project pass through', async () => {

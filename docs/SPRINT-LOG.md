@@ -85,6 +85,7 @@ These merged feature PRs are context, not part of the daily program. The log bel
 | — | 2026-11-24 | Cap active login-rate rows at 50,000 so a burst of distinct addresses cannot grow the table inside one window | [#99](https://github.com/pesl98/new_p2p_indirect/pull/99) | Cap active login rate windows at 50,000 rows | `2d4cac07d642705a91733b95898542142b8aab4e` | merged |
 | — | 2026-11-25 | Stop a shell that still holds another customer's Turso URL or generated secret from writing it into a different customer, and stop `vercel env add` from overwriting a key unless `--rotate` is passed | [#103](https://github.com/pesl98/new_p2p_indirect/pull/103) | Deploy safety: cross-customer shell guard | `f61a11afcd0fb438c9de6a0a380c528c0a1aa3c6` | merged |
 | — | 2026-11-26 | Dump the customer database outside the git checkout before offboard destroys it, and remove the full per-environment secret list | [#105](https://github.com/pesl98/new_p2p_indirect/pull/105) | Deploy 1 offboard safety: dump before destroy | | done |
+| — | 2026-11-27 | One Turso group `procureflow-<slug>` plus a production database and a preview database in that group; stop when a new group would exceed quota | | Deploy 1: one Turso group per customer + preview database | | open |
 
 ## Sprint 1 — Full authorization rewrite
 
@@ -847,4 +848,32 @@ No new required deployment environment variable. The running app is unchanged. T
 `server/src/offboardCustomer.test.js` covers a failing, empty, or unstarted dump (destroy is not spawned and the dump text is not echoed), a dump that reports the database is already gone (exit 0, destroy is not spawned), stdout streamed to a mode `0600` file, a dump path inside the work tree (refused, no spawn), an env rm list equal to the per-target table, a missing key counted as success, no `tokens invalidate` argv, and no spawn when `--confirm-slug` is omitted. `server/src/provision.test.js` doc-phrase locks still pass.
 
 `npm test`: 839 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+
+## Deploy 1: one Turso group per customer + preview database
+
+**Date:** 2026-11-27
+
+**Goal:** `turso:customer` and the Turso step of `onboard:customer` create or reuse group `procureflow-<slug>` and both classic libSQL databases in that group, and stop when one new group would exceed a known quota. The running app is unchanged.
+
+**PR:**
+
+**Status:** open.
+
+### What changed
+
+- Before any create, `--apply` runs `turso group list`. When a quota is present in that output, or the operator passes `--max-groups` / `TURSO_MAX_GROUPS`, and one new group would exceed it, the command exits non-zero and does not create the databases in the default group. `TURSO_MAX_GROUPS` is an optional operator override. It is not a deployment variable.
+- The commands create or reuse group `procureflow-<slug>`, then `procureflow-<slug>` and `procureflow-<slug>-preview`, both with `--group procureflow-<slug>`. They never pass `--tursodb`. `--location` is passed only to `turso group create`, and only when the operator sets it. No location is hard-coded. `vercel.json` has no `regions` key.
+- A database that already exists, including one that `turso db show` reports in the default group, is reused and reported. It is not moved and not destroyed. The runbooks say those databases stay in the default group until a person recreates them, and that `turso db tokens invalidate` must not be run on that group.
+- The plan and the apply report name `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN` for a later Preview step. This command does not mint a preview token and does not write preview env on Vercel. `vercel:customer` is unchanged, including the cross-customer shell guard.
+- `turso db tokens invalidate` and `turso db destroy` are not called. Command echoes go through `redactSecrets`. `--apply` still prints the production export lines once, which is how the operator copies them.
+
+### Existing deploys
+
+No new required deployment environment variable. No production database, Vercel env, or Turso database is touched by this change. The running app is unchanged.
+
+### Tests
+
+`server/src/tursoCustomer.test.js` checks that a dry-run lists `turso group create procureflow-acme` and both `turso db create` commands with `--group` and without `--tursodb`, that a known quota exits non-zero before any create, that an existing group and both databases spawn no create, that `--location` is passed only when given and only on group create, and that invalidate/destroy never appear in argv. `server/src/onboardCustomer.test.js` checks the same dry-run commands and that `--location` / `--max-groups` are forwarded only to the Turso step. `server/src/customerShellGuard.test.js` still passes.
+
+`npm test`: 851 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 
