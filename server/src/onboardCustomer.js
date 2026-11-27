@@ -30,6 +30,8 @@ import {
 import {
   WILL_MINT_PLACEHOLDER,
   defaultDatabaseName,
+  normalizeLocation,
+  parseMaxGroups,
   plannedTursoCommands,
   redactSecretTail,
   resolveCustomerIdentity,
@@ -670,6 +672,24 @@ export async function runOnboardCustomerCli({
   if (shellGuard) {
     write(stderr, `${shellGuard.message}\n`);
     return 1;
+  }
+
+  if (args.maxGroups != null) {
+    const parsedMax = parseMaxGroups(args.maxGroups);
+    if (!parsedMax.set || parsedMax.error) {
+      write(stderr, 'Invalid --max-groups. Use a non-negative integer. The value was not printed.\n');
+      return 1;
+    }
+  }
+  if (args.location != null) {
+    const parsedLocation = normalizeLocation(args.location);
+    if (parsedLocation.error) {
+      write(
+        stderr,
+        'Invalid --location. Pass a short location code (letters, numbers, hyphens). The value was not printed. No region is hard-coded.\n'
+      );
+      return 1;
+    }
   }
 
   const withOrg = args.withOrg;

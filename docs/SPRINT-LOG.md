@@ -861,7 +861,7 @@ No new required deployment environment variable. The running app is unchanged. T
 
 ### What changed
 
-- Before any create, `--apply` runs `turso group list`. When a quota is present in that output, or the operator passes `--max-groups` / `TURSO_MAX_GROUPS`, and one new group would exceed it, the command exits non-zero and does not create the databases in the default group. `TURSO_MAX_GROUPS` is an optional operator override. It is not a deployment variable.
+- Before any create, `--apply` runs `turso group list`. When a quota is present in that output, or the operator passes `--max-groups` / `TURSO_MAX_GROUPS`, and one new group would exceed it, the command exits non-zero and does not create the databases in the default group. `TURSO_MAX_GROUPS` is an optional operator override. It is not a deployment variable. `onboard:customer` rejects `--max-groups` or `--location` with no value before it calls Turso, and it does not print the value.
 - The commands create or reuse group `procureflow-<slug>`, then `procureflow-<slug>` and `procureflow-<slug>-preview`, both with `--group procureflow-<slug>`. They never pass `--tursodb`. `--location` is passed only to `turso group create`, and only when the operator sets it. No location is hard-coded. `vercel.json` has no `regions` key.
 - A database that already exists, including one that `turso db show` reports in the default group, is reused and reported. It is not moved and not destroyed. The runbooks say those databases stay in the default group until a person recreates them, and that `turso db tokens invalidate` must not be run on that group.
 - The plan and the apply report name `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN` for a later Preview step. This command does not mint a preview token and does not write preview env on Vercel. `vercel:customer` is unchanged, including the cross-customer shell guard.
@@ -875,5 +875,5 @@ No new required deployment environment variable. No production database, Vercel 
 
 `server/src/tursoCustomer.test.js` checks that a dry-run lists `turso group create procureflow-acme` and both `turso db create` commands with `--group` and without `--tursodb`, that a known quota exits non-zero before any create, that an existing group and both databases spawn no create, that `--location` is passed only when given and only on group create, and that invalidate/destroy never appear in argv. `server/src/onboardCustomer.test.js` checks the same dry-run commands and that `--location` / `--max-groups` are forwarded only to the Turso step. `server/src/customerShellGuard.test.js` still passes.
 
-`npm test`: 851 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
+`npm test`: 852 passing. Client production build succeeded. `npm audit --omit=dev --audit-level=high` (root and `client`) reported 0 vulnerabilities.
 

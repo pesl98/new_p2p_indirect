@@ -444,6 +444,38 @@ describe('onboard:customer CLI (no live network)', () => {
     assert.equal(calls.turso.argv.includes('--max-groups'), false);
   });
 
+  test('--max-groups or --location without a value exits before the Turso step', async () => {
+    const cases = [
+      ['--slug', 'acme', '--max-groups'],
+      ['--slug', 'acme', '--apply', '--max-groups'],
+      ['--slug', 'acme', '--apply', '--max-groups='],
+      ['--slug', 'acme', '--apply', '--location'],
+      ['--slug', 'acme', '--location=']
+    ];
+    for (const argv of cases) {
+      let called = false;
+      const { stdout, stderr } = captureStreams();
+      const code = await runOnboardCustomerCli({
+        argv,
+        env: {},
+        stdout,
+        stderr,
+        async runTursoFn() { called = true; return 0; },
+        async runVercelFn() { called = true; return 0; },
+        async runProvisionFn() { called = true; return 0; }
+      });
+      assert.equal(code, 1, stderr.text);
+      assert.equal(called, false);
+      if (argv.some((arg) => arg === '--max-groups' || arg.startsWith('--max-groups='))) {
+        assert.match(stderr.text, /Invalid --max-groups/);
+      } else {
+        assert.match(stderr.text, /Invalid --location/);
+      }
+      assert.equal(stdout.text.includes('supersecret'), false);
+      assert.equal(stderr.text.includes('='), false);
+    }
+  });
+
   test('--apply forwards --location and --max-groups only to the Turso step', async () => {
     let tursoArgv = null;
     let vercelArgv = null;
