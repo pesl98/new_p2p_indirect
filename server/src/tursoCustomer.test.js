@@ -16,6 +16,10 @@ import {
   parseTursoCustomerArgs,
   parseTursoToken,
   parseTursoUrl,
+  groupQuotaWouldBlock,
+  parseTursoDbGroup,
+  parseTursoGroupList,
+  parseTursoGroupQuota,
   plannedTursoCommands,
   redactSecretTail,
   resolveCustomerIdentity,
@@ -25,6 +29,7 @@ import {
   tursoCustomerCliCode,
   tursoCustomerExports
 } from './tursoCustomer.js';
+import { redactSecrets } from './vercelCustomer.js';
 import { normalizeSlug } from './vercelCustomer.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -63,8 +68,12 @@ const APPLY_URL = 'libsql://procureflow-acme-org.turso.io';
 const APPLY_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.acmeTokenValueXYZ';
 const MINTED_SECRET = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
+const GROUP_LIST_DEFAULT = 'NAME       LOCATIONS\ndefault    iad\n';
+
 function applySpawn({
   whoami = { stdout: 'operator\n' },
+  groupList = { stdout: GROUP_LIST_DEFAULT },
+  groupCreate = { stdout: 'Created group procureflow-acme\n' },
   show = { exitCode: 1, stderr: 'Error: database not found\n' },
   create = { stdout: 'Created database procureflow-acme\n' },
   url = { stdout: `${APPLY_URL}\n` },
@@ -72,15 +81,32 @@ function applySpawn({
 } = {}) {
   const calls = [];
   const spawnFn = (command, args) => {
-    calls.push({ command, args });
+    calls.push({ command, args: [...args] });
     if (args[0] === 'auth' && args[1] === 'whoami') return fakeChild(whoami);
-    if (args[0] === 'db' && args[1] === 'show' && args[3] === '--url') return fakeChild(url);
-    if (args[0] === 'db' && args[1] === 'show') return fakeChild(show);
+    if (args[0] === 'group' && args[1] === 'list') return fakeChild(groupList);
+    if (args[0] === 'group' && args[1] === 'create') return fakeChild(groupCreate);
+    if (args[0] === 'db' && args[1] === 'show' && args.includes('--url')) return fakeChild(url);
+    if (args[0] === 'db' && args[1] === 'show') {
+      const fixture = typeof show === 'function' ? show(args) : show;
+      return fakeChild(fixture);
+    }
     if (args[0] === 'db' && args[1] === 'create') return fakeChild(create);
     if (args[0] === 'db' && args[1] === 'tokens' && args[2] === 'create') return fakeChild(token);
     throw new Error(`unexpected spawn ${args.join(' ')}`);
   };
   return { calls, spawnFn };
+}
+
+function assertNoForbiddenTursoArgv(calls) {
+  for (const call of calls) {
+    assert.equal(call.args.includes('--tursodb'), false, call.args.join(' '));
+    assert.equal(call.args.includes('invalidate'), false, call.args.join(' '));
+    assert.equal(call.args.includes('destroy'), false, call.args.join(' '));
+    if (call.args[0] === 'db' && call.args[1] === 'create') {
+      assert.ok(call.args.includes('--group'), call.args.join(' '));
+      assert.notEqual(call.args[call.args.indexOf('--group') + 1], 'default');
+    }
+  }
 }
 
 describe('turso:customer arg parsing', () => {
@@ -163,15 +189,70 @@ describe('turso:customer identity', () => {
 });
 
 describe('turso:customer helpers', () => {
-  test('planned commands never include --tursodb or destroy', () => {
-    const commands = plannedTursoCommands('procureflow-acme');
-    const joined = commands.map((c) => c.display).join('\n');
-    assert.match(joined, /turso db create procureflow-acme/);
+  test('planned commands never include --tursodb, invalidate, or destroy', () => {
+    const commands = plannedTursoCommands('procureflow-acme', { slug: 'acme' });
+    const joined = commands.map((c) => `${c.display}\n${(c.argv || []).join(' ')}`).join('\n');
+    assert.match(joined, /turso group create procureflow-acme/);
+    assert.match(joined, /turso db create procureflow-acme --group procureflow-acme/);
+    assert.match(joined, /turso db create procureflow-acme-preview --group procureflow-acme/);
     assert.match(joined, /turso db show procureflow-acme --url/);
     assert.match(joined, /turso db tokens create procureflow-acme/);
     assert.equal(joined.includes('--tursodb'), false);
+    assert.equal(joined.includes('invalidate'), false);
     assert.equal(joined.includes('destroy'), false);
-    assert.deepEqual(commands.find((c) => c.kind === 'create').argv, ['db', 'create', 'procureflow-acme']);
+    assert.equal(joined.includes('--location'), false);
+    assert.deepEqual(commands.find((c) => c.kind === 'create').argv, [
+      'db', 'create', 'procureflow-acme', '--group', 'procureflow-acme'
+    ]);
+    assert.deepEqual(commands.find((c) => c.kind === 'create-preview').argv, [
+      'db', 'create', 'procureflow-acme-preview', '--group', 'procureflow-acme'
+    ]);
+    assert.deepEqual(commands.find((c) => c.kind === 'group-create').argv, [
+      'group', 'create', 'procureflow-acme'
+    ]);
+  });
+
+  test('--location is on group create only when the operator passes it', () => {
+    const plain = plannedTursoCommands('procureflow-acme', { slug: 'acme' });
+    assert.equal(plain.some((cmd) => cmd.argv.includes('--location')), false);
+    const located = plannedTursoCommands('procureflow-acme', { slug: 'acme', location: 'ams' });
+    assert.deepEqual(located.find((cmd) => cmd.kind === 'group-create').argv, [
+      'group', 'create', 'procureflow-acme', '--location', 'ams'
+    ]);
+    assert.equal(
+      located.filter((cmd) => cmd.kind !== 'group-create').some((cmd) => cmd.argv.includes('--location')),
+      false
+    );
+  });
+
+  test('group list parser and quota decision', () => {
+    const groups = parseTursoGroupList('NAME       LOCATIONS\ndefault    iad\nprocureflow-acme    ams\n');
+    assert.deepEqual(groups.map((group) => group.name), ['default', 'procureflow-acme']);
+    assert.equal(parseTursoDbGroup('Name: procureflow-acme\nGroup: default\n'), 'default');
+    assert.deepEqual(parseTursoGroupQuota('Groups: 1 of 1 groups\n'), { used: 1, max: 1 });
+    const blocked = groupQuotaWouldBlock({
+      groupExists: false,
+      mustCreateGroup: true,
+      groupCount: 1,
+      parsedUsed: 1,
+      maxGroups: 1
+    });
+    assert.equal(blocked.blocked, true);
+    const existing = groupQuotaWouldBlock({
+      groupExists: true,
+      mustCreateGroup: false,
+      groupCount: 1,
+      parsedUsed: 1,
+      maxGroups: 1
+    });
+    assert.equal(existing.blocked, false);
+    const unknown = groupQuotaWouldBlock({
+      groupExists: false,
+      mustCreateGroup: true,
+      groupCount: 1,
+      maxGroups: null
+    });
+    assert.equal(unknown.blocked, false);
   });
 
   test('parseTursoUrl and parseTursoToken read CLI stdout', () => {
@@ -416,10 +497,20 @@ describe('turso:customer CLI (no live Turso)', () => {
     assert.match(stdout.text, /dry-run — no Turso mutation/);
     assert.match(stdout.text, /Customer slug:  acme/);
     assert.match(stdout.text, /Database name:  procureflow-acme/);
-    assert.match(stdout.text, /turso db create procureflow-acme/);
+    assert.match(stdout.text, /turso group create procureflow-acme/);
+    assert.match(stdout.text, /turso db create procureflow-acme --group procureflow-acme/);
+    assert.match(stdout.text, /turso db create procureflow-acme-preview --group procureflow-acme/);
     assert.match(stdout.text, /turso db show procureflow-acme --url/);
     assert.match(stdout.text, /turso db tokens create procureflow-acme/);
+    assert.match(stdout.text, /TURSO_PREVIEW_DATABASE_URL/);
     assert.match(stdout.text, /never --tursodb/);
+    assert.doesNotMatch(stdout.text, /turso group create procureflow-acme --location/);
+    for (const line of stdout.text.split('\n')) {
+      if (!/^\s+turso\s/.test(line)) continue;
+      assert.equal(line.includes('--tursodb'), false, line);
+      assert.equal(line.includes('invalidate'), false, line);
+      assert.equal(line.includes('destroy'), false, line);
+    }
     assert.match(stdout.text, /will mint on --apply/);
     assert.match(stdout.text, /npm run turso:customer -- --slug acme --apply/);
     assert.match(stdout.text, /npm run vercel:customer -- --slug acme --apply/);
@@ -556,10 +647,19 @@ describe('turso:customer CLI (no live Turso)', () => {
     assert.equal(code, 0, stderr.text);
     assert.equal(calls[0].command, 'turso');
     assert.deepEqual(calls[0].args, ['auth', 'whoami']);
-    const create = calls.find((c) => c.args[1] === 'create');
-    assert.deepEqual(create.args, ['db', 'create', 'procureflow-acme']);
-    assert.equal(create.args.includes('--tursodb'), false);
+    assert.deepEqual(calls.find((c) => c.args[0] === 'group' && c.args[1] === 'create').args, [
+      'group', 'create', 'procureflow-acme'
+    ]);
+    assert.deepEqual(calls.find((c) => c.args[0] === 'db' && c.args[1] === 'create' && c.args[2] === 'procureflow-acme').args, [
+      'db', 'create', 'procureflow-acme', '--group', 'procureflow-acme'
+    ]);
+    assert.deepEqual(calls.find((c) => c.args[0] === 'db' && c.args[1] === 'create' && c.args[2] === 'procureflow-acme-preview').args, [
+      'db', 'create', 'procureflow-acme-preview', '--group', 'procureflow-acme'
+    ]);
+    assertNoForbiddenTursoArgv(calls);
+    assert.equal(calls.some((c) => c.args.includes('--location')), false);
     assert.equal(calls.some((c) => c.args.includes('destroy') || c.args.includes('vercel')), false);
+    assert.equal(calls.filter((c) => c.args[1] === 'tokens').length, 1);
     assert.match(stdout.text, /Creating classic libSQL database/);
     assert.match(stdout.text, new RegExp(`export TURSO_DATABASE_URL='${APPLY_URL}'`));
     assert.match(stdout.text, new RegExp(`export TURSO_AUTH_TOKEN='${APPLY_TOKEN}'`));
@@ -661,6 +761,212 @@ describe('turso:customer CLI (no live Turso)', () => {
     assert.equal(typeof code, 'number');
     assert.equal(code, 0);
     assert.equal(tursoCustomerExports(code), null);
+  });
+
+  test('quota exceeded exits non-zero before any create spawn', async () => {
+    const { calls, spawnFn } = applySpawn({
+      groupList: { stdout: 'NAME       LOCATIONS\ndefault    iad\n1 of 1 groups\n' }
+    });
+    const { stdout, stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: {},
+      stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 1);
+    assert.match(stderr.text, /would exceed the Turso group quota/);
+    assert.match(stderr.text, /default group/);
+    assert.equal(calls.some((c) => c.args.includes('create')), false);
+    assert.equal(calls.some((c) => c.args[0] === 'group' && c.args[1] === 'list'), true);
+    assertNoForbiddenTursoArgv(calls);
+    assert.equal(stdout.text.includes(APPLY_TOKEN), false);
+  });
+
+  test('--max-groups and TURSO_MAX_GROUPS stop a new group before create', async () => {
+    for (const source of ['flag', 'env']) {
+      const { calls, spawnFn } = applySpawn();
+      const { stderr } = captureStreams();
+      const code = await runTursoCustomerCli({
+        argv: source === 'flag'
+          ? ['--slug', 'acme', '--apply', '--max-groups', '1']
+          : ['--slug', 'acme', '--apply'],
+        env: source === 'env' ? { TURSO_MAX_GROUPS: '1' } : {},
+        stdout: captureStreams().stdout,
+        stderr,
+        spawnFn
+      });
+      assert.equal(code, 1, stderr.text);
+      assert.match(stderr.text, /would exceed the Turso group quota/);
+      assert.equal(calls.some((c) => c.args.includes('create')), false);
+      assertNoForbiddenTursoArgv(calls);
+    }
+  });
+
+  test('a known quota does not block a missing database when the customer group already exists', async () => {
+    const { calls, spawnFn } = applySpawn({
+      groupList: {
+        stdout: 'NAME LOCATIONS\ndefault iad\nprocureflow-acme ams\n2 of 2 groups\n'
+      },
+      show(args) {
+        if (String(args[2]).endsWith('-preview')) {
+          return { exitCode: 1, stderr: 'Error: database not found\n' };
+        }
+        return { exitCode: 0, stdout: 'Name: procureflow-acme\nGroup: procureflow-acme\n' };
+      }
+    });
+    const { stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: { SESSION_SECRET: MINTED_SECRET, PROCUREFLOW_SECRET_SLUG: 'acme' },
+      stdout: captureStreams().stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(calls.some((c) => c.args[0] === 'group' && c.args[1] === 'create'), false);
+    assert.deepEqual(
+      calls.find((c) => c.args[0] === 'db' && c.args[1] === 'create').args,
+      ['db', 'create', 'procureflow-acme-preview', '--group', 'procureflow-acme']
+    );
+    assertNoForbiddenTursoArgv(calls);
+  });
+
+  test('existing group and databases are reused and no create is spawned', async () => {
+    const { calls, spawnFn } = applySpawn({
+      groupList: {
+        stdout: 'NAME               LOCATIONS\ndefault            iad\nprocureflow-acme   ams\n2 of 2 groups\n'
+      },
+      show: { exitCode: 0, stdout: 'Name: procureflow-acme\nGroup: procureflow-acme\n' }
+    });
+    const { stdout, stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--location', 'ams'],
+      env: { SESSION_SECRET: MINTED_SECRET, PROCUREFLOW_SECRET_SLUG: 'acme' },
+      stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(calls.some((c) => (
+      (c.args[0] === 'group' || c.args[0] === 'db') && c.args[1] === 'create'
+    )), false);
+    assert.equal(calls.some((c) => c.args.includes('--location')), false);
+    assert.match(stdout.text, /already exists — reusing/);
+    assert.match(stdout.text, /TURSO_PREVIEW_DATABASE_URL/);
+    assertNoForbiddenTursoArgv(calls);
+  });
+
+  test('databases already in the default group are reused and not moved', async () => {
+    const { calls, spawnFn } = applySpawn({
+      show: { exitCode: 0, stdout: 'Name: procureflow-acme\nGroup: default\n' }
+    });
+    const { stdout, stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: { SESSION_SECRET: MINTED_SECRET, PROCUREFLOW_SECRET_SLUG: 'acme' },
+      stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 0, stderr.text);
+    assert.equal(calls.some((c) => c.args[0] === 'db' && c.args[1] === 'create'), false);
+    assert.equal(calls.some((c) => c.args[0] === 'group' && c.args[1] === 'create'), false);
+    assert.match(stdout.text, /default group/);
+    assert.match(stdout.text, /tokens invalidate/);
+    assertNoForbiddenTursoArgv(calls);
+  });
+
+  test('a missing preview database is created in the customer group when production stays in default', async () => {
+    const { calls, spawnFn } = applySpawn({
+      show(args) {
+        const name = args[2];
+        if (String(name).endsWith('-preview')) {
+          return { exitCode: 1, stderr: 'Error: database not found\n' };
+        }
+        return { exitCode: 0, stdout: `Name: ${name}\nGroup: default\n` };
+      }
+    });
+    const { stdout, stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--location', 'ams'],
+      env: { SESSION_SECRET: MINTED_SECRET, PROCUREFLOW_SECRET_SLUG: 'acme' },
+      stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 0, `${stderr.text}\n${stdout.text}`);
+    assert.equal(calls.some((c) => c.args[0] === 'db' && c.args[1] === 'create' && c.args[2] === 'procureflow-acme'), false);
+    const preview = calls.find((c) => c.args[0] === 'db' && c.args[1] === 'create' && c.args[2] === 'procureflow-acme-preview');
+    assert.deepEqual(preview.args, [
+      'db', 'create', 'procureflow-acme-preview', '--group', 'procureflow-acme'
+    ]);
+    const group = calls.find((c) => c.args[0] === 'group' && c.args[1] === 'create');
+    assert.deepEqual(group.args, ['group', 'create', 'procureflow-acme', '--location', 'ams']);
+    assert.match(stdout.text, /procureflow-acme is in the default group/);
+    assertNoForbiddenTursoArgv(calls);
+  });
+
+  test('--location is passed only to group create when the group is new', async () => {
+    const { calls, spawnFn } = applySpawn();
+    const { stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply', '--location', 'ams'],
+      env: {},
+      stdout: captureStreams().stdout,
+      stderr,
+      spawnFn,
+      randomBytesFn: () => Buffer.from(MINTED_SECRET, 'hex')
+    });
+    assert.equal(code, 0, stderr.text);
+    const located = calls.filter((c) => c.args.includes('--location'));
+    assert.equal(located.length, 1);
+    assert.deepEqual(located[0].args, ['group', 'create', 'procureflow-acme', '--location', 'ams']);
+    assertNoForbiddenTursoArgv(calls);
+  });
+
+  test('a failed group create does not fall back to the default group', async () => {
+    const { calls, spawnFn } = applySpawn({
+      groupCreate: { exitCode: 1, stderr: 'Error: group limit reached\n' }
+    });
+    const { stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: {},
+      stdout: captureStreams().stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 1);
+    assert.match(stderr.text, /Failed to create Turso group/);
+    assert.match(stderr.text, /default group/);
+    assert.equal(calls.some((c) => c.args[0] === 'db' && c.args[1] === 'create'), false);
+    assertNoForbiddenTursoArgv(calls);
+  });
+
+  test('command output redacts shell secrets', async () => {
+    const leaked = 'eyJleakedTokenValueShouldNotAppearInOutput99';
+    assert.equal(redactSecrets(`see ${leaked}`, { TURSO_AUTH_TOKEN: leaked }).includes(leaked), false);
+    const { spawnFn } = applySpawn({
+      whoami: { exitCode: 1, stderr: `not logged in ${leaked}` }
+    });
+    const { stdout, stderr } = captureStreams();
+    const code = await runTursoCustomerCli({
+      argv: ['--slug', 'acme', '--apply'],
+      env: {
+        TURSO_DATABASE_URL: APPLY_URL,
+        TURSO_AUTH_TOKEN: leaked,
+        PROCUREFLOW_SECRET_SLUG: 'acme'
+      },
+      stdout,
+      stderr,
+      spawnFn
+    });
+    assert.equal(code, 1);
+    assert.equal(stderr.text.includes(leaked), false);
+    assert.equal(stdout.text.includes(leaked), false);
+    assert.match(stderr.text, /\$TURSO_AUTH_TOKEN/);
   });
 });
 

@@ -20,7 +20,7 @@ npm run onboard:customer -- --slug acme --apply \
 
 # Stepped (same sequence; copy Turso export lines by hand)
 npm run turso:customer -- --slug acme                 # dry-run (no Turso mutation)
-npm run turso:customer -- --slug acme --apply         # create/reuse classic libSQL + print exports
+npm run turso:customer -- --slug acme --apply         # group + production DB + preview DB; print production exports
 # copy the printed export TURSO_* / SESSION_SECRET / PROCUREFLOW_SECRET_SLUG lines into this shell
 
 # vercel:customer --apply runs:
@@ -54,7 +54,9 @@ npm run bootstrap-admin -- --email admin@acme.test --password 'choose-a-long-pas
 - [ ] Redeploy is part of `--apply`, which then waits until that Production deployment is Ready (`VERCEL_READY_TIMEOUT_MS`, default 4 minutes). Old Previews keep stale env until rebuilt.
 - [ ] Never paste another customer’s Turso URL here
 - [ ] `TURSO_AUTH_TOKEN` is from `npm run turso:customer -- --apply` / `turso db tokens create` (database token, **not** an org JWT)
-- [ ] Database is classic libSQL (`turso:customer` / `turso db create`, **not** `--tursodb`)
+- [ ] Database is classic libSQL in group `procureflow-acme` (`turso group create procureflow-acme`, then `turso db create procureflow-acme --group procureflow-acme` and `turso db create procureflow-acme-preview --group procureflow-acme`, **not** `--tursodb`, **not** the default group). `--location` only if you passed it. A quota exceeded stop does not fall back to the default group.
+- [ ] Preview env names `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN` are reported and are **not** written by `turso:customer`. Set them on Vercel Preview by hand until a later sprint.
+- [ ] Databases that already live in Turso’s default group stay there until a person recreates them. The command reuses them and does not move or destroy them. Do not run `turso db tokens invalidate` on the default group.
 
 ```bash
 # After deploy — replace the hostname

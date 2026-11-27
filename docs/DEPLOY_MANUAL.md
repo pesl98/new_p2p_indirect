@@ -213,17 +213,23 @@ npm run turso:customer -- --slug acme
 npm run turso:customer -- --slug acme --apply
 ```
 
-`--apply` requires the Turso CLI and a successful `turso auth whoami`. It then runs, in order:
+`--apply` requires the Turso CLI and a successful `turso auth whoami`. It then runs, in order, creating only what is missing:
 
 ```bash
 turso auth whoami
-turso db show procureflow-acme          # existence check
-turso db create procureflow-acme        # only if missing; never --tursodb
+turso group list
+turso group create procureflow-acme       # only if the group is missing; add --location only when you passed --location
+turso db show procureflow-acme
+turso db create procureflow-acme --group procureflow-acme
+turso db show procureflow-acme-preview
+turso db create procureflow-acme-preview --group procureflow-acme
 turso db show procureflow-acme --url
-turso db tokens create procureflow-acme # database token, not an org JWT
+turso db tokens create procureflow-acme   # production database token, not an org JWT
 ```
 
-If the database already exists, it is reused. This command never destroys a database, never migrates, never seeds, and never calls Vercel.
+Both `turso db create` lines are classic libSQL. They never pass `--tursodb`. They always pass `--group procureflow-acme`. A new database is never created in the org default group.
+
+If the group or either database already exists, it is reused. This command never destroys a database, never calls `turso db tokens invalidate` or `turso db destroy`, never migrates, never seeds, and never calls Vercel. It prints the preview database name and the env names `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN` for a later step. It does not mint a preview token and does not write preview env on Vercel.
 
 It prints shell exports. Copy them into this shell and into the password manager:
 
@@ -240,22 +246,17 @@ export PROCUREFLOW_SECRET_SLUG='acme'
 
 ### 4.2 Region and group
 
-`turso db create procureflow-<slug>` is run with no `--group` and no `--location`. The database is created in the Turso CLI’s current organization, in that organization’s default group and primary location. The scripts cannot move it later.
+`turso:customer` and the Turso step of `onboard:customer` create or reuse group `procureflow-<slug>`, then create or reuse `procureflow-<slug>` and `procureflow-<slug>-preview` in that group. `--db` changes the production database name and the preview name (`<db>-preview`). The group name stays `procureflow-<slug>`.
 
-To choose a group or location, create the database yourself first, using the flags your installed CLI documents:
+`--location <code>` is optional. It is passed only to `turso group create`, and only when you set it. No location is hard-coded. `vercel.json` has no `regions` key. An existing group is not moved. If the group already exists in another location, the command says so and continues.
 
-```bash
-turso db create --help
-# example shape — confirm the flags on your CLI, then:
-# turso db create procureflow-acme --group <group> --location <location>
-npm run turso:customer -- --slug acme --apply
-```
+Before any create, `--apply` runs `turso group list`. When a group quota can be read from that output, or you pass `--max-groups <n>` (or set `TURSO_MAX_GROUPS`), and one new group would exceed it, the command exits non-zero. It does not create the databases in the default group to get around the quota. `TURSO_MAX_GROUPS` is an optional operator override. It is not a deployment variable. The running app does not read it. If the CLI prints no quota and you do not set an override, `--apply` still creates the customer group rather than the default group.
 
-`--apply` sees that the database exists, skips create, and only mints the URL, a database token, and `SESSION_SECRET`.
+Databases that already live in Turso’s default group stay there until a person recreates them. `turso:customer` reuses them and reports the group. It does not move them, does not destroy them, and does not call `turso db tokens invalidate` on that group. Invalidating tokens there would sign every customer that still shares the default group out of their database. Recreate is manual: dump, create the database in `procureflow-<slug>`, restore, then point the Vercel project at the new URL. Do that one customer at a time.
 
 ### 4.2.1 Preview database (separate from production)
 
-Sprint 8.0 refuses to serve when `VERCEL_ENV=preview` would use the production database. The customer CLIs do **not** create this database and do **not** write the preview variables. Do that by hand. This checkout has no Turso or Vercel credentials for it.
+Sprint 8.0 refuses to serve when `VERCEL_ENV=preview` would use the production database. `turso:customer` and the Turso step of `onboard:customer` create or reuse `procureflow-<slug>-preview` in group `procureflow-<slug>` (section 4.2). They do **not** write `TURSO_PREVIEW_DATABASE_URL` or `TURSO_PREVIEW_AUTH_TOKEN`, and they do **not** mint a preview token. Set those two on Vercel Preview by hand, below, until a later sprint. `vercel:customer` still copies the production URL, the production token, and `SESSION_SECRET` onto Preview. That copy is not the preview connection.
 
 **Create**
 
@@ -265,13 +266,21 @@ Sprint 8.0 refuses to serve when `VERCEL_ENV=preview` would use the production d
 | Engine | Classic libSQL. Do not pass `--turso` or `--tursodb`. |
 | Region | The same group and primary location as `procureflow-<slug>`. |
 
-This repo does not record a location code. `turso db create procureflow-<slug>` is run with no `--group` and no `--location`, so production lives in the organization’s default group and that group’s primary location (section 4.2). Match that. Run `turso db show procureflow-<slug>` and, if it prints a group or location, pass the same `--group` and `--location` your CLI documents. If it does not name one, create the preview database with the same CLI and **no** `--group` or `--location`, so it lands in that same default primary location. Do not pick a different region.
+The wrapper creates the preview database in the same group as production. Pass `--location` only when you want that code on `turso group create`. Do not pass `--tursodb`, and do not create the preview database in the default group.
 
 ```bash
-turso db show procureflow-acme
-turso db create procureflow-acme-preview          # classic libSQL: do not pass --turso or --tursodb; add --group/--location only to match production
+npm run turso:customer -- --slug acme --apply
+# equivalent creates, only if missing:
+# turso group create procureflow-acme
+# turso db create procureflow-acme --group procureflow-acme
+# turso db create procureflow-acme-preview --group procureflow-acme
+```
+
+The preview URL and a preview database token are still set by hand for Vercel Preview:
+
+```bash
 turso db show procureflow-acme-preview --url
-turso db tokens create procureflow-acme-preview   # database token, not an org JWT
+turso db tokens create procureflow-acme-preview   # database token, not an org JWT; not minted by turso:customer
 ```
 
 **Vercel environment variables**
@@ -575,7 +584,10 @@ Hand equivalents, if you are not using the wrappers:
 
 ```bash
 turso auth login && turso auth whoami
-turso db create procureflow-acme
+turso group list
+turso group create procureflow-acme
+turso db create procureflow-acme --group procureflow-acme
+turso db create procureflow-acme-preview --group procureflow-acme
 turso db show procureflow-acme --url
 turso db tokens create procureflow-acme
 

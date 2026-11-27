@@ -129,19 +129,27 @@ Create **one** classic libSQL database for this customer, mint a **database toke
 # See planned DB name + exact turso commands (no mutation)
 npm run turso:customer -- --slug acme
 
-# Create/reuse procureflow-acme, mint a database token, print exports
+# Create/reuse group procureflow-acme, both databases, mint a production token, print exports
 npm run turso:customer -- --slug acme --apply
 ```
 
-`--apply` requires the Turso CLI and `turso auth login`. It runs (and you can still run by hand):
+`--apply` requires the Turso CLI and `turso auth login`. It reads `turso group list` before it creates anything. It runs (and you can still run by hand):
 
 ```bash
-turso db create procureflow-acme
+turso group create procureflow-acme
+turso db create procureflow-acme --group procureflow-acme
+turso db create procureflow-acme-preview --group procureflow-acme
 turso db show procureflow-acme --url
 turso db tokens create procureflow-acme
 ```
 
-Name pattern: `procureflow-<customer-slug>` (override with `--db <name>`). Lowercase, no spaces. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL). If the DB already exists, `--apply` **reuses** it — it never destroys. When you override the name, pass the same `--db` to `vercel:customer`. `onboard:customer` does that for you. `--db` is the Turso database the shell URL must name. It does not change the Vercel project.
+Name pattern: group `procureflow-<customer-slug>`, production database `procureflow-<customer-slug>` (override with `--db <name>`; the preview name is then `<db>-preview`). Lowercase, no spaces. Do **not** pass `--tursodb` (that is a different engine; ProcureFlow talks HTTP `/v2/pipeline` to classic libSQL). New databases are created only in the customer group, never in the default group. `--location` is passed only to `turso group create`, and only when you set it. No region is hard-coded.
+
+If `turso group list` (or `--max-groups` / `TURSO_MAX_GROUPS`) shows that one new group would exceed the quota, `--apply` exits non-zero and does not use the default group instead. `TURSO_MAX_GROUPS` is not a deployment variable.
+
+If the group or either database already exists, `--apply` **reuses** it. It never destroys a database and never calls `turso db tokens invalidate`. Databases that already live in Turso’s default group stay there until a person recreates them in `procureflow-<slug>`. The command reports that and leaves them in place. Do not run `turso db tokens invalidate` on the default group: that invalidates every token in the group, including other customers that still share it.
+
+The command prints the preview database name and the names `TURSO_PREVIEW_DATABASE_URL` and `TURSO_PREVIEW_AUTH_TOKEN`. It does not write those to Vercel and does not mint a preview token. When you override the production name, pass the same `--db` to `vercel:customer`. `onboard:customer` does that for you, and it forwards `--location` and `--max-groups`. `--db` is the Turso database the shell URL must name. It does not change the Vercel project.
 
 Copy the printed `export TURSO_DATABASE_URL=…`, `export TURSO_AUTH_TOKEN=…`, `export SESSION_SECRET=…`, and `export PROCUREFLOW_SECRET_SLUG=acme` into this shell and a password manager. `--json` redacts the token to its last 4 characters; full export lines are still printed on human stdout after `--apply`. `PROCUREFLOW_SECRET_SLUG` is the slug, not a secret, and it is not written to Vercel.
 

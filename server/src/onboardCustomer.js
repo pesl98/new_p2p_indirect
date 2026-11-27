@@ -30,6 +30,8 @@ import {
 import {
   WILL_MINT_PLACEHOLDER,
   defaultDatabaseName,
+  normalizeLocation,
+  parseMaxGroups,
   plannedTursoCommands,
   redactSecretTail,
   resolveCustomerIdentity,
@@ -48,6 +50,11 @@ Usage:
 
   --slug <customer>     Required. Default DB/project is procureflow-<slug>.
   --db <name>           Override Turso database name (passed to turso:customer).
+  --location <code>     Passed to turso:customer. Applied only on
+                        \`turso group create\` when that group is missing.
+                        No fleet region is hard-coded.
+  --max-groups <n>      Passed to turso:customer. Optional group-quota
+                        override. Not a deployment variable.
   --project <name>      Override Vercel project name (passed to vercel:customer).
   --dry-run             Print the full planned sequence (default). Exit 0.
                         Never calls Turso/Vercel/DB. Does not invent secrets.
@@ -192,9 +199,13 @@ export function parseOnboardCustomerArgs(argv = []) {
       || arg === '--password' || arg.startsWith('--password=')
       || arg === '--name' || arg.startsWith('--name=')
       || arg === '--base-url' || arg.startsWith('--base-url=')
+      || arg === '--location' || arg.startsWith('--location=')
+      || arg === '--max-groups' || arg.startsWith('--max-groups=')
     ) {
       const rawKey = arg.replace(/^--/, '').split('=')[0];
-      const key = rawKey === 'base-url' ? 'baseUrl' : rawKey;
+      const key = rawKey === 'base-url'
+        ? 'baseUrl'
+        : (rawKey === 'max-groups' ? 'maxGroups' : rawKey);
       const taken = takeFlagValue(argv, i, arg);
       values[key] = taken.value === true ? '' : taken.value;
       i = taken.nextIndex;
@@ -225,6 +236,8 @@ export function parseOnboardCustomerArgs(argv = []) {
     password: values.password != null && values.password !== '' ? String(values.password) : null,
     name: values.name != null ? String(values.name).trim() : null,
     baseUrl: values.baseUrl != null ? String(values.baseUrl).trim() : null,
+    location: values.location != null ? String(values.location).trim() : null,
+    maxGroups: values.maxGroups != null ? String(values.maxGroups).trim() : null,
     unknown
   };
 }
@@ -241,9 +254,13 @@ export function resolveOnboardIdentity({ slug, db, project, baseUrl } = {}) {
   };
 }
 
-export function buildTursoArgv({ slug, db } = {}) {
+export function buildTursoArgv({ slug, db, location, maxGroups } = {}) {
   const argv = ['--slug', slug, '--apply'];
   if (asTrimmed(db)) argv.push('--db', asTrimmed(db));
+  if (asTrimmed(location)) argv.push('--location', asTrimmed(location));
+  if (maxGroups != null && asTrimmed(maxGroups) !== '') {
+    argv.push('--max-groups', asTrimmed(maxGroups));
+  }
   return argv;
 }
 
@@ -308,7 +325,9 @@ export function plannedOnboardSteps({
   smoke = false,
   email = null,
   name = null,
-  baseUrl = null
+  baseUrl = null,
+  location = null,
+  maxGroups = null
 } = {}) {
   const dbOverride = dbName && dbName !== defaultDatabaseName(slug);
   const projectOverride = projectName && projectName !== defaultProjectName(slug);
@@ -316,6 +335,8 @@ export function plannedOnboardSteps({
     'npm run turso:customer --',
     `--slug ${slug}`,
     dbOverride ? `--db ${dbName}` : null,
+    location ? `--location ${location}` : null,
+    maxGroups != null && String(maxGroups).trim() !== '' ? `--max-groups ${maxGroups}` : null,
     '--apply'
   ].filter(Boolean).join(' ');
   const vercelCmd = [
@@ -338,7 +359,7 @@ export function plannedOnboardSteps({
       id: 'A',
       name: 'turso:customer',
       command: tursoCmd,
-      summary: 'Create/reuse classic libSQL DB; mint TURSO_* + SESSION_SECRET'
+      summary: 'Create/reuse group procureflow-<slug> and classic libSQL production + preview DBs in that group; mint production TURSO_* + SESSION_SECRET. Does not write preview env.'
     },
     {
       id: 'B',
@@ -381,10 +402,12 @@ export function formatOnboardDryRun({
   email = null,
   name = null,
   env = process.env,
-  rotate = false
+  rotate = false,
+  location = null,
+  maxGroups = null
 } = {}) {
   const steps = plannedOnboardSteps({
-    slug, dbName, projectName, withOrg, smoke, email, name, baseUrl
+    slug, dbName, projectName, withOrg, smoke, email, name, baseUrl, location, maxGroups
   });
   const vercelPlan = buildApplyPlan({ slug, projectName, rotate });
   const provision = steps.find((step) => step.name === 'provision:customer');
@@ -409,9 +432,11 @@ export function formatOnboardDryRun({
     'Never destroys a Turso DB. Creates or reuses the Vercel project, then links this directory.',
     '',
     'Step A — turso:customer --apply (secrets stay in-process for later steps):',
-    ...plannedTursoCommands(dbName).flatMap((cmd) => (
+    ...plannedTursoCommands(dbName, { slug, location }).flatMap((cmd) => (
       cmd.note ? [`  ${cmd.display}`, `    (${cmd.note})`] : [`  ${cmd.display}`]
     )),
+    '  Preview env names (not written to Vercel by this command): TURSO_PREVIEW_DATABASE_URL, TURSO_PREVIEW_AUTH_TOKEN',
+    '  Databases already in the default group are reused as-is and are not moved. Do not run turso db tokens invalidate on that group.',
     '',
     'Exports --apply will mint (placeholders — secrets are not invented in dry-run):',
     `  export TURSO_DATABASE_URL='${WILL_MINT_PLACEHOLDER}'`,
@@ -521,7 +546,9 @@ export function buildOnboardJsonSummary({
   name = null,
   exports = null,
   steps = null,
-  env = {}
+  env = {},
+  location = null,
+  maxGroups = null
 } = {}) {
   const apply = mode === 'apply';
   const minted = exports || {};
@@ -547,7 +574,7 @@ export function buildOnboardJsonSummary({
       ? redactSecretTail(minted.SESSION_SECRET)
       : (sessionFromEnv ? 'reuse-from-env' : WILL_MINT_PLACEHOLDER),
     steps: steps || plannedOnboardSteps({
-      slug, dbName, projectName, withOrg, smoke, email, name, baseUrl
+      slug, dbName, projectName, withOrg, smoke, email, name, baseUrl, location, maxGroups
     }).map((step) => step.command),
     note: apply
       ? 'JSON redacts TURSO_AUTH_TOKEN and SESSION_SECRET to last 4 chars. Full values may appear on turso:customer export lines above.'
@@ -647,6 +674,24 @@ export async function runOnboardCustomerCli({
     return 1;
   }
 
+  if (args.maxGroups != null) {
+    const parsedMax = parseMaxGroups(args.maxGroups);
+    if (!parsedMax.set || parsedMax.error) {
+      write(stderr, 'Invalid --max-groups. Use a non-negative integer. The value was not printed.\n');
+      return 1;
+    }
+  }
+  if (args.location != null) {
+    const parsedLocation = normalizeLocation(args.location);
+    if (parsedLocation.error) {
+      write(
+        stderr,
+        'Invalid --location. Pass a short location code (letters, numbers, hyphens). The value was not printed. No region is hard-coded.\n'
+      );
+      return 1;
+    }
+  }
+
   const withOrg = args.withOrg;
   const reportOpts = {
     slug,
@@ -658,7 +703,9 @@ export async function runOnboardCustomerCli({
     email: args.email,
     name: args.name,
     env,
-    rotate: args.rotate
+    rotate: args.rotate,
+    location: args.location,
+    maxGroups: args.maxGroups
   };
 
   if (!args.apply) {
@@ -674,7 +721,12 @@ export async function runOnboardCustomerCli({
 
   write(stdout, `Onboarding ${slug} (Turso → Vercel project → env → provision${args.smoke ? ' → smoke' : ''})…\n`);
 
-  const tursoArgv = buildTursoArgv({ slug, db: args.db || dbName });
+  const tursoArgv = buildTursoArgv({
+    slug,
+    db: args.db || dbName,
+    location: args.location,
+    maxGroups: args.maxGroups
+  });
   const tursoResult = await runTursoFn({
     argv: tursoArgv,
     env,

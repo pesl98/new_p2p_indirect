@@ -52,7 +52,7 @@ npm run turso:customer -- --slug acme --apply    # create/reuse + print exports
 npm run turso:customer -- --slug beta --apply
 ```
 
-`--apply` is equivalent to `turso db create procureflow-<slug>` (no `--tursodb`), `turso db show … --url`, and `turso db tokens create …`, plus a new `SESSION_SECRET` unless one is already exported. Copy the printed `export` lines into the shell, including `PROCUREFLOW_SECRET_SLUG` (the slug, not a secret). A shell that still holds another customer’s Turso host or an unlabeled secret is refused before Turso or Vercel starts. `--json` redacts the token to last 4 characters; full exports stay on human stdout.
+`--apply` reads `turso group list`, then creates or reuses group `procureflow-<slug>` and databases `procureflow-<slug>` and `procureflow-<slug>-preview` with `--group procureflow-<slug>` (no `--tursodb`, never the default group for a new database). It then runs `turso db show … --url` and `turso db tokens create` for the production database, plus a new `SESSION_SECRET` unless one is already exported. `--location` is passed only to `turso group create` when you set it. A known group quota that one new group would exceed stops the command. Preview env names are printed and are not written to Vercel. Copy the printed `export` lines into the shell, including `PROCUREFLOW_SECRET_SLUG` (the slug, not a secret). A shell that still holds another customer’s Turso host or an unlabeled secret is refused before Turso or Vercel starts. `--json` redacts the token to last 4 characters; full exports stay on human stdout.
 
 ### Local SQLite (laptop, air-gapped, or a file-per-customer VM)
 
@@ -283,7 +283,7 @@ Same git repo, **separate Vercel projects**, each with its own Turso pair. Never
 ### Per-customer checklist
 
 - [ ] **New Vercel project** `procureflow-<customer>` (one project per customer). `vercel:customer --apply` / `onboard:customer --apply` run `vercel project add` (idempotent if it already exists) then `vercel link --yes --project`. Root directory = repo root when you deploy from this checkout. Build command is already `npm run build` in [`vercel.json`](../vercel.json). If this directory is linked to a different project, the command **stops** and does not retarget.
-- [ ] **Dedicated Turso DB** via `npm run onboard:customer -- --slug <customer> --apply` (or `npm run turso:customer -- --slug <customer> --apply` — classic libSQL `turso db create procureflow-<customer>`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
+- [ ] **Dedicated Turso group and databases** via `npm run onboard:customer -- --slug <customer> --apply` (or `npm run turso:customer -- --slug <customer> --apply` — classic libSQL `turso group create procureflow-<customer>` and `turso db create procureflow-<customer> --group procureflow-<customer>`, plus `procureflow-<customer>-preview`, no `--tursodb`). Do **not** reuse another customer’s URL or token.
 - [ ] From the laptop, with `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `SESSION_SECRET`, and `PROCUREFLOW_SECRET_SLUG` already exported from `turso:customer` (the Vercel script **refuses to invent secrets**, and it does not overwrite a key that is already set unless you pass `--rotate`):
 
   ```bash
